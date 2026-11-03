@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: studio
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    restart: unless-stopped
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://studio:${DB_PASSWORD:-change-me}@db:5432/studio
+    depends_on: [db]
+    ports: ["8000:8000"]
+    restart: unless-stopped
+  web:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on: [api]
+    restart: unless-stopped
+  backup:   # Günlük pg_dump yedeği → ./backups
+    image: postgres:16
+    environment: { PGPASSWORD: "${DB_PASSWORD:-change-me}" }
+    volumes: ["./backups:/backups"]
+    depends_on: [db]
+    entrypoint: ["/bin/sh","-c","while true; do pg_dump -h db -U studio studio > /backups/studio_$$(date +%F).sql; sleep 86400; done"]
+    restart: unless-stopped
+volumes:
+  pgdata:
