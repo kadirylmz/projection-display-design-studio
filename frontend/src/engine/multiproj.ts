@@ -24,18 +24,31 @@ export interface WarpGrid {
 export interface ProjectorSlot {
   id: string;
   label: string;
-  x: number; y: number;       // kanvas içindeki sol-üst piksel (serbest düzende negatif olabilir; sonuç normalize edilir)
+  x: number; y: number;       // kanvas içindeki sol-üst piksel
   w: number; h: number;       // projektör çıkış çözünürlüğü
-  output?: string;            // ör. "DP-1"
+  output?: string;            // ör. "DP-1" veya "GPU-1 Out 1"
+  physicalWidthM?: number;    // Fiziksel görüntü genişliği (metre)
+  physicalHeightM?: number;   // Fiziksel görüntü yüksekliği (metre)
   crop?: Crop;                // maskelenen (kırpılan) piksel miktarları
-  /** Harman bölgesi genişlikleri (piksel). Izgara düzeninde otomatik üretilir veya elle girilir. */
   blend?: { l: number; r: number; t: number; b: number };
-  /** Projektör yerel koordinatlarında (0..w, 0..h) çokgen maske köşeleri */
   polygonMask?: Point2D[];
-  /** Projektör yerel koordinatlarında (0..w, 0..h) kapalı kübik Bezier maskesi */
   bezierMask?: BezierPoint[];
-  /** Mesh warping kontrol ızgarası */
   warp?: WarpGrid;
+}
+
+/** Piksel yoğunluğu (PPI) ve piksel boyutu (mm/px) hesabı */
+export function calculatePixelDensity(wPx: number, hPx: number, wM?: number, hM?: number) {
+  if (!wM || !hM || wM <= 0 || hM <= 0) return null;
+  const diagPx = Math.hypot(wPx, hPx);
+  const diagInches = (Math.hypot(wM, hM) * 1000) / 25.4;
+  const ppi = diagPx / diagInches;
+  const mmPerPxW = (wM * 1000) / wPx;
+  const mmPerPxH = (hM * 1000) / hPx;
+  return {
+    ppi: Math.round(ppi * 10) / 10,
+    mmPerPxW: Math.round(mmPerPxW * 100) / 100,
+    mmPerPxH: Math.round(mmPerPxH * 100) / 100,
+  };
 }
 
 /** Varsayılan düzgün (deforme olmamış) mesh warp ızgarası üretir. */

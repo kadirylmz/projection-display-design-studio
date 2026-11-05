@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { computeLayout, createDefaultBezierMask, createUniformWarp, ProjectorSlot } from '../engine/multiproj';
+import { calculatePixelDensity, computeLayout, createDefaultBezierMask, createUniformWarp, ProjectorSlot } from '../engine/multiproj';
 import { fromConfig, layoutToSvg, toConfig } from '../engine/exporters';
 import { useMapping } from '../mappingStore';
 import { download, renderCanvasPixelMapPattern, renderTestPattern, svgToPng } from '../util';
@@ -71,6 +71,7 @@ export default function PixelMappingStudio() {
     setSel(id);
   };
   const s = slots.find(x => x.id === sel);
+  const density = s ? calculatePixelDensity(s.w, s.h, s.physicalWidthM, s.physicalHeightM) : null;
   const nf = (label: string, key: 'x' | 'y' | 'w' | 'h') => (
     <label className="text-xs">{label}<input className="inp" type="number" value={s![key]} onChange={e => update(s!.id, { [key]: Math.round(+e.target.value) })} /></label>);
   const cropField = (label: string, key: 'l' | 'r' | 't' | 'b') => (
@@ -81,29 +82,39 @@ export default function PixelMappingStudio() {
       onChange={e => update(s!.id, { blend: { l: 0, r: 0, t: 0, b: 0, ...s!.blend, [key]: Math.max(0, Math.round(+e.target.value)) } })} /></label>);
 
   return (
-    <div className="grid lg:grid-cols-[380px_1fr] gap-4 h-full">
+    <div className="grid lg:grid-cols-[400px_1fr] gap-4 h-full">
       <div className="space-y-2 p-3 rounded border border-slate-700 bg-slate-900 overflow-auto text-xs" style={{ maxHeight: '88vh' }}>
-        <h2 className="text-sm font-semibold text-sky-300">Piksel Haritalama (Pixel Mapping) Stüdyosu</h2>
-        <div className="grid grid-cols-2 gap-2">
-          <label>İçerik Kanvası W (px)<input className="inp" type="number" value={content.w} onChange={e => setContent({ ...content, w: Math.round(+e.target.value) })} /></label>
-          <label>İçerik Kanvası H (px)<input className="inp" type="number" value={content.h} onChange={e => setContent({ ...content, h: Math.round(+e.target.value) })} /></label>
+        <div className="border-b border-slate-700 pb-2">
+          <h2 className="text-sm font-semibold text-sky-300">Piksel Haritalama (Pixel Mapping) Stüdyosu</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            İçerik Canvas'ı ile fiziksel ekran/çıkış çözünürlükleri arasındaki teknik piksel eşleşmesi.
+          </p>
+        </div>
+
+        {/* Canvas & Çözünürlük Özeti */}
+        <div className="grid grid-cols-2 gap-2 bg-slate-950 p-2 rounded border border-slate-800">
+          <label>İçerik Canvas W (px)<input className="inp" type="number" value={content.w} onChange={e => setContent({ ...content, w: Math.round(+e.target.value) })} /></label>
+          <label>İçerik Canvas H (px)<input className="inp" type="number" value={content.h} onChange={e => setContent({ ...content, h: Math.round(+e.target.value) })} /></label>
           <label>Izgara Adımı (px)<input className="inp" type="number" min="0" value={grid} onChange={e => setGrid(Math.max(0, +e.target.value))} /></label>
           <label>Harman Gamma<input className="inp" type="number" step="0.1" value={gamma} onChange={e => setGamma(+e.target.value || 2.2)} /></label>
         </div>
-        <div className="flex flex-wrap gap-3 items-center">
-          <label className="flex items-center gap-1"><input type="checkbox" checked={snap} onChange={e => setSnap(e.target.checked)} /> Izgaraya yapış</label>
-          <label className="flex items-center gap-1"><input type="checkbox" checked={rulers} onChange={e => setRulers(e.target.checked)} /> Cetvel</label>
-          <label className="flex items-center gap-1"><input type="checkbox" checked={showSafe} onChange={e => setShowSafe(e.target.checked)} /> Güvenli alan %</label>
-          <input className="inp w-14 !mt-0" type="number" value={safe} onChange={e => setSafe(+e.target.value)} />
-        </div>
 
         {L && (
-          <div className="text-slate-300 border border-slate-700 rounded p-2 bg-slate-950 space-y-1">
-            <div>Birleşik Çıkış Kanvası: <b>{L.canvasW} × {L.canvasH} px</b> ({L.overlaps.length} örtüşme bölgesi)</div>
+          <div className="text-slate-300 border border-slate-700 rounded p-2.5 bg-slate-950 space-y-1">
+            <div className="flex justify-between items-center">
+              <span>Toplam Çıkış Canvas:</span>
+              <b className="text-emerald-400 text-sm">{L.canvasW} × {L.canvasH} px</b>
+            </div>
+            <div className="flex justify-between text-[11px] text-slate-400">
+              <span>Toplam Ekran / Çıkış: {L.slots.length}</span>
+              <span>Örtüşme (Overlap) Sayısı: {L.overlaps.length}</span>
+            </div>
             {(content.w !== L.canvasW || content.h !== L.canvasH) && (
-              <div className="text-amber-400">
-                İçerik kanvası ({content.w}×{content.h}) çıkış kanvasından farklı.
-                <button className="ml-2 underline text-sky-300" onClick={() => setContent({ w: L.canvasW, h: L.canvasH })}>Eşitle</button>
+              <div className="text-amber-400 mt-1 pt-1 border-t border-slate-800 flex justify-between items-center">
+                <span>İçerik Canvas ({content.w}×{content.h}) çıkışla eşleşmiyor.</span>
+                <button className="px-2 py-0.5 bg-sky-800 text-white rounded text-[10px]" onClick={() => setContent({ w: L.canvasW, h: L.canvasH })}>
+                  Eşitle
+                </button>
               </div>
             )}
             {L.warnings.map(w => <div key={w} className="text-amber-400">⚠ {w}</div>)}
@@ -111,31 +122,56 @@ export default function PixelMappingStudio() {
         )}
         {res.err && <p className="text-red-400">⚠ {res.err}</p>}
 
+        {/* Ekranlar / Çıkışlar Listesi */}
         <div className="flex justify-between items-center pt-1">
-          <b>Çıkış Ekranları / Projektörler</b>
-          <button className="px-2 py-0.5 bg-sky-700 rounded text-white" onClick={add}>+ Çıkış Ekle</button>
+          <b className="text-slate-200">Çıkış Ekranları / Projektörler</b>
+          <button className="px-2.5 py-0.5 bg-sky-700 hover:bg-sky-600 rounded text-white" onClick={add}>+ Çıkış Ekle</button>
         </div>
         <div className="space-y-1">
           {slots.map(x => (
-            <div key={x.id} onClick={() => setSel(x.id)} className={`px-2 py-1 rounded cursor-pointer flex justify-between ${sel === x.id ? 'bg-sky-900/60 border border-sky-500' : 'bg-slate-800'}`}>
-              <span><b>{x.label}</b> {x.output ? `[${x.output}]` : ''}</span>
-              <span>{x.w}×{x.h} @ ({x.x},{x.y})</span>
+            <div key={x.id} onClick={() => setSel(x.id)} className={`px-2 py-1.5 rounded cursor-pointer flex justify-between items-center ${sel === x.id ? 'bg-sky-950/80 border border-sky-400' : 'bg-slate-800 hover:bg-slate-750'}`}>
+              <div>
+                <span className="font-semibold text-slate-200">{x.label}</span>
+                {x.output && <span className="ml-1.5 text-[10px] px-1 py-0.5 bg-slate-700 text-sky-300 rounded font-mono">{x.output}</span>}
+              </div>
+              <span className="font-mono text-slate-300">{x.w}×{x.h} @ [{x.x}, {x.y}]</span>
             </div>
           ))}
         </div>
 
+        {/* Seçili Ekran Detayları */}
         {s && (
           <div className="border border-slate-700 rounded p-2.5 bg-slate-950 space-y-2.5">
             <div className="grid grid-cols-2 gap-2">
-              <label>Etiket<input className="inp" value={s.label} onChange={e => update(s.id, { label: e.target.value })} /></label>
-              <label>Çıkış Portu (Output)<input className="inp" placeholder="DP-1 / HDMI-2" value={s.output ?? ''} onChange={e => update(s.id, { output: e.target.value })} /></label>
-              {nf('Ofset X (px)', 'x')}{nf('Ofset Y (px)', 'y')}{nf('Çözünürlük W', 'w')}{nf('Çözünürlük H', 'h')}
+              <label>Etiket / İsim<input className="inp" value={s.label} onChange={e => update(s.id, { label: e.target.value })} /></label>
+              <label>Donanım Çıkışı (Port)<input className="inp" placeholder="Örn: GPU-1 Out 1" value={s.output ?? ''} onChange={e => update(s.id, { output: e.target.value })} /></label>
+              {nf('Başlangıç X (px)', 'x')}{nf('Başlangıç Y (px)', 'y')}{nf('Genişlik W (px)', 'w')}{nf('Yükseklik H (px)', 'h')}
             </div>
 
+            {/* Fiziksel Ölçüler & PPI (Piksel Yoğunluğu) */}
+            <div className="p-2 rounded bg-slate-900 border border-slate-800 space-y-1.5">
+              <span className="text-slate-300 font-semibold block">Fiziksel Ölçüler & Yoğunluk (PPI)</span>
+              <div className="grid grid-cols-2 gap-2">
+                <label>Fiziksel Genişlik (m)
+                  <input className="inp" type="number" step="0.01" value={s.physicalWidthM ?? ''} placeholder="Örn: 4.00" onChange={e => update(s.id, { physicalWidthM: +e.target.value || undefined })} />
+                </label>
+                <label>Fiziksel Yükseklik (m)
+                  <input className="inp" type="number" step="0.01" value={s.physicalHeightM ?? ''} placeholder="Örn: 2.25" onChange={e => update(s.id, { physicalHeightM: +e.target.value || undefined })} />
+                </label>
+              </div>
+              {density && (
+                <div className="grid grid-cols-3 gap-1 pt-1 text-[11px] font-mono text-emerald-400 bg-slate-950 p-1.5 rounded">
+                  <div>PPI: <b>{density.ppi}</b></div>
+                  <div>Piksel W: <b>{density.mmPerPxW} mm</b></div>
+                  <div>Piksel H: <b>{density.mmPerPxH} mm</b></div>
+                </div>
+              )}
+            </div>
+
+            {/* Kırpma & Harmanlama */}
             <div>
-              <div className="text-slate-400 font-semibold">1. Dikdörtgen Kırpma Maskesi (Cropping, px)</div>
+              <div className="text-slate-400 font-semibold">1. Dikdörtgen Kırpma (Cropping, px)</div>
               <div className="grid grid-cols-4 gap-1">{cropField('Sol', 'l')}{cropField('Sağ', 'r')}{cropField('Üst', 't')}{cropField('Alt', 'b')}</div>
-              {L && <div className="text-slate-400 mt-1">Aktif Çıkış: <b>{L.active[s.id]?.w}×{L.active[s.id]?.h} px</b> @ ({L.active[s.id]?.x}, {L.active[s.id]?.y})</div>}
             </div>
 
             <div className="border-t border-slate-800 pt-2">
@@ -143,117 +179,95 @@ export default function PixelMappingStudio() {
               <div className="grid grid-cols-4 gap-1">{blendField('Sol', 'l')}{blendField('Sağ', 'r')}{blendField('Üst', 't')}{blendField('Alt', 'b')}</div>
             </div>
 
-            <div className="border-t border-slate-800 pt-2 space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400 font-semibold">3. Poligon & Bezier Maskeler</span>
-                <div className="flex gap-1">
-                  <button
-                    className={`px-2 py-0.5 rounded ${polyDrawMode ? 'bg-amber-600 text-white' : 'bg-slate-800'}`}
-                    onClick={() => setPolyDrawMode(!polyDrawMode)}
-                  >
-                    {polyDrawMode ? 'Çizim Aktif (Kanvasa Tıkla)' : '+ Poligon Köşe Çiz'}
-                  </button>
-                  {s.polygonMask?.length ? (
-                    <button className="px-2 py-0.5 bg-red-900/70 rounded" onClick={() => update(s.id, { polygonMask: undefined })}>Poligonu Sil</button>
-                  ) : null}
-                </div>
-              </div>
-              <div className="flex gap-1 pt-1">
-                {!s.bezierMask ? (
-                  <button className="px-2 py-0.5 bg-slate-800 rounded" onClick={() => update(s.id, { bezierMask: createDefaultBezierMask(s.w, s.h) })}>
-                    + Bezier Eğri Maskesi Oluştur
-                  </button>
-                ) : (
-                  <button className="px-2 py-0.5 bg-red-900/70 rounded" onClick={() => update(s.id, { bezierMask: undefined })}>
-                    Bezier Maskesini Kaldır ({s.bezierMask.length} düğüm)
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-slate-800 pt-2 space-y-1">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-400 font-semibold">4. Mesh Warping (Izgara Bükme)</span>
-                {!s.warp ? (
-                  <div className="flex gap-1">
-                    <button className="px-2 py-0.5 bg-slate-800 rounded" onClick={() => update(s.id, { warp: createUniformWarp(s.w, s.h, 3, 3) })}>3×3 Mesh</button>
-                    <button className="px-2 py-0.5 bg-slate-800 rounded" onClick={() => update(s.id, { warp: createUniformWarp(s.w, s.h, 4, 4) })}>4×4 Mesh</button>
-                  </div>
-                ) : (
-                  <button className="px-2 py-0.5 bg-red-900/70 rounded" onClick={() => update(s.id, { warp: undefined })}>Mesh Sıfırla ({s.warp.cols}×{s.warp.rows})</button>
-                )}
-              </div>
-              {s.warp && (
-                <div className="grid grid-cols-2 gap-1 text-[11px]">
-                  {([
-                    ['Sol-Üst Köşe', 0],
-                    ['Sağ-Üst Köşe', s.warp.cols],
-                    ['Sol-Alt Köşe', s.warp.rows * (s.warp.cols + 1)],
-                    ['Sağ-Alt Köşe', (s.warp.rows + 1) * (s.warp.cols + 1) - 1],
-                  ] as [string, number][]).map(([lbl, idx]) => {
-                    const pt = s.warp!.points[idx];
-                    const setPt = (nx: number, ny: number) => {
-                      const next = s.warp!.points.map((p, k) => k === idx ? { x: nx, y: ny } : p);
-                      update(s.id, { warp: { ...s.warp!, points: next } });
-                    };
-                    return (
-                      <div key={lbl} className="p-1 bg-slate-900 rounded border border-slate-800">
-                        <div className="text-slate-400">{lbl}</div>
-                        <div className="flex gap-1">
-                          <input className="inp !mt-0" type="number" value={pt.x} onChange={e => setPt(+e.target.value, pt.y)} />
-                          <input className="inp !mt-0" type="number" value={pt.y} onChange={e => setPt(pt.x, +e.target.value)} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <button className="px-2 py-1 bg-sky-800 rounded text-white" disabled={!L} onClick={() => L && renderTestPattern(L.slots.find(q => q.id === s.id)!, L, gamma).toBlob(b => b && download(`test-${s.id}.png`, b))}>
-                Bu Projektör Test Deseni (PNG)
+            <div className="flex gap-2 pt-1 border-t border-slate-800">
+              <button className="px-2.5 py-1 bg-sky-800 hover:bg-sky-700 rounded text-white font-medium" disabled={!L} onClick={() => L && renderTestPattern(L.slots.find(q => q.id === s.id)!, L, gamma).toBlob(b => b && download(`test-${s.id}.png`, b))}>
+                {s.label} Test Deseni (PNG)
               </button>
-              <button className="px-2 py-1 bg-red-900 rounded ml-auto" disabled={slots.length < 2} onClick={() => { setSlots(slots.filter(q => q.id !== s.id)); setSel(null); }}>
-                Sil
+              <button className="px-2.5 py-1 bg-red-900/80 hover:bg-red-800 rounded ml-auto text-white" disabled={slots.length < 2} onClick={() => { setSlots(slots.filter(q => q.id !== s.id)); setSel(null); }}>
+                Çıkışı Sil
               </button>
             </div>
           </div>
         )}
       </div>
 
-      <div className="space-y-2 min-w-0">
-        <div className="flex flex-wrap gap-2 text-xs items-center">
-          <button className="px-3 py-1 bg-slate-700 rounded" onClick={() => setView(null)}>Görünümü Sığdır</button>
+      <div className="space-y-3 min-w-0 flex flex-col">
+        {/* Üst Butonlar */}
+        <div className="flex flex-wrap gap-2 text-xs items-center bg-slate-900 p-2 rounded border border-slate-800">
+          <button className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white" onClick={() => setView(null)}>Görünümü Sığdır</button>
           <button
-            className="px-3 py-1 bg-emerald-700 rounded font-semibold text-white"
+            className="px-3.5 py-1 bg-emerald-700 hover:bg-emerald-600 rounded font-semibold text-white shadow"
             disabled={!L}
-            onClick={() => L && renderCanvasPixelMapPattern(L).toBlob(b => b && download(`pixel-map-pattern-${L.canvasW}x${L.canvasH}.png`, b))}
+            onClick={() => L && renderCanvasPixelMapPattern(L).toBlob(b => b && download(`pixel-map-canvas-${L.canvasW}x${L.canvasH}.png`, b))}
           >
-            Tam Kanvas Pixel Map Deseni İndir (1:1 PNG)
+            1:1 Tam Canvas Pixel Map Deseni (PNG)
           </button>
-          <button className="px-3 py-1 bg-slate-700 rounded" disabled={!L} onClick={() => L && download('piksel-haritasi.svg', layoutToSvg(L, { gridStep: grid, safeAreaPct: showSafe ? safe : undefined }), 'image/svg+xml')}>SVG İndir</button>
-          <button className="px-3 py-1 bg-slate-700 rounded" disabled={!L} onClick={async () => L && download('piksel-haritasi.png', await svgToPng(layoutToSvg(L, { gridStep: grid, safeAreaPct: showSafe ? safe : undefined, pixelWidth: 3000 }), 3000))}>PNG Şema</button>
-          <button className="px-3 py-1 bg-slate-700 rounded" disabled={!L} onClick={() => L && download('piksel-haritasi.json', JSON.stringify(toConfig(L.slots, content, gamma), null, 2), 'application/json')}>JSON Dışa</button>
-          <label className="px-3 py-1 bg-slate-700 rounded cursor-pointer">JSON İçe
+          <button className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white" disabled={!L} onClick={() => L && download('pixel-map.svg', layoutToSvg(L, { gridStep: grid, safeAreaPct: showSafe ? safe : undefined }), 'image/svg+xml')}>SVG İndir</button>
+          <button className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white" disabled={!L} onClick={async () => L && download('pixel-map.png', await svgToPng(layoutToSvg(L, { gridStep: grid, safeAreaPct: showSafe ? safe : undefined, pixelWidth: 3000 }), 3000))}>PNG Şema</button>
+          <button className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white" disabled={!L} onClick={() => L && download('pixel-map.json', JSON.stringify(toConfig(L.slots, content, gamma), null, 2), 'application/json')}>JSON Kaydet</button>
+          <label className="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded cursor-pointer text-white">JSON Yükle
             <input type="file" accept=".json" hidden onChange={async e => {
               const f = e.target.files?.[0]; if (!f) return;
               try { const c = fromConfig(await f.text()); setSlots(c.projectors); setContent(c.contentCanvas); setGamma(c.gamma); setMsg('Yapılandırma yüklendi'); setView(null); }
               catch (err) { setMsg((err as Error).message); }
             }} />
           </label>
-          <span className="text-slate-400">{msg} · Tekerlek: Zoom · Alt+Sürükle: Kaydır</span>
         </div>
+
+        {/* Görsel Canvas Çalışma Alanı */}
         <div
           ref={host}
-          className="border border-slate-700 rounded bg-slate-950 touch-none select-none"
-          style={{ height: '74vh' }}
+          className="border border-slate-700 rounded bg-slate-950 touch-none select-none relative overflow-hidden"
+          style={{ height: '54vh' }}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
           onWheel={onWheel}
           dangerouslySetInnerHTML={{ __html: svg.replace('<svg ', '<svg style="width:100%;height:100%" ') }}
         />
+
+        {/* Teknik Çıkış & Piksel Koordinat Tablosu (Resolume / Watchout Haritası) */}
+        {L && (
+          <div className="bg-slate-900 border border-slate-800 rounded p-2.5 overflow-auto text-xs space-y-2">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-1.5">
+              <span className="font-semibold text-slate-200">Teknik Piksel Koordinat & Medya Sunucusu Atama Tablosu</span>
+              <span className="text-[11px] text-slate-400">Watchout / Resolume / Disguise Input/Output Eşleştirmesi</span>
+            </div>
+            <table className="w-full text-left font-mono">
+              <thead>
+                <tr className="text-slate-400 border-b border-slate-800 text-[11px]">
+                  <th className="py-1">Ekran/Çıkış</th>
+                  <th>Donanım Portu</th>
+                  <th>Başlangıç (X, Y)</th>
+                  <th>Bitiş (X, Y)</th>
+                  <th>Çözünürlük</th>
+                  <th>Fiziksel Boyut</th>
+                  <th>PPI</th>
+                  <th>Harman (Sol/Sağ)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {L.slots.map(slot => {
+                  const dens = calculatePixelDensity(slot.w, slot.h, slot.physicalWidthM, slot.physicalHeightM);
+                  return (
+                    <tr key={slot.id} className="hover:bg-slate-800/40">
+                      <td className="py-1.5 font-semibold text-sky-300 font-sans">{slot.label}</td>
+                      <td><span className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-300 text-[10px]">{slot.output ?? '—'}</span></td>
+                      <td className="text-emerald-400">({slot.x}, {slot.y})</td>
+                      <td className="text-emerald-400">({slot.x + slot.w}, {slot.y + slot.h})</td>
+                      <td>{slot.w} × {slot.h} px</td>
+                      <td className="font-sans text-slate-300">
+                        {slot.physicalWidthM && slot.physicalHeightM ? `${slot.physicalWidthM}m × ${slot.physicalHeightM}m` : '—'}
+                      </td>
+                      <td>{dens ? `${dens.ppi} ppi` : '—'}</td>
+                      <td>{slot.blend ? `${slot.blend.l}px / ${slot.blend.r}px` : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
