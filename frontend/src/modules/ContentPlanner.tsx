@@ -35,7 +35,8 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
   const [roomL, setRoomL] = useState(23.30); // Uzun Duvar boyu (m)
   const [roomW, setRoomW] = useState(7.00);  // Kısa Duvar eni (m)
   const [roomH, setRoomH] = useState(4.30);  // Duvar yüksekliği (m)
-  const [targetWallHpx, setTargetWallHpx] = useState(1200); // Duvar hedef düşey çözünürlüğü (px)
+  const [wallRows, setWallRows] = useState(1); // Duvarda üst üste kaç projektör var (genelde 1)
+  const [projOrientation, setProjOrientation] = useState<'landscape' | 'portrait'>('landscape');
   const [projW, setProjW] = useState(1920);
   const [projH, setProjH] = useState(1200);
   const [projBlendPct, setProjBlendPct] = useState(12);
@@ -91,42 +92,57 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
 
   // --- İMMERSİVE 5-YÜZEY KUTU AÇILIMI HESAPLAMASI ---
   const immersiveCalc = useMemo(() => {
-    // 1 metreye düşen piksel oranı (Düşey yükseklik üzerinden homojen piksel boyutu):
-    const pxPerMeter = targetWallHpx / roomH;
+    // Projektörün duvardaki düşey (yükseklik) pikseli:
+    // Eğer Landscape ise dikey piksel = projH (örn: 1200)
+    // Eğer Portrait ise dikey piksel = projW (örn: 1920)
+    const singleProjVertPx = projOrientation === 'landscape' ? projH : projW;
+    const singleProjHorizPx = projOrientation === 'landscape' ? projW : projH;
+
+    // Duvarda düşeyde birden fazla projektör varsa (blend çıkarılır)
+    const vertBlendPx = wallRows > 1 ? pctToPx(projBlendPct, singleProjVertPx) : 0;
+    const totalWallHpx = wallRows * singleProjVertPx - (wallRows - 1) * vertBlendPx;
+
+    // 1 metreye düşen piksel oranı (Duvar yüksekliği üzerinden homojen piksel boyutu):
+    const pxPerMeter = totalWallHpx / roomH;
     const mmPerPixel = round((1000 / pxPerMeter), 2);
 
-    // Yüzey piksel boyutları
-    const longWallW = Math.round(roomL * pxPerMeter);   // 23.30m -> ~6503 px
-    const longWallH = targetWallHpx;                    // 4.30m -> 1200 px
+    // Yüzey piksel boyutları (Seçilen projektörün çözünürlüğüne TAM DİNAMİK bağlı)
+    const longWallW = Math.round(roomL * pxPerMeter);
+    const longWallH = totalWallHpx;
 
-    const shortWallW = Math.round(roomW * pxPerMeter);  // 7.00m -> ~1954 px
-    const shortWallH = targetWallHpx;                   // 4.30m -> 1200 px
+    const shortWallW = Math.round(roomW * pxPerMeter);
+    const shortWallH = totalWallHpx;
 
-    const floorW = longWallW;                           // 23.30m -> ~6503 px
-    const floorH = shortWallW;                          // 7.00m -> ~1954 px
+    const floorW = longWallW;
+    const floorH = shortWallW;
 
     // Kutu Açılımı (Cross Unwrap) Toplam Canvas Ebatları:
     // Yatay: Sol Duvar Yüksekliği + Zemin Eni + Sağ Duvar Yüksekliği
-    const totalCanvasW = shortWallH + floorH + shortWallH; // 1200 + 1954 + 1200 = 4354 px
+    const totalCanvasW = shortWallH + floorH + shortWallH;
     // Düşey: Üst Kısa Duvar + Zemin Boyu + Alt Kısa Duvar
-    const totalCanvasH = shortWallH + floorW + shortWallH; // 1200 + 6503 + 1200 = 8903 px
+    const totalCanvasH = shortWallH + floorW + shortWallH;
 
     const totalPixels = (longWallW * longWallH * 2) + (shortWallW * shortWallH * 2) + (floorW * floorH);
     const megapixels = round(totalPixels / 1_000_000, 2);
 
-    // Tahmini Projektör Adedi Hesabı (Efektif piksel genişliği = projW * (1 - blend))
-    const effProjW = projW * (1 - projBlendPct / 100);
-    const effProjH = projH * (1 - projBlendPct / 100);
+    // Projektör Adedi Hesabı (Yatay blend çıkarılmış efektif genişlik)
+    const effProjHorizPx = singleProjHorizPx * (1 - projBlendPct / 100);
+    const effProjVertPx = singleProjVertPx * (1 - projBlendPct / 100);
 
-    const pjPerLongWall = Math.ceil(longWallW / effProjW);
-    const pjPerShortWall = Math.ceil(shortWallW / effProjW);
-    const pjFloorCols = Math.ceil(floorW / effProjW);
-    const pjFloorRows = Math.ceil(floorH / effProjH);
+    const pjPerLongWall = Math.ceil(longWallW / effProjHorizPx);
+    const pjPerShortWall = Math.ceil(shortWallW / effProjHorizPx);
+
+    // Zemin için tavan projektörleri (Zemin eni ve boyu)
+    const pjFloorCols = Math.ceil(floorW / effProjHorizPx);
+    const pjFloorRows = Math.ceil(floorH / effProjVertPx);
     const pjFloorTotal = pjFloorCols * pjFloorRows;
 
-    const totalProjectors = (pjPerLongWall * 2) + (pjPerShortWall * 2) + pjFloorTotal;
+    const totalProjectors = (pjPerLongWall * 2 * wallRows) + (pjPerShortWall * 2 * wallRows) + pjFloorTotal;
 
     return {
+      singleProjVertPx,
+      singleProjHorizPx,
+      totalWallHpx,
       pxPerMeter: round(pxPerMeter, 2),
       mmPerPixel,
       longWallW,
@@ -144,7 +160,7 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
       pjFloorTotal,
       totalProjectors,
     };
-  }, [roomL, roomW, roomH, targetWallHpx, projW, projH, projBlendPct]);
+  }, [roomL, roomW, roomH, wallRows, projOrientation, projW, projH, projBlendPct]);
 
   // --- İMMERSIVE KUTU AÇILIMI ŞABLONU İNDİR (PNG) ---
   const downloadImmersiveTemplate = () => {
@@ -285,34 +301,51 @@ PROJEKSİYON DONANIM TAHMİNİ (${projW}×${projH} WUXGA @ %${projBlendPct} Blen
             </div>
 
             <div className="space-y-2 border-t border-slate-800 pt-2">
-              <span className="font-semibold text-slate-200">2. Referans Duvar Çözünürlüğü</span>
+              <span className="font-semibold text-slate-200">2. Projektör Donanımı & Çözünürlük Seçimi</span>
               <div className="grid grid-cols-2 gap-2">
-                <label>Düşey Yükseklik (px)
-                  <input className="inp font-bold text-emerald-400" type="number" step="10" value={targetWallHpx} onChange={e => setTargetWallHpx(+e.target.value)} />
-                </label>
-                <div className="p-1.5 bg-slate-950 rounded border border-slate-800 flex flex-col justify-center">
-                  <span className="text-[10px] text-slate-400">Piksel Yoğunluğu:</span>
-                  <b className="text-emerald-400">{immersiveCalc.mmPerPixel} mm / px</b>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2 border-t border-slate-800 pt-2">
-              <span className="font-semibold text-slate-200">3. Projektör Donanım Özellikleri</span>
-              <div className="grid grid-cols-2 gap-2">
-                <label>Projektör Çözünürlüğü
-                  <select className="inp" value={`${projW}x${projH}`} onChange={e => {
+                <label>Projektör Modeli / Çözünürlük
+                  <select className="inp font-bold text-sky-300" value={`${projW}x${projH}`} onChange={e => {
                     const [w, h] = e.target.value.split('x').map(Number);
                     setProjW(w); setProjH(h);
                   }}>
                     <option value="1920x1200">1920×1200 (WUXGA 16:10)</option>
-                    <option value="1920x1080">1920×1080 (1080p 16:9)</option>
-                    <option value="3840x2160">3840×2160 (4K UHD)</option>
+                    <option value="1920x1080">1920×1080 (Full HD 16:9)</option>
+                    <option value="3840x2160">3840×2160 (4K UHD 16:9)</option>
+                    <option value="4096x2160">4096×2160 (4K DCI 17:9)</option>
+                    <option value="1280x800">1280×800 (WXGA 16:10)</option>
                   </select>
                 </label>
-                <label>Ortalama Blend Payı (%)
-                  <input className="inp" type="number" min="5" max="25" value={projBlendPct} onChange={e => setProjBlendPct(+e.target.value)} />
+                <label>Projektör Yönü (Orientation)
+                  <select className="inp font-semibold text-slate-200" value={projOrientation} onChange={e => setProjOrientation(e.target.value as any)}>
+                    <option value="landscape">Yatay (Landscape)</option>
+                    <option value="portrait">Dikey (Portrait / 90°)</option>
+                  </select>
                 </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <label>Duvarda Düşey Projektör Sırası
+                  <input className="inp" type="number" min="1" max="4" value={wallRows} onChange={e => setWallRows(Math.max(1, Math.round(+e.target.value)))} />
+                </label>
+                <label>Blend Örtüşme Payı (%)
+                  <input className="inp" type="number" min="5" max="30" value={projBlendPct} onChange={e => setProjBlendPct(+e.target.value)} />
+                </label>
+              </div>
+
+              {/* Projektörden Otomatik Türetilen Duvar Çözünürlük Özeti */}
+              <div className="p-2 bg-slate-950 rounded border border-slate-800 space-y-1 mt-1 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Duvar Yükseklik Pikseli:</span>
+                  <b className="text-emerald-400 font-mono text-xs">{immersiveCalc.totalWallHpx} px</b>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Piksel Boyutu (Homojen):</span>
+                  <b className="text-emerald-400 font-mono text-xs">{immersiveCalc.mmPerPixel} mm / px</b>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Piksel Yoğunluğu:</span>
+                  <span className="text-slate-300 font-mono">{immersiveCalc.pxPerMeter} px / metre</span>
+                </div>
               </div>
             </div>
 
