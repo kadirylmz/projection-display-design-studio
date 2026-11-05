@@ -13,179 +13,128 @@ const RESOLUTIONS: PresetRes[] = [
 ];
 
 export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
-  // Sekme modu: 'wall' (Düz/Yan Yana Çoklu Projektör) veya 'immersive' (5-Yüzey Kutu Açılımı)
-  const [plannerMode, setPlannerMode] = useState<'wall' | 'immersive'>('immersive');
+  const [plannerMode, setPlannerMode] = useState<'immersive' | 'wall'>('immersive');
 
-  // --- MOD A: DÜZ ÇOKLU PROJEKTÖR DUVARI ---
-  const [cols, setCols] = useState(4);
-  const [rows, setRows] = useState(1);
-  const [resIdx, setResIdx] = useState(0);
-  const [customW, setCustomW] = useState(1920);
-  const [customH, setCustomH] = useState(1200);
-  const [isCustom, setIsCustom] = useState(false);
-  const [overlapPctX, setOverlapPctX] = useState(10);
-  const [overlapPctY, setOverlapPctY] = useState(10);
-  const [fps, setFps] = useState(60);
-  const [codec, setCodec] = useState<'hap' | 'prores' | 'h264' | 'h265'>('prores');
-
-  const singleW = isCustom ? customW : RESOLUTIONS[resIdx].w;
-  const singleH = isCustom ? customH : RESOLUTIONS[resIdx].h;
-
-  // --- MOD B: İMMERSİVE ODA (5-YÜZEY KUTU AÇILIMI) ---
+  // ==========================================
+  // --- İMMERSİVE 5-YÜZEY: MEKAN ÖLÇÜLERİ ---
+  // ==========================================
   const [roomL, setRoomL] = useState(23.30); // Uzun Duvar boyu (m)
   const [roomW, setRoomW] = useState(7.00);  // Kısa Duvar eni (m)
   const [roomH, setRoomH] = useState(4.30);  // Duvar yüksekliği (m)
-  const [wallRows, setWallRows] = useState(1); // Duvarda üst üste kaç projektör var (genelde 1)
-  const [projOrientation, setProjOrientation] = useState<'landscape' | 'portrait'>('landscape');
-  const [projW, setProjW] = useState(1920);
-  const [projH, setProjH] = useState(1200);
-  const [projBlendPct, setProjBlendPct] = useState(12);
 
-  // --- DÜZ DUVAR HESAPLAMASI ---
-  const wallCalc = useMemo(() => {
-    const ox = cols > 1 ? pctToPx(overlapPctX, singleW) : 0;
-    const oy = rows > 1 ? pctToPx(overlapPctY, singleH) : 0;
-    const rawTotalW = cols * singleW;
-    const rawTotalH = rows * singleH;
-    const overlapTotalW = (cols - 1) * ox;
-    const overlapTotalH = (rows - 1) * oy;
-    const contentW = rawTotalW - overlapTotalW;
-    const contentH = rawTotalH - overlapTotalH;
-    const totalPixels = contentW * contentH;
-    const megapixels = round(totalPixels / 1_000_000, 2);
-    const aspect = round(contentW / contentH, 2);
+  // ==========================================
+  // 1. UZUN DUVARLAR İÇİN PROJEKSİYON AYARLARI
+  // ==========================================
+  const [longResIdx, setLongResIdx] = useState(0); // 1920x1200
+  const [longCols, setLongCols] = useState(4);     // Yan yana 4 projektör
+  const [longRows, setLongRows] = useState(1);     // Üst üste 1 sıra
+  const [longOrient, setLongOrient] = useState<'landscape' | 'portrait'>('landscape');
+  const [longBlendPct, setLongBlendPct] = useState(12);
 
-    const slices = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const idx = r * cols + c + 1;
-        const startX = c * (singleW - ox);
-        const endX = startX + singleW;
-        const startY = r * (singleH - oy);
-        const endY = startY + singleH;
-        slices.push({
-          id: `PJ${idx}`,
-          label: `Projektör ${idx}`,
-          startX, endX, startY, endY,
-          w: singleW, h: singleH,
-        });
-      }
-    }
+  // ==========================================
+  // 2. KISA DUVARLAR İÇİN PROJEKSİYON AYARLARI
+  // ==========================================
+  const [shortResIdx, setShortResIdx] = useState(0); // 1920x1200
+  const [shortCols, setShortCols] = useState(2);     // Yan yana 2 projektör
+  const [shortRows, setShortRows] = useState(1);     // Üst üste 1 sıra
+  const [shortOrient, setShortOrient] = useState<'landscape' | 'portrait'>('landscape');
+  const [shortBlendPct, setShortBlendPct] = useState(15);
 
-    const refPixels = 1920 * 1080;
-    const pixelRatio = totalPixels / refPixels;
-    const fpsRatio = fps / 60;
-    let baseBitrateMbps = 120;
-    if (codec === 'hap') baseBitrateMbps = 180;
-    if (codec === 'h265') baseBitrateMbps = 45;
-    if (codec === 'h264') baseBitrateMbps = 60;
+  // ==========================================
+  // 3. ZEMİN (FLOOR) İÇİN PROJEKSİYON AYARLARI
+  // ==========================================
+  const [floorResIdx, setFloorResIdx] = useState(0); // 1920x1200
+  const [floorCols, setFloorCols] = useState(4);     // Boyuna 4 projektör
+  const [floorRows, setFloorRows] = useState(2);     // Enine 2 sıra
+  const [floorOrient, setFloorOrient] = useState<'landscape' | 'portrait'>('landscape');
+  const [floorBlendPct, setFloorBlendPct] = useState(12);
 
-    const estimatedBitrateMbps = Math.round(baseBitrateMbps * pixelRatio * fpsRatio);
-    const gigabytesPerMinute = round((estimatedBitrateMbps * 60) / (8 * 1024), 2);
-
-    return {
-      ox, oy, rawTotalW, rawTotalH, overlapTotalW, overlapTotalH,
-      contentW, contentH, totalPixels, megapixels, aspect, slices,
-      estimatedBitrateMbps, gigabytesPerMinute,
-    };
-  }, [cols, rows, singleW, singleH, overlapPctX, overlapPctY, fps, codec]);
-
-  // --- İMMERSİVE 5-YÜZEY KUTU AÇILIMI HESAPLAMASI ---
+  // ==========================================
+  // DİNAMİK İMMERSİVE HESAPLAMA MOTORU
+  // ==========================================
   const immersiveCalc = useMemo(() => {
-    // Projektörün duvardaki düşey (yükseklik) pikseli:
-    // Eğer Landscape ise dikey piksel = projH (örn: 1200)
-    // Eğer Portrait ise dikey piksel = projW (örn: 1920)
-    const singleProjVertPx = projOrientation === 'landscape' ? projH : projW;
-    const singleProjHorizPx = projOrientation === 'landscape' ? projW : projH;
+    // 1. UZUN DUVAR HESABI
+    const longP = RESOLUTIONS[longResIdx];
+    const longPw = longOrient === 'landscape' ? longP.w : longP.h;
+    const longPh = longOrient === 'landscape' ? longP.h : longP.w;
+    const longBlendX = longCols > 1 ? pctToPx(longBlendPct, longPw) : 0;
+    const longBlendY = longRows > 1 ? pctToPx(longBlendPct, longPh) : 0;
+    const longWallW = longCols * longPw - (longCols - 1) * longBlendX;
+    const longWallH = longRows * longPh - (longRows - 1) * longBlendY;
+    const longMmPerPxW = round((roomL * 1000) / longWallW, 2);
+    const longMmPerPxH = round((roomH * 1000) / longWallH, 2);
 
-    // Duvarda düşeyde birden fazla projektör varsa (blend çıkarılır)
-    const vertBlendPx = wallRows > 1 ? pctToPx(projBlendPct, singleProjVertPx) : 0;
-    const totalWallHpx = wallRows * singleProjVertPx - (wallRows - 1) * vertBlendPx;
+    // 2. KISA DUVAR HESABI
+    const shortP = RESOLUTIONS[shortResIdx];
+    const shortPw = shortOrient === 'landscape' ? shortP.w : shortP.h;
+    const shortPh = shortOrient === 'landscape' ? shortP.h : shortP.w;
+    const shortBlendX = shortCols > 1 ? pctToPx(shortBlendPct, shortPw) : 0;
+    const shortBlendY = shortRows > 1 ? pctToPx(shortBlendPct, shortPh) : 0;
+    const shortWallW = shortCols * shortPw - (shortCols - 1) * shortBlendX;
+    const shortWallH = shortRows * shortPh - (shortRows - 1) * shortBlendY;
+    const shortMmPerPxW = round((roomW * 1000) / shortWallW, 2);
+    const shortMmPerPxH = round((roomH * 1000) / shortWallH, 2);
 
-    // 1 metreye düşen piksel oranı (Duvar yüksekliği üzerinden homojen piksel boyutu):
-    const pxPerMeter = totalWallHpx / roomH;
-    const mmPerPixel = round((1000 / pxPerMeter), 2);
+    // 3. ZEMİN (FLOOR) HESABI
+    const floorP = RESOLUTIONS[floorResIdx];
+    const floorPw = floorOrient === 'landscape' ? floorP.w : floorP.h;
+    const floorPh = floorOrient === 'landscape' ? floorP.h : floorP.w;
+    const floorBlendX = floorCols > 1 ? pctToPx(floorBlendPct, floorPw) : 0;
+    const floorBlendY = floorRows > 1 ? pctToPx(floorBlendPct, floorPh) : 0;
+    const floorW = floorCols * floorPw - (floorCols - 1) * floorBlendX; // Uzun kenar boyu
+    const floorH = floorRows * floorPh - (floorRows - 1) * floorBlendY; // Kısa kenar eni
+    const floorMmPerPxW = round((roomL * 1000) / floorW, 2);
+    const floorMmPerPxH = round((roomW * 1000) / floorH, 2);
 
-    // Yüzey piksel boyutları (Seçilen projektörün çözünürlüğüne TAM DİNAMİK bağlı)
-    const longWallW = Math.round(roomL * pxPerMeter);
-    const longWallH = totalWallHpx;
-
-    const shortWallW = Math.round(roomW * pxPerMeter);
-    const shortWallH = totalWallHpx;
-
-    const floorW = longWallW;
-    const floorH = shortWallW;
-
-    // Kutu Açılımı (Cross Unwrap) Toplam Canvas Ebatları:
-    // Yatay: Sol Duvar Yüksekliği + Zemin Eni + Sağ Duvar Yüksekliği
-    const totalCanvasW = shortWallH + floorH + shortWallH;
-    // Düşey: Üst Kısa Duvar + Zemin Boyu + Alt Kısa Duvar
+    // KUTU AÇILIMI (CROSS UNWRAP) TOPLAM CANVAS EBATLARI:
+    // Yatay: Sol Duvar Yüksekliği + Zemin Eni (floorH) + Sağ Duvar Yüksekliği
+    const totalCanvasW = longWallH + floorH + longWallH;
+    // Düşey: Üst Kısa Duvar Yüksekliği + Zemin Boyu (floorW) + Alt Kısa Duvar Yüksekliği
     const totalCanvasH = shortWallH + floorW + shortWallH;
 
     const totalPixels = (longWallW * longWallH * 2) + (shortWallW * shortWallH * 2) + (floorW * floorH);
     const megapixels = round(totalPixels / 1_000_000, 2);
 
-    // Projektör Adedi Hesabı (Yatay blend çıkarılmış efektif genişlik)
-    const effProjHorizPx = singleProjHorizPx * (1 - projBlendPct / 100);
-    const effProjVertPx = singleProjVertPx * (1 - projBlendPct / 100);
+    // Toplam Projektör Sayısı
+    const totalProjLong = longCols * longRows * 2;
+    const totalProjShort = shortCols * shortRows * 2;
+    const totalProjFloor = floorCols * floorRows;
+    const totalProjectors = totalProjLong + totalProjShort + totalProjFloor;
 
-    const pjPerLongWall = Math.ceil(longWallW / effProjHorizPx);
-    const pjPerShortWall = Math.ceil(shortWallW / effProjHorizPx);
-
-    // Zemin için tavan projektörleri (Zemin eni ve boyu)
-    const pjFloorCols = Math.ceil(floorW / effProjHorizPx);
-    const pjFloorRows = Math.ceil(floorH / effProjVertPx);
-    const pjFloorTotal = pjFloorCols * pjFloorRows;
-
-    const totalProjectors = (pjPerLongWall * 2 * wallRows) + (pjPerShortWall * 2 * wallRows) + pjFloorTotal;
+    // Piksel homojenlik kontrolü (Duvar vs Zemin)
+    const mmList = [longMmPerPxW, longMmPerPxH, shortMmPerPxW, shortMmPerPxH, floorMmPerPxW, floorMmPerPxH];
+    const minMm = Math.min(...mmList), maxMm = Math.max(...mmList);
+    const densityMismatchPct = round(((maxMm - minMm) / minMm) * 100, 1);
 
     return {
-      singleProjVertPx,
-      singleProjHorizPx,
-      totalWallHpx,
-      pxPerMeter: round(pxPerMeter, 2),
-      mmPerPixel,
-      longWallW,
-      longWallH,
-      shortWallW,
-      shortWallH,
-      floorW,
-      floorH,
-      totalCanvasW,
-      totalCanvasH,
-      totalPixels,
-      megapixels,
-      pjPerLongWall,
-      pjPerShortWall,
-      pjFloorTotal,
-      totalProjectors,
+      longP, longWallW, longWallH, longBlendX, longMmPerPxW, longMmPerPxH,
+      shortP, shortWallW, shortWallH, shortBlendX, shortMmPerPxW, shortMmPerPxH,
+      floorP, floorW, floorH, floorBlendX, floorBlendY, floorMmPerPxW, floorMmPerPxH,
+      totalCanvasW, totalCanvasH, totalPixels, megapixels,
+      totalProjLong, totalProjShort, totalProjFloor, totalProjectors,
+      densityMismatchPct, minMm, maxMm,
     };
-  }, [roomL, roomW, roomH, wallRows, projOrientation, projW, projH, projBlendPct]);
+  }, [
+    roomL, roomW, roomH,
+    longResIdx, longCols, longRows, longOrient, longBlendPct,
+    shortResIdx, shortCols, shortRows, shortOrient, shortBlendPct,
+    floorResIdx, floorCols, floorRows, floorOrient, floorBlendPct,
+  ]);
 
-  // --- İMMERSIVE KUTU AÇILIMI ŞABLONU İNDİR (PNG) ---
+  // --- 1:1 KUTU AÇILIMI ŞABLONU İNDİR (PNG) ---
   const downloadImmersiveTemplate = () => {
     const c = document.createElement('canvas');
     c.width = immersiveCalc.totalCanvasW;
     c.height = immersiveCalc.totalCanvasH;
     const g = c.getContext('2d')!;
 
-    // Arkaplan
     g.fillStyle = '#0b1329';
     g.fillRect(0, 0, c.width, c.height);
 
-    const { shortWallH, floorH, floorW, shortWallW, longWallW, longWallH } = immersiveCalc;
+    const { longWallH, floorH, floorW, shortWallH, longWallW, shortWallW } = immersiveCalc;
 
-    // Koordinat yerleşimleri (Haç/Kutu Açılımı)
-    const floorX = shortWallH;
+    const floorX = longWallH;
     const floorY = shortWallH;
-    const leftWallX = 0;
-    const leftWallY = shortWallH;
-    const rightWallX = shortWallH + floorH;
-    const rightWallY = shortWallH;
-    const topWallX = shortWallH;
-    const topWallY = 0;
-    const botWallX = shortWallH;
-    const botWallY = shortWallH + floorW;
 
     const drawBox = (x: number, y: number, w: number, h: number, label: string, info: string, fillCol: string) => {
       g.fillStyle = fillCol;
@@ -204,49 +153,60 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
       g.fillText(info, x + w / 2, y + h / 2 + fs * 0.8);
     };
 
+    // Zemin & Duvarları Kutu Açılımı Olarak Çiz
     drawBox(floorX, floorY, floorH, floorW, 'ZEMİN (FLOOR)', `${floorW} × ${floorH} px (${roomL}m × ${roomW}m)`, 'rgba(14, 165, 233, 0.15)');
-    drawBox(leftWallX, leftWallY, shortWallH, floorW, 'SOL UZUN DUVAR', `${longWallW} × ${longWallH} px (${roomL}m × ${roomH}m)`, 'rgba(56, 189, 248, 0.1)');
-    drawBox(rightWallX, rightWallY, shortWallH, floorW, 'SAĞ UZUN DUVAR', `${longWallW} × ${longWallH} px (${roomL}m × ${roomH}m)`, 'rgba(56, 189, 248, 0.1)');
-    drawBox(topWallX, topWallY, floorH, shortWallH, 'ÖN KISA DUVAR', `${shortWallW} × ${shortWallH} px (${roomW}m × ${roomH}m)`, 'rgba(99, 102, 241, 0.15)');
-    drawBox(botWallX, botWallY, floorH, shortWallH, 'ARKA KISA DUVAR', `${shortWallW} × ${shortWallH} px (${roomW}m × ${roomH}m)`, 'rgba(99, 102, 241, 0.15)');
+    drawBox(0, floorY, longWallH, floorW, 'SOL UZUN DUVAR', `${longWallW} × ${longWallH} px (${roomL}m × ${roomH}m)`, 'rgba(56, 189, 248, 0.1)');
+    drawBox(floorX + floorH, floorY, longWallH, floorW, 'SAĞ UZUN DUVAR', `${longWallW} × ${longWallH} px (${roomL}m × ${roomH}m)`, 'rgba(56, 189, 248, 0.1)');
+    drawBox(floorX, 0, floorH, shortWallH, 'ÖN KISA DUVAR', `${shortWallW} × ${shortWallH} px (${roomW}m × ${roomH}m)`, 'rgba(99, 102, 241, 0.15)');
+    drawBox(floorX, floorY + floorW, floorH, shortWallH, 'ARKA KISA DUVAR', `${shortWallW} × ${shortWallH} px (${roomW}m × ${roomH}m)`, 'rgba(99, 102, 241, 0.15)');
 
     g.fillStyle = '#facc15';
-    g.font = 'bold 42px monospace';
+    g.font = 'bold 38px monospace';
     g.textAlign = 'left';
-    g.fillText(`IMMERSIVE BOX UNWRAP CANVAS: ${c.width} × ${c.height} px | Piksel Boyutu: ${immersiveCalc.mmPerPixel} mm/px`, 40, 60);
+    g.fillText(`IMMERSIVE CROSS UNWRAP CANVAS: ${c.width} × ${c.height} px | Proje Boyutu: ${roomL}m × ${roomW}m × ${roomH}m`, 40, 50);
 
     c.toBlob(blob => {
-      if (blob) download(`immersive-box-canvas-${c.width}x${c.height}.png`, blob);
+      if (blob) download(`immersive-canvas-${c.width}x${c.height}.png`, blob);
     });
   };
 
-  const copyImmersiveSpecs = () => {
+  // Metin Kopyalama
+  const copySpecs = () => {
     const text = `=======================================================
-AV MÜHENDİSLİK - İMMERSİVE ODA İÇERİK ŞARTNAMESİ (5-YÜZEY)
+AV MÜHENDİSLİK - 5-YÜZEY İMMERSİVE ODA İÇERİK ŞARTNAMESİ
 =======================================================
 MEKAN ÖLÇÜLERİ:
-- Oda Uzunluğu: ${roomL} m
-- Oda Genişliği: ${roomW} m
+- Oda Boyu (Uzun Duvarlar): ${roomL} m
+- Oda Eni (Kısa Duvarlar): ${roomW} m
 - Duvar Yüksekliği: ${roomH} m
-- Homojen Piksel Yoğunluğu: ${immersiveCalc.mmPerPixel} mm/px (${immersiveCalc.pxPerMeter} px/m)
 
-YÜZEY ÇÖZÜNÜRLÜKLERİ (İÇERİK TESLİM):
-1. Uzun Duvarlar (Sağ & Sol): ${immersiveCalc.longWallW} × ${immersiveCalc.longWallH} piksel (${roomL}m × ${roomH}m)
-2. Kısa Duvarlar (Ön & Arka): ${immersiveCalc.shortWallW} × ${immersiveCalc.shortWallH} piksel (${roomW}m × ${roomH}m)
-3. Zemin (Floor): ${immersiveCalc.floorW} × ${immersiveCalc.floorH} piksel (${roomL}m × ${roomW}m)
+PROJEKTÖR DONANIM & YÜZEY ÇÖZÜNÜRLÜKLERİ:
+1. UZUN DUVARLAR (2 Adet):
+   - Projektör: ${immersiveCalc.longP.label} (${longOrient})
+   - Adet: Duvar başına ${longCols}×${longRows} = ${longCols * longRows} Projektör (Toplam ${immersiveCalc.totalProjLong} Adet)
+   - Çözünürlük: ${immersiveCalc.longWallW} × ${immersiveCalc.longWallH} piksel
+   - Piksel Boyutu: ~${immersiveCalc.longMmPerPxW} mm/px
 
-KUTU AÇILIMI (CROSS UNWRAP) TOPLAM CANVAS:
-- Birleşik Render Ebatı: ${immersiveCalc.totalCanvasW} × ${immersiveCalc.totalCanvasH} piksel
+2. KISA DUVARLAR (2 Adet):
+   - Projektör: ${immersiveCalc.shortP.label} (${shortOrient})
+   - Adet: Duvar başına ${shortCols}×${shortRows} = ${shortCols * shortRows} Projektör (Toplam ${immersiveCalc.totalProjShort} Adet)
+   - Çözünürlük: ${immersiveCalc.shortWallW} × ${immersiveCalc.shortWallH} piksel
+   - Piksel Boyutu: ~${immersiveCalc.shortMmPerPxW} mm/px
+
+3. ZEMİN (FLOOR):
+   - Projektör: ${immersiveCalc.floorP.label} (${floorOrient})
+   - Adet: ${floorCols} Sütun × ${floorRows} Satır = ${immersiveCalc.totalProjFloor} Projektör
+   - Çözünürlük: ${immersiveCalc.floorW} × ${immersiveCalc.floorH} piksel
+   - Piksel Boyutu: ~${immersiveCalc.floorMmPerPxW} mm/px
+
+TOPLAM SİSTEM:
+- Toplam Projektör Adedi: ${immersiveCalc.totalProjectors} Projektör
+- Birleşik Kutu Açılımı (Unwrap) Render Ebatı: ${immersiveCalc.totalCanvasW} × ${immersiveCalc.totalCanvasH} piksel
 - Toplam Aktif Piksel: ${immersiveCalc.megapixels} Megapiksel (${immersiveCalc.totalPixels.toLocaleString()} px)
-
-PROJEKSİYON DONANIM TAHMİNİ (${projW}×${projH} WUXGA @ %${projBlendPct} Blend):
-- Uzun Duvarlar: ${immersiveCalc.pjPerLongWall} × 2 = ${immersiveCalc.pjPerLongWall * 2} Projektör
-- Kısa Duvarlar: ${immersiveCalc.pjPerShortWall} × 2 = ${immersiveCalc.pjPerShortWall * 2} Projektör
-- Zemin (Dikey Izgara): ${immersiveCalc.pjFloorTotal} Projektör
-- TOPLAM SİSTEM: Yaklaşık ${immersiveCalc.totalProjectors} Projektör
+- Piksel Yoğunluk Farkı: %${immersiveCalc.densityMismatchPct}
 =======================================================`;
     navigator.clipboard.writeText(text);
-    alert('İmmersive oda teknik şartnamesi panoya kopyalandı!');
+    alert('5-Yüzey teknik şartnamesi panoya kopyalandı!');
   };
 
   return (
@@ -258,298 +218,219 @@ PROJEKSİYON DONANIM TAHMİNİ (${projW}×${projH} WUXGA @ %${projBlendPct} Blen
             onClick={() => setPlannerMode('immersive')}
             className={`px-3 py-1.5 rounded font-semibold text-xs flex items-center gap-1.5 ${plannerMode === 'immersive' ? 'bg-sky-700 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-750'}`}
           >
-            <span>İmmersive Oda (5-Yüzey Kutu Açılımı)</span>
-            <span className="px-1.5 py-0.2 bg-sky-950 text-sky-200 rounded text-[10px]">Popüler</span>
-          </button>
-          <button
-            onClick={() => setPlannerMode('wall')}
-            className={`px-3 py-1.5 rounded font-semibold text-xs ${plannerMode === 'wall' ? 'bg-sky-700 text-white shadow' : 'bg-slate-800 text-slate-300 hover:bg-slate-750'}`}
-          >
-            Düz Duvar / Çoklu Projektör Sırası
+            <span>5-Yüzey İmmersive Kutu Açılımı (Bağımsız Projektör Girişi)</span>
           </button>
         </div>
         <span className="text-slate-400 text-[11px] hidden sm:inline">
-          After Effects, Premiere, Notch ve Unreal Engine stüdyoları için içerik şartnamesi.
+          Uzun duvar, kısa duvar ve zemin için bağımsız projektör modelleri ve dizilimleri.
         </span>
       </div>
 
-      {/* --- SEÇENEK 1: İMMERSİVE KUTU AÇILIMI MODU --- */}
-      {plannerMode === 'immersive' && (
-        <div className="grid lg:grid-cols-[380px_1fr] gap-4 flex-1 overflow-auto">
-          {/* Sol Panel: Mekan Ölçüleri */}
-          <div className="space-y-3 p-3.5 rounded border border-slate-700 bg-slate-900 overflow-auto" style={{ maxHeight: '84vh' }}>
-            <div className="border-b border-slate-700 pb-2">
-              <h2 className="text-sm font-semibold text-sky-300">5-Yüzey İmmersive Oda & Tünel</h2>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Sağ duvar, sol duvar, ön/arka duvarlar ve zemin için homojen piksel yoğunluklu kutu açılımı.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <span className="font-semibold text-slate-200">1. Fiziksel Mekan Boyutları (Metre)</span>
-              <div className="grid grid-cols-3 gap-2">
-                <label>Oda Boyu (m)
-                  <input className="inp font-bold text-sky-400" type="number" step="0.1" value={roomL} onChange={e => setRoomL(+e.target.value)} />
-                </label>
-                <label>Oda Eni (m)
-                  <input className="inp font-bold text-sky-400" type="number" step="0.1" value={roomW} onChange={e => setRoomW(+e.target.value)} />
-                </label>
-                <label>Yükseklik (m)
-                  <input className="inp font-bold text-sky-400" type="number" step="0.1" value={roomH} onChange={e => setRoomH(+e.target.value)} />
-                </label>
-              </div>
-            </div>
-
-            <div className="space-y-2 border-t border-slate-800 pt-2">
-              <span className="font-semibold text-slate-200">2. Projektör Donanımı & Çözünürlük Seçimi</span>
-              <div className="grid grid-cols-2 gap-2">
-                <label>Projektör Modeli / Çözünürlük
-                  <select className="inp font-bold text-sky-300" value={`${projW}x${projH}`} onChange={e => {
-                    const [w, h] = e.target.value.split('x').map(Number);
-                    setProjW(w); setProjH(h);
-                  }}>
-                    <option value="1920x1200">1920×1200 (WUXGA 16:10)</option>
-                    <option value="1920x1080">1920×1080 (Full HD 16:9)</option>
-                    <option value="3840x2160">3840×2160 (4K UHD 16:9)</option>
-                    <option value="4096x2160">4096×2160 (4K DCI 17:9)</option>
-                    <option value="1280x800">1280×800 (WXGA 16:10)</option>
-                  </select>
-                </label>
-                <label>Projektör Yönü (Orientation)
-                  <select className="inp font-semibold text-slate-200" value={projOrientation} onChange={e => setProjOrientation(e.target.value as any)}>
-                    <option value="landscape">Yatay (Landscape)</option>
-                    <option value="portrait">Dikey (Portrait / 90°)</option>
-                  </select>
-                </label>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <label>Duvarda Düşey Projektör Sırası
-                  <input className="inp" type="number" min="1" max="4" value={wallRows} onChange={e => setWallRows(Math.max(1, Math.round(+e.target.value)))} />
-                </label>
-                <label>Blend Örtüşme Payı (%)
-                  <input className="inp" type="number" min="5" max="30" value={projBlendPct} onChange={e => setProjBlendPct(+e.target.value)} />
-                </label>
-              </div>
-
-              {/* Projektörden Otomatik Türetilen Duvar Çözünürlük Özeti */}
-              <div className="p-2 bg-slate-950 rounded border border-slate-800 space-y-1 mt-1 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Duvar Yükseklik Pikseli:</span>
-                  <b className="text-emerald-400 font-mono text-xs">{immersiveCalc.totalWallHpx} px</b>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Piksel Boyutu (Homojen):</span>
-                  <b className="text-emerald-400 font-mono text-xs">{immersiveCalc.mmPerPixel} mm / px</b>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Piksel Yoğunluğu:</span>
-                  <span className="text-slate-300 font-mono">{immersiveCalc.pxPerMeter} px / metre</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Aksiyon Butonları */}
-            <div className="pt-2 border-t border-slate-800 space-y-2">
-              <button
-                className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 rounded text-white font-semibold flex items-center justify-center gap-1.5 shadow"
-                onClick={downloadImmersiveTemplate}
-              >
-                1:1 Kutu Açılımı Kılavuz Şablonu İndir (PNG)
-              </button>
-              <button
-                className="w-full py-2 bg-sky-700 hover:bg-sky-600 rounded text-white font-semibold flex items-center justify-center gap-1.5"
-                onClick={copyImmersiveSpecs}
-              >
-                İçerik Şartnamesini Kopyala (Metin)
-              </button>
+      <div className="grid lg:grid-cols-[420px_1fr] gap-4 flex-1 overflow-auto">
+        {/* SOL PANEL: MEKAN VE HER YÜZEY İÇİN AYRI PROJEKTÖR GİRİŞİ */}
+        <div className="space-y-3 p-3 rounded border border-slate-700 bg-slate-900 overflow-auto" style={{ maxHeight: '84vh' }}>
+          {/* Mekan Ölçüleri */}
+          <div className="border-b border-slate-800 pb-2">
+            <span className="font-semibold text-slate-200 block text-xs">Mekan Fiziksel Ölçüleri (Metre)</span>
+            <div className="grid grid-cols-3 gap-2 mt-1">
+              <label>Oda Boyu (m)<input className="inp font-bold text-sky-400" type="number" step="0.1" value={roomL} onChange={e => setRoomL(+e.target.value)} /></label>
+              <label>Oda Eni (m)<input className="inp font-bold text-sky-400" type="number" step="0.1" value={roomW} onChange={e => setRoomW(+e.target.value)} /></label>
+              <label>Yükseklik (m)<input className="inp font-bold text-sky-400" type="number" step="0.1" value={roomH} onChange={e => setRoomH(+e.target.value)} /></label>
             </div>
           </div>
 
-          {/* Sağ Panel: Canlı Kutu Açılımı Çizimi & Sonuçlar */}
-          <div className="space-y-3 min-w-0 flex flex-col overflow-auto">
-            {/* Büyük Sonuç Kartları */}
-            <div className="grid sm:grid-cols-3 gap-2.5">
-              <div className="p-3 bg-slate-900 border border-slate-800 rounded">
-                <span className="text-slate-400 block text-[11px]">Uzun Duvarlar (Sağ & Sol):</span>
-                <b className="text-base text-emerald-400 font-mono">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</b>
-                <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomH}m (2 Adet)</span>
-              </div>
-              <div className="p-3 bg-slate-900 border border-slate-800 rounded">
-                <span className="text-slate-400 block text-[11px]">Kısa Duvarlar (Ön & Arka):</span>
-                <b className="text-base text-emerald-400 font-mono">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</b>
-                <span className="text-slate-500 block text-[10px] mt-0.5">{roomW}m × {roomH}m (2 Adet)</span>
-              </div>
-              <div className="p-3 bg-slate-900 border border-slate-800 rounded">
-                <span className="text-slate-400 block text-[11px]">Zemin (Floor):</span>
-                <b className="text-base text-emerald-400 font-mono">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</b>
-                <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomW}m</span>
-              </div>
+          {/* 1. UZUN DUVAR PROJEKTÖRLERİ */}
+          <div className="p-2.5 rounded bg-slate-950 border border-sky-900/60 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-sky-400">1. Uzun Duvarlar (2 Adet, {roomL}m × {roomH}m)</span>
+              <span className="text-[10px] text-slate-400">{longCols * longRows * 2} Projektör</span>
             </div>
-
-            {/* Toplam Canvas & Donanım Kartı */}
-            <div className="bg-gradient-to-r from-sky-950/70 via-slate-900 to-slate-900 p-3.5 rounded border border-sky-800/70 flex flex-wrap justify-between items-center gap-3">
-              <div>
-                <span className="text-slate-400 text-[11px] block uppercase tracking-wider">Tek Parça Kutu Açılımı (Cross Unwrap) Render Boyutu:</span>
-                <span className="text-2xl font-black text-sky-300 font-mono">{immersiveCalc.totalCanvasW} × {immersiveCalc.totalCanvasH} px</span>
-                <span className="text-slate-400 ml-2">({immersiveCalc.megapixels} Megapiksel)</span>
-              </div>
-              <div className="text-right">
-                <span className="text-slate-400 text-[11px] block">Tahmini Projektör Adedi:</span>
-                <b className="text-amber-400 text-lg">{immersiveCalc.totalProjectors} Adet WUXGA</b>
-                <span className="text-slate-500 block text-[10px]">({immersiveCalc.pjPerLongWall*2} Yan + {immersiveCalc.pjPerShortWall*2} Ön/Arka + {immersiveCalc.pjFloorTotal} Zemin)</span>
-              </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <label>Projektör Modeli
+                <select className="inp" value={longResIdx} onChange={e => setLongResIdx(+e.target.value)}>
+                  {RESOLUTIONS.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
+                </select>
+              </label>
+              <label>Yön (Orientation)
+                <select className="inp" value={longOrient} onChange={e => setLongOrient(e.target.value as any)}>
+                  <option value="landscape">Yatay (Landscape)</option>
+                  <option value="portrait">Dikey (Portrait)</option>
+                </select>
+              </label>
+              <label>Yan Yana Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={longCols} onChange={e => setLongCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Üst Üste Sıra (Satır)<input className="inp" type="number" min="1" max="4" value={longRows} onChange={e => setLongRows(Math.max(1, Math.round(+e.target.value)))} /></label>
             </div>
-
-            {/* Görsel Kutu Açılımı Şeması (Görselinizdekiyle Birebir) */}
-            <div className="border border-slate-700 rounded bg-slate-950 p-4 flex-1 flex flex-col items-center justify-center min-h-[380px]">
-              <div className="text-xs text-slate-300 mb-2 font-semibold">5-Yüzey Kutu Açılımı (Unwrap Layout & Ölçülendirme)</div>
-              <div className="w-full flex-1 flex items-center justify-center">
-                <svg viewBox="0 0 700 840" className="max-w-full max-h-[360px] drop-shadow-md">
-                  {/* Merkez: Zemin */}
-                  <rect x="250" y="160" width="200" height="480" fill="#bae6fd" stroke="#0284c7" strokeWidth="3" />
-                  <text x="350" y="380" fill="#0369a1" fontSize="16" fontWeight="bold" textAnchor="middle">ZEMİN (FLOOR)</text>
-                  <text x="350" y="405" fill="#0f172a" fontSize="15" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</text>
-                  <text x="350" y="425" fill="#475569" fontSize="13" textAnchor="middle">({roomL}m × {roomW}m)</text>
-
-                  {/* Sol Uzun Duvar */}
-                  <rect x="90" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                  <text x="170" y="380" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(-90 170 380)">SOL UZUN DUVAR</text>
-                  <text x="170" y="405" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 405)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</text>
-
-                  {/* Sağ Uzun Duvar */}
-                  <rect x="450" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                  <text x="530" y="380" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(90 530 380)">SAĞ UZUN DUVAR</text>
-                  <text x="530" y="405" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 405)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</text>
-
-                  {/* Üst Kısa Duvar */}
-                  <rect x="250" y="40" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                  <text x="350" y="95" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ÖN KISA DUVAR</text>
-                  <text x="350" y="115" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</text>
-
-                  {/* Alt Kısa Duvar */}
-                  <rect x="250" y="640" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                  <text x="350" y="695" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ARKA KISA DUVAR</text>
-                  <text x="350" y="715" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</text>
-
-                  {/* Ölçülendirme Çizgileri ve Oklar */}
-                  {/* Üst Kısa Duvar Genişliği (7.00 m / 1954 px) */}
-                  <line x1="250" y1="25" x2="450" y2="25" stroke="#f59e0b" strokeWidth="2" />
-                  <line x1="250" y1="18" x2="250" y2="32" stroke="#f59e0b" strokeWidth="2" />
-                  <line x1="450" y1="18" x2="450" y2="32" stroke="#f59e0b" strokeWidth="2" />
-                  <text x="350" y="18" fill="#f59e0b" fontSize="13" fontWeight="bold" textAnchor="middle">{roomW} m ({immersiveCalc.shortWallW} px)</text>
-
-                  {/* Sol Duvar Yüksekliği (4.30 m / 1200 px) */}
-                  <line x1="90" y1="145" x2="250" y2="145" stroke="#f59e0b" strokeWidth="2" />
-                  <line x1="90" y1="138" x2="90" y2="152" stroke="#f59e0b" strokeWidth="2" />
-                  <line x1="250" y1="138" x2="250" y2="152" stroke="#f59e0b" strokeWidth="2" />
-                  <text x="170" y="138" fill="#f59e0b" fontSize="13" fontWeight="bold" textAnchor="middle">{roomH} m ({immersiveCalc.shortWallH} px)</text>
-
-                  {/* Sol Duvar Boyu (23.30 m / 6503 px) */}
-                  <line x1="65" y1="160" x2="65" y2="640" stroke="#f59e0b" strokeWidth="2" />
-                  <line x1="58" y1="160" x2="72" y2="160" stroke="#f59e0b" strokeWidth="2" />
-                  <line x1="58" y1="640" x2="72" y2="640" stroke="#f59e0b" strokeWidth="2" />
-                  <text x="50" y="405" fill="#f59e0b" fontSize="14" fontWeight="bold" textAnchor="middle" transform="rotate(-90 50 405)">{roomL} m ({immersiveCalc.longWallW} px)</text>
-                </svg>
-              </div>
+            <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
+              <span>Çözünürlük: <b className="text-emerald-400">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</b></span>
+              <span>Piksel: <b className="text-slate-200">~{immersiveCalc.longMmPerPxW} mm/px</b></span>
             </div>
+          </div>
+
+          {/* 2. KISA DUVAR PROJEKTÖRLERİ */}
+          <div className="p-2.5 rounded bg-slate-950 border border-indigo-900/60 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-indigo-400">2. Kısa Duvarlar (2 Adet, {roomW}m × {roomH}m)</span>
+              <span className="text-[10px] text-slate-400">{shortCols * shortRows * 2} Projektör</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <label>Projektör Modeli
+                <select className="inp" value={shortResIdx} onChange={e => setShortResIdx(+e.target.value)}>
+                  {RESOLUTIONS.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
+                </select>
+              </label>
+              <label>Yön (Orientation)
+                <select className="inp" value={shortOrient} onChange={e => setShortOrient(e.target.value as any)}>
+                  <option value="landscape">Yatay (Landscape)</option>
+                  <option value="portrait">Dikey (Portrait)</option>
+                </select>
+              </label>
+              <label>Yan Yana Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={shortCols} onChange={e => setShortCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Üst Üste Sıra (Satır)<input className="inp" type="number" min="1" max="4" value={shortRows} onChange={e => setShortRows(Math.max(1, Math.round(+e.target.value)))} /></label>
+            </div>
+            <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
+              <span>Çözünürlük: <b className="text-emerald-400">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</b></span>
+              <span>Piksel: <b className="text-slate-200">~{immersiveCalc.shortMmPerPxW} mm/px</b></span>
+            </div>
+          </div>
+
+          {/* 3. ZEMİN (FLOOR) PROJEKTÖRLERİ */}
+          <div className="p-2.5 rounded bg-slate-950 border border-teal-900/60 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <span className="font-semibold text-teal-400">3. Zemin (Floor, {roomL}m × {roomW}m)</span>
+              <span className="text-[10px] text-slate-400">{floorCols * floorRows} Projektör</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <label>Projektör Modeli
+                <select className="inp" value={floorResIdx} onChange={e => setFloorResIdx(+e.target.value)}>
+                  {RESOLUTIONS.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
+                </select>
+              </label>
+              <label>Yön (Orientation)
+                <select className="inp" value={floorOrient} onChange={e => setFloorOrient(e.target.value as any)}>
+                  <option value="landscape">Yatay (Landscape)</option>
+                  <option value="portrait">Dikey (Portrait)</option>
+                </select>
+              </label>
+              <label>Boyuna Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={floorCols} onChange={e => setFloorCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Enine Adet (Satır)<input className="inp" type="number" min="1" max="8" value={floorRows} onChange={e => setFloorRows(Math.max(1, Math.round(+e.target.value)))} /></label>
+            </div>
+            <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
+              <span>Çözünürlük: <b className="text-emerald-400">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</b></span>
+              <span>Piksel: <b className="text-slate-200">~{immersiveCalc.floorMmPerPxW} mm/px</b></span>
+            </div>
+          </div>
+
+          {/* Aksiyon Butonları */}
+          <div className="pt-2 border-t border-slate-800 space-y-2">
+            <button
+              className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 rounded text-white font-semibold flex items-center justify-center gap-1.5 shadow"
+              onClick={downloadImmersiveTemplate}
+            >
+              1:1 Kutu Açılımı Şablonu İndir (PNG)
+            </button>
+            <button
+              className="w-full py-2 bg-sky-700 hover:bg-sky-600 rounded text-white font-semibold flex items-center justify-center gap-1.5"
+              onClick={copySpecs}
+            >
+              5-Yüzey Şartnamesini Kopyala (Metin)
+            </button>
           </div>
         </div>
-      )}
 
-      {/* --- SEÇENEK 2: DÜZ DUVAR ÇOKLU PROJEKTÖR MODU --- */}
-      {plannerMode === 'wall' && (
-        <div className="grid lg:grid-cols-[380px_1fr] gap-4 flex-1 overflow-auto">
-          <div className="space-y-3 p-3.5 rounded border border-slate-700 bg-slate-900 overflow-auto" style={{ maxHeight: '84vh' }}>
-            <div className="border-b border-slate-700 pb-2">
-              <h2 className="text-sm font-semibold text-sky-300">Düz Duvar / Çizgisel Dizi</h2>
-              <p className="text-[11px] text-slate-400 mt-0.5">Yan yana veya ızgara düzeninde tek bir yüzeyi kaplayan projektör dizilimi.</p>
+        {/* SAĞ PANEL: HESAPLAMA ÇIKTILARI VE GÖRSEL ÇİZİM */}
+        <div className="space-y-3 min-w-0 flex flex-col overflow-auto">
+          {/* Çözünürlük Kartları */}
+          <div className="grid sm:grid-cols-3 gap-2">
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded">
+              <span className="text-slate-400 block text-[11px]">Uzun Duvarlar:</span>
+              <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</b>
+              <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomH}m (2 × {longCols*longRows} PJ)</span>
             </div>
-
-            <div className="space-y-1.5">
-              <span className="font-semibold text-slate-200">1. Projektör Dizilimi</span>
-              <div className="grid grid-cols-2 gap-2">
-                <label>Yatay Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={cols} onChange={e => setCols(Math.max(1, Math.round(+e.target.value)))} /></label>
-                <label>Dikey Adet (Satır)<input className="inp" type="number" min="1" max="8" value={rows} onChange={e => setRows(Math.max(1, Math.round(+e.target.value)))} /></label>
-              </div>
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded">
+              <span className="text-slate-400 block text-[11px]">Kısa Duvarlar:</span>
+              <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</b>
+              <span className="text-slate-500 block text-[10px] mt-0.5">{roomW}m × {roomH}m (2 × {shortCols*shortRows} PJ)</span>
             </div>
-
-            <div className="space-y-1.5 border-t border-slate-800 pt-2">
-              <div className="flex justify-between items-center">
-                <span className="font-semibold text-slate-200">2. Projektör Çözünürlüğü</span>
-                <label className="flex items-center gap-1 text-[11px]">
-                  <input type="checkbox" checked={isCustom} onChange={e => setIsCustom(e.target.checked)} />
-                  <span>Özel</span>
-                </label>
-              </div>
-              {!isCustom ? (
-                <select className="inp" value={resIdx} onChange={e => setResIdx(+e.target.value)}>
-                  {RESOLUTIONS.map((r, i) => (
-                    <option key={r.label} value={i}>{r.label}</option>
-                  ))}
-                </select>
-              ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  <label>Genişlik (px)<input className="inp" type="number" value={customW} onChange={e => setCustomW(+e.target.value)} /></label>
-                  <label>Yükseklik (px)<input className="inp" type="number" value={customH} onChange={e => setCustomH(+e.target.value)} /></label>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-1.5 border-t border-slate-800 pt-2">
-              <span className="font-semibold text-slate-200">3. Örtüşme (Overlap)</span>
-              <div>
-                <div className="flex justify-between">
-                  <span>Yatay Overlap: %{overlapPctX}</span>
-                  <b className="text-emerald-400">{wallCalc.ox} px</b>
-                </div>
-                <input className="w-full mt-1" type="range" min="0" max="40" value={overlapPctX} onChange={e => setOverlapPctX(+e.target.value)} disabled={cols <= 1} />
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-slate-800 space-y-2">
-              <button
-                className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 rounded text-white font-semibold"
-                onClick={() => {
-                  const canvas = document.createElement('canvas');
-                  canvas.width = wallCalc.contentW; canvas.height = wallCalc.contentH;
-                  const ctx = canvas.getContext('2d')!;
-                  ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, wallCalc.contentW, wallCalc.contentH);
-                  ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 4;
-                  ctx.strokeRect(4, 4, wallCalc.contentW - 8, wallCalc.contentH - 8);
-                  ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 36px monospace';
-                  ctx.fillText(`DUVAR ŞABLONU: ${wallCalc.contentW} × ${wallCalc.contentH} px`, 30, 60);
-                  canvas.toBlob(b => b && download(`wall-template-${wallCalc.contentW}x${wallCalc.contentH}.png`, b));
-                }}
-              >
-                1:1 Duvar Şablonu İndir (PNG)
-              </button>
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded">
+              <span className="text-slate-400 block text-[11px]">Zemin (Floor):</span>
+              <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</b>
+              <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomW}m ({floorCols*floorRows} PJ)</span>
             </div>
           </div>
 
-          <div className="space-y-3 min-w-0 flex flex-col">
-            <div className="bg-gradient-to-r from-sky-950/80 via-slate-900 to-slate-900 p-4 rounded-lg border border-sky-800/80 shadow">
-              <div className="text-slate-400 font-medium uppercase tracking-wider text-[11px]">Duvar Render Çözünürlüğü:</div>
-              <div className="flex flex-wrap items-baseline gap-3 mt-1">
-                <span className="text-3xl font-extrabold text-emerald-400 font-mono">{wallCalc.contentW} × {wallCalc.contentH} px</span>
-                <span className="text-slate-300">({wallCalc.aspect}:1)</span>
-              </div>
+          {/* Toplam Canvas & Projektör Kartı */}
+          <div className="bg-gradient-to-r from-sky-950/70 via-slate-900 to-slate-900 p-3 rounded border border-sky-800/70 flex flex-wrap justify-between items-center gap-2">
+            <div>
+              <span className="text-slate-400 text-[10px] block uppercase tracking-wider">Tek Parça Kutu Açılımı (Unwrap Canvas) Ebatı:</span>
+              <span className="text-xl lg:text-2xl font-black text-sky-300 font-mono">{immersiveCalc.totalCanvasW} × {immersiveCalc.totalCanvasH} px</span>
+              <span className="text-slate-400 text-xs ml-2">({immersiveCalc.megapixels} MP)</span>
             </div>
+            <div className="text-right">
+              <span className="text-slate-400 text-[10px] block">Toplam Projektör Donanımı:</span>
+              <b className="text-amber-400 text-base">{immersiveCalc.totalProjectors} Projektör</b>
+              <span className="text-slate-500 block text-[10px]">({immersiveCalc.totalProjLong} Yan + {immersiveCalc.totalProjShort} Ön/Arka + {immersiveCalc.totalProjFloor} Zemin)</span>
+            </div>
+          </div>
 
-            <div className="border border-slate-700 rounded bg-slate-950 p-4 flex-1 flex flex-col items-center justify-center min-h-[300px]">
-              <div className="text-xs text-slate-400 mb-2 font-semibold">Projektör Kesim & Dilim Haritası</div>
-              <svg viewBox={`0 0 ${wallCalc.contentW} ${wallCalc.contentH}`} className="max-w-full max-h-[260px] border border-slate-700 rounded bg-slate-900">
-                {wallCalc.slices.map((s, i) => (
-                  <g key={s.id}>
-                    <rect x={s.startX} y={s.startY} width={s.w} height={s.h} fill="rgba(56, 189, 248, 0.12)" stroke="#38bdf8" strokeWidth="4" />
-                    <text x={s.startX + s.w/2} y={s.startY + s.h/2} fill="#38bdf8" fontSize={s.h/10} fontWeight="bold" textAnchor="middle">{s.label}</text>
-                  </g>
-                ))}
+          {/* Piksel Homojenlik Uyarısı */}
+          {immersiveCalc.densityMismatchPct > 15 && (
+            <div className="p-2 rounded bg-amber-950/40 border border-amber-700/60 text-amber-300 text-[11px] flex justify-between items-center">
+              <span>⚠ Yüzeyler arası piksel boyutu farkı %{immersiveCalc.densityMismatchPct}! Duvar ile zemin arasında piksel ölçek farkı hissedilebilir.</span>
+              <span className="text-[10px] text-amber-400 underline cursor-help" title="Farkı kapatmak için zemin projektör adedini artırabilir veya çözünürlüğünü yükseltebilirsiniz.">Öneri</span>
+            </div>
+          )}
+
+          {/* Canlı Kutu Açılımı Vektör Çizimi */}
+          <div className="border border-slate-700 rounded bg-slate-950 p-3 flex-1 flex flex-col items-center justify-center min-h-[360px]">
+            <div className="text-xs text-slate-300 mb-1 font-semibold">5-Yüzey Kutu Açılımı (Ölçü Çizgileri & Piksel Eşleşmesi)</div>
+            <div className="w-full flex-1 flex items-center justify-center">
+              <svg viewBox="0 0 700 840" className="max-w-full max-h-[350px] drop-shadow-md">
+                {/* Merkez: Zemin */}
+                <rect x="250" y="160" width="200" height="480" fill="#bae6fd" stroke="#0284c7" strokeWidth="3" />
+                <text x="350" y="380" fill="#0369a1" fontSize="16" fontWeight="bold" textAnchor="middle">ZEMİN (FLOOR)</text>
+                <text x="350" y="405" fill="#0f172a" fontSize="15" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</text>
+                <text x="350" y="425" fill="#475569" fontSize="13" textAnchor="middle">({roomL}m × {roomW}m) · {floorCols*floorRows} PJ</text>
+
+                {/* Sol Uzun Duvar */}
+                <rect x="90" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
+                <text x="170" y="380" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(-90 170 380)">SOL UZUN DUVAR</text>
+                <text x="170" y="405" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 405)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
+
+                {/* Sağ Uzun Duvar */}
+                <rect x="450" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
+                <text x="530" y="380" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(90 530 380)">SAĞ UZUN DUVAR</text>
+                <text x="530" y="405" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 405)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
+
+                {/* Üst Kısa Duvar */}
+                <rect x="250" y="40" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
+                <text x="350" y="95" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ÖN KISA DUVAR</text>
+                <text x="350" y="115" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
+
+                {/* Alt Kısa Duvar */}
+                <rect x="250" y="640" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
+                <text x="350" y="695" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ARKA KISA DUVAR</text>
+                <text x="350" y="715" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
+
+                {/* Ölçülendirme Çizgileri */}
+                <line x1="250" y1="25" x2="450" y2="25" stroke="#f59e0b" strokeWidth="2" />
+                <line x1="250" y1="18" x2="250" y2="32" stroke="#f59e0b" strokeWidth="2" />
+                <line x1="450" y1="18" x2="450" y2="32" stroke="#f59e0b" strokeWidth="2" />
+                <text x="350" y="18" fill="#f59e0b" fontSize="13" fontWeight="bold" textAnchor="middle">{roomW} m ({immersiveCalc.shortWallW} px)</text>
+
+                <line x1="90" y1="145" x2="250" y2="145" stroke="#f59e0b" strokeWidth="2" />
+                <line x1="90" y1="138" x2="90" y2="152" stroke="#f59e0b" strokeWidth="2" />
+                <line x1="250" y1="138" x2="250" y2="152" stroke="#f59e0b" strokeWidth="2" />
+                <text x="170" y="138" fill="#f59e0b" fontSize="13" fontWeight="bold" textAnchor="middle">{roomH} m ({immersiveCalc.longWallH} px)</text>
+
+                <line x1="65" y1="160" x2="65" y2="640" stroke="#f59e0b" strokeWidth="2" />
+                <line x1="58" y1="160" x2="72" y2="160" stroke="#f59e0b" strokeWidth="2" />
+                <line x1="58" y1="640" x2="72" y2="640" stroke="#f59e0b" strokeWidth="2" />
+                <text x="50" y="405" fill="#f59e0b" fontSize="14" fontWeight="bold" textAnchor="middle" transform="rotate(-90 50 405)">{roomL} m ({immersiveCalc.longWallW} px)</text>
               </svg>
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
