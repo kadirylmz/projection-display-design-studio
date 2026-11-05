@@ -437,57 +437,128 @@ TOPLAM SİSTEM:
             </div>
           )}
 
-          {/* Canlı Kutu Açılımı Vektör Çizimi */}
-          <div className="border border-slate-700 rounded bg-slate-950 p-3 flex-1 flex flex-col items-center justify-center min-h-[360px]">
-            <div className="text-xs text-slate-300 mb-1 font-semibold">5-Yüzey Kutu Açılımı (Ölçü Çizgileri & Piksel Eşleşmesi)</div>
+          {/* Canlı Kutu Açılımı Vektör Çizimi (Kullanıcı Eskizine Tam Uyumlu) */}
+          <div className="border border-slate-700 rounded bg-slate-950 p-3 flex-1 flex flex-col items-center justify-center min-h-[480px]">
+            <div className="w-full flex justify-between items-center text-xs text-slate-300 mb-2 font-semibold border-b border-slate-800 pb-1.5">
+              <span>Teknik Açınım Planı (İçerik & Projeksiyon Eşleşmesi)</span>
+              <span className="font-mono text-emerald-400 text-[11px]">
+                Uzun Duvar: {immersiveCalc.longWallW}×{immersiveCalc.longWallH} | Kısa Duvar: {immersiveCalc.shortWallW}×{immersiveCalc.shortWallH} | Zemin: {immersiveCalc.floorW}×{immersiveCalc.floorH}
+              </span>
+            </div>
             <div className="w-full flex-1 flex items-center justify-center">
-              <svg viewBox="0 0 700 840" className="max-w-full max-h-[350px] drop-shadow-md">
-                {/* Merkez: Zemin */}
-                <rect x="250" y="160" width="200" height="480" fill="#bae6fd" stroke="#0284c7" strokeWidth="3" />
-                <text x="350" y="370" fill="#0369a1" fontSize="16" fontWeight="bold" textAnchor="middle">ZEMİN (FLOOR)</text>
-                <text x="350" y="395" fill="#0f172a" fontSize="15" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</text>
-                <text x="350" y="415" fill="#0369a1" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">Piksel: ~{immersiveCalc.floorAvgMm} mm/px ({immersiveCalc.floorPpi} PPI)</text>
-                <text x="350" y="435" fill="#475569" fontSize="12" textAnchor="middle">({roomL}m × {roomW}m) · {floorCols*floorRows} PJ</text>
+              <svg viewBox="0 0 920 840" className="w-full max-h-[520px] drop-shadow-md select-none font-sans">
+                {/* Referans Eksen Çizgileri (Görseldeki Kırmızı & Yeşil Eksenler) */}
+                <line x1="330" y1="10" x2="330" y2="830" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4 3" />
+                <line x1="20" y1="420" x2="900" y2="420" stroke="#dc2626" strokeWidth="1.5" strokeDasharray="3 3" />
 
-                {/* Sol Uzun Duvar */}
-                <rect x="90" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="170" y="370" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(-90 170 370)">SOL UZUN DUVAR</text>
-                <text x="170" y="395" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 395)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
-                <text x="170" y="415" fill="#0369a1" fontSize="12" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 415)">Piksel: ~{immersiveCalc.longAvgMm} mm/px ({immersiveCalc.longPpi} PPI)</text>
+                {/* 1. ÜST KISA DUVAR: Genişlik 180 (7.00 m), Yükseklik 110 */}
+                <rect x="240" y="50" width="180" height="110" fill="#bae6fd" stroke="#0f172a" strokeWidth="2.5" />
+                <text x="330" y="110" fill="#0f172a" fontSize="16" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  {immersiveCalc.shortWallW} pixel
+                </text>
+                <text x="330" y="130" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  ({immersiveCalc.shortWallH} px boy · ~{immersiveCalc.shortAvgMm} mm/px)
+                </text>
 
-                {/* Sağ Uzun Duvar */}
-                <rect x="450" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="530" y="370" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(90 530 370)">SAĞ UZUN DUVAR</text>
-                <text x="530" y="395" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 395)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
-                <text x="530" y="415" fill="#0369a1" fontSize="12" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 415)">Piksel: ~{immersiveCalc.longAvgMm} mm/px ({immersiveCalc.longPpi} PPI)</text>
+                {/* Üst Kısa Duvar Genişlik Ölçüsü (7,00 m) */}
+                <line x1="240" y1="36" x2="420" y2="36" stroke="#0f172a" strokeWidth="1.5" />
+                <path d="M 240 36 L 248 33 L 248 39 Z" fill="#0f172a" />
+                <path d="M 420 36 L 412 33 L 412 39 Z" fill="#0f172a" />
+                <text x="330" y="30" fill="#0f172a" fontSize="14" fontWeight="bold" textAnchor="middle">{roomW.toFixed(2).replace('.', ',')} m</text>
 
-                {/* Üst Kısa Duvar */}
-                <rect x="250" y="40" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="350" y="85" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ÖN KISA DUVAR</text>
-                <text x="350" y="105" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
-                <text x="350" y="125" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">Piksel: ~{immersiveCalc.shortAvgMm} mm/px ({immersiveCalc.shortPpi} PPI)</text>
+                {/* 2. MERKEZ: ZEMİN (FLOOR): Genişlik 180 (7.00 m), Boy 520 (23.30 m) */}
+                <rect x="240" y="160" width="180" height="520" fill="#bae6fd" stroke="#0f172a" strokeWidth="2.5" />
+                {/* Zemin Üzerinde Düşey Ölçü Metni */}
+                <text x="330" y="425" fill="#0f172a" fontSize="18" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  {immersiveCalc.floorW} pixel
+                </text>
+                <text x="330" y="450" fill="#0369a1" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  Zemin ({roomL}m × {roomW}m) · ~{immersiveCalc.floorAvgMm} mm/px
+                </text>
 
-                {/* Alt Kısa Duvar */}
-                <rect x="250" y="640" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="350" y="685" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ARKA KISA DUVAR</text>
-                <text x="350" y="705" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
-                <text x="350" y="725" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">Piksel: ~{immersiveCalc.shortAvgMm} mm/px ({immersiveCalc.shortPpi} PPI)</text>
+                {/* 3. SOL UZUN DUVAR: Genişlik 110 (4.30 m), Boy 520 (23.30 m) */}
+                <rect x="130" y="160" width="110" height="520" fill="#bae6fd" stroke="#0f172a" strokeWidth="2.5" />
+                <text x="185" y="425" fill="#0f172a" fontSize="16" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  {immersiveCalc.longWallH} pixel
+                </text>
+                <text x="185" y="445" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  ({immersiveCalc.longWallW} px)
+                </text>
 
-                {/* Ölçülendirme Çizgileri */}
-                <line x1="250" y1="25" x2="450" y2="25" stroke="#f59e0b" strokeWidth="2" />
-                <line x1="250" y1="18" x2="250" y2="32" stroke="#f59e0b" strokeWidth="2" />
-                <line x1="450" y1="18" x2="450" y2="32" stroke="#f59e0b" strokeWidth="2" />
-                <text x="350" y="18" fill="#f59e0b" fontSize="13" fontWeight="bold" textAnchor="middle">{roomW} m ({immersiveCalc.shortWallW} px)</text>
+                {/* Sol Duvar En Ölçüsü (4,30 m) */}
+                <line x1="130" y1="145" x2="240" y2="145" stroke="#0f172a" strokeWidth="1.5" />
+                <path d="M 130 145 L 138 142 L 138 148 Z" fill="#0f172a" />
+                <path d="M 240 145 L 232 142 L 232 148 Z" fill="#0f172a" />
+                <text x="185" y="140" fill="#0f172a" fontSize="13" fontWeight="bold" textAnchor="middle">{roomH.toFixed(2).replace('.', ',')} m</text>
 
-                <line x1="90" y1="145" x2="250" y2="145" stroke="#f59e0b" strokeWidth="2" />
-                <line x1="90" y1="138" x2="90" y2="152" stroke="#f59e0b" strokeWidth="2" />
-                <line x1="250" y1="138" x2="250" y2="152" stroke="#f59e0b" strokeWidth="2" />
-                <text x="170" y="138" fill="#f59e0b" fontSize="13" fontWeight="bold" textAnchor="middle">{roomH} m ({immersiveCalc.longWallH} px)</text>
+                {/* Sol Duvar Boy Ölçüsü (23,30 m) */}
+                <line x1="110" y1="160" x2="110" y2="680" stroke="#0f172a" strokeWidth="1.5" />
+                <path d="M 110 160 L 107 168 L 113 168 Z" fill="#0f172a" />
+                <path d="M 110 680 L 107 672 L 113 672 Z" fill="#0f172a" />
+                <text x="95" y="425" fill="#0f172a" fontSize="14" fontWeight="bold" textAnchor="end">{roomL.toFixed(2).replace('.', ',')} m</text>
 
-                <line x1="65" y1="160" x2="65" y2="640" stroke="#f59e0b" strokeWidth="2" />
-                <line x1="58" y1="160" x2="72" y2="160" stroke="#f59e0b" strokeWidth="2" />
-                <line x1="58" y1="640" x2="72" y2="640" stroke="#f59e0b" strokeWidth="2" />
-                <text x="50" y="405" fill="#f59e0b" fontSize="14" fontWeight="bold" textAnchor="middle" transform="rotate(-90 50 405)">{roomL} m ({immersiveCalc.longWallW} px)</text>
+                {/* 4. SAĞ UZUN DUVAR: Genişlik 110 (4.30 m), Boy 520 (23.30 m) */}
+                <rect x="420" y="160" width="110" height="520" fill="#bae6fd" stroke="#0f172a" strokeWidth="2.5" />
+                <text x="475" y="425" fill="#0f172a" fontSize="16" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  {immersiveCalc.longWallH} pixel
+                </text>
+                <text x="475" y="445" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  ({immersiveCalc.longWallW} px)
+                </text>
+
+                {/* 5. ALT KISA DUVAR: Genişlik 180 (7.00 m), Yükseklik 110 */}
+                <rect x="240" y="680" width="180" height="110" fill="#bae6fd" stroke="#0f172a" strokeWidth="2.5" />
+                <text x="330" y="740" fill="#0f172a" fontSize="16" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  {immersiveCalc.shortWallW} pixel
+                </text>
+                <text x="330" y="760" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
+                  ({immersiveCalc.shortWallH} px boy · ~{immersiveCalc.shortAvgMm} mm/px)
+                </text>
+
+                {/* SAĞ TARAFTAKİ TEKNİK BİLGİ BLOKLARI (Görseldeki Gibi Birebir) */}
+                <g transform="translate(560, 180)">
+                  <rect x="0" y="0" width="340" height="340" rx="8" fill="#090d16" stroke="#1e293b" strokeWidth="1.5" />
+                  
+                  {/* Başlık: Projektör Özellikleri */}
+                  <text x="20" y="32" fill="#f8fafc" fontSize="15" fontWeight="bold">
+                    Projektör Çözünürlüğü:
+                  </text>
+                  <text x="20" y="55" fill="#38bdf8" fontSize="16" fontWeight="bold" fontFamily="monospace">
+                    {immersiveCalc.longP.w} × {immersiveCalc.longP.h} ({immersiveCalc.longP.label})
+                  </text>
+
+                  <line x1="20" y1="75" x2="320" y2="75" stroke="#334155" strokeWidth="1" />
+
+                  {/* Uzun Duvar Bilgisi */}
+                  <text x="20" y="105" fill="#94a3b8" fontSize="12" fontWeight="bold">Uzun Duvar Çözünürlüğü:</text>
+                  <text x="20" y="128" fill="#4ade80" fontSize="17" fontWeight="bold" fontFamily="monospace">
+                    {immersiveCalc.longWallW} × {immersiveCalc.longWallH} pixel
+                  </text>
+                  <text x="20" y="148" fill="#64748b" fontSize="11">
+                    Piksel Boyutu: ~{immersiveCalc.longAvgMm} mm/px ({immersiveCalc.longPpi} PPI)
+                  </text>
+
+                  {/* Kısa Duvar Bilgisi */}
+                  <text x="20" y="180" fill="#94a3b8" fontSize="12" fontWeight="bold">Kısa Duvar Çözünürlüğü:</text>
+                  <text x="20" y="203" fill="#4ade80" fontSize="17" fontWeight="bold" fontFamily="monospace">
+                    {immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} pixel
+                  </text>
+                  <text x="20" y="223" fill="#64748b" fontSize="11">
+                    Piksel Boyutu: ~{immersiveCalc.shortAvgMm} mm/px ({immersiveCalc.shortPpi} PPI)
+                  </text>
+
+                  {/* Zemin Bilgisi */}
+                  <text x="20" y="255" fill="#94a3b8" fontSize="12" fontWeight="bold">Zemin Çözünürlüğü:</text>
+                  <text x="20" y="278" fill="#4ade80" fontSize="17" fontWeight="bold" fontFamily="monospace">
+                    {immersiveCalc.floorW} × {immersiveCalc.floorH} pixel
+                  </text>
+                  <text x="20" y="298" fill="#64748b" fontSize="11">
+                    Piksel Boyutu: ~{immersiveCalc.floorAvgMm} mm/px ({immersiveCalc.floorPpi} PPI)
+                  </text>
+
+                  {/* Toplam Canvas Alt Özet */}
+                  <rect x="15" y="315" width="310" height="1" fill="#334155" />
+                </g>
               </svg>
             </div>
           </div>
