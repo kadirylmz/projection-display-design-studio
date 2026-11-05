@@ -61,8 +61,11 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
     const longBlendY = longRows > 1 ? pctToPx(longBlendPct, longPh) : 0;
     const longWallW = longCols * longPw - (longCols - 1) * longBlendX;
     const longWallH = longRows * longPh - (longRows - 1) * longBlendY;
+    // Piksel boyutu (mm/px) ve PPI
     const longMmPerPxW = round((roomL * 1000) / longWallW, 2);
     const longMmPerPxH = round((roomH * 1000) / longWallH, 2);
+    const longAvgMm = round((longMmPerPxW + longMmPerPxH) / 2, 2);
+    const longPpi = round(25.4 / longAvgMm, 1);
 
     // 2. KISA DUVAR HESABI
     const shortP = RESOLUTIONS[shortResIdx];
@@ -74,6 +77,8 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
     const shortWallH = shortRows * shortPh - (shortRows - 1) * shortBlendY;
     const shortMmPerPxW = round((roomW * 1000) / shortWallW, 2);
     const shortMmPerPxH = round((roomH * 1000) / shortWallH, 2);
+    const shortAvgMm = round((shortMmPerPxW + shortMmPerPxH) / 2, 2);
+    const shortPpi = round(25.4 / shortAvgMm, 1);
 
     // 3. ZEMİN (FLOOR) HESABI
     const floorP = RESOLUTIONS[floorResIdx];
@@ -85,6 +90,8 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
     const floorH = floorRows * floorPh - (floorRows - 1) * floorBlendY; // Kısa kenar eni
     const floorMmPerPxW = round((roomL * 1000) / floorW, 2);
     const floorMmPerPxH = round((roomW * 1000) / floorH, 2);
+    const floorAvgMm = round((floorMmPerPxW + floorMmPerPxH) / 2, 2);
+    const floorPpi = round(25.4 / floorAvgMm, 1);
 
     // KUTU AÇILIMI (CROSS UNWRAP) TOPLAM CANVAS EBATLARI:
     // Yatay: Sol Duvar Yüksekliği + Zemin Eni (floorH) + Sağ Duvar Yüksekliği
@@ -107,9 +114,9 @@ export default function ContentPlanner({ unit }: { unit: LengthUnit }) {
     const densityMismatchPct = round(((maxMm - minMm) / minMm) * 100, 1);
 
     return {
-      longP, longWallW, longWallH, longBlendX, longMmPerPxW, longMmPerPxH,
-      shortP, shortWallW, shortWallH, shortBlendX, shortMmPerPxW, shortMmPerPxH,
-      floorP, floorW, floorH, floorBlendX, floorBlendY, floorMmPerPxW, floorMmPerPxH,
+      longP, longWallW, longWallH, longBlendX, longMmPerPxW, longMmPerPxH, longAvgMm, longPpi,
+      shortP, shortWallW, shortWallH, shortBlendX, shortMmPerPxW, shortMmPerPxH, shortAvgMm, shortPpi,
+      floorP, floorW, floorH, floorBlendX, floorBlendY, floorMmPerPxW, floorMmPerPxH, floorAvgMm, floorPpi,
       totalCanvasW, totalCanvasH, totalPixels, megapixels,
       totalProjLong, totalProjShort, totalProjFloor, totalProjectors,
       densityMismatchPct, minMm, maxMm,
@@ -339,22 +346,72 @@ TOPLAM SİSTEM:
 
         {/* SAĞ PANEL: HESAPLAMA ÇIKTILARI VE GÖRSEL ÇİZİM */}
         <div className="space-y-3 min-w-0 flex flex-col overflow-auto">
-          {/* Çözünürlük Kartları */}
+          {/* Çözünürlük Kartları & Piksel Yoğunluğu (Mevcut vs İdeal) */}
           <div className="grid sm:grid-cols-3 gap-2">
-            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded">
-              <span className="text-slate-400 block text-[11px]">Uzun Duvarlar:</span>
-              <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</b>
-              <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomH}m (2 × {longCols*longRows} PJ)</span>
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded flex flex-col justify-between">
+              <div>
+                <span className="text-slate-400 block text-[11px] font-medium">Uzun Duvarlar (2×):</span>
+                <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</b>
+                <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomH}m (2 × {longCols*longRows} PJ)</span>
+              </div>
+              <div className="mt-2 pt-1.5 border-t border-slate-800 text-[10.5px]">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Piksel Boyutu (Mevcut):</span>
+                  <span className="font-mono font-bold text-sky-400">~{immersiveCalc.longAvgMm} mm/px</span>
+                </div>
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="text-slate-500">Piksel Yoğunluğu:</span>
+                  <span className="text-slate-300 font-mono">{immersiveCalc.longPpi} PPI</span>
+                </div>
+                <div className="flex justify-between items-center text-[10px] text-emerald-400/80">
+                  <span>İdeal Müze / İmmersive:</span>
+                  <span>2.0 - 3.5 mm</span>
+                </div>
+              </div>
             </div>
-            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded">
-              <span className="text-slate-400 block text-[11px]">Kısa Duvarlar:</span>
-              <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</b>
-              <span className="text-slate-500 block text-[10px] mt-0.5">{roomW}m × {roomH}m (2 × {shortCols*shortRows} PJ)</span>
+
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded flex flex-col justify-between">
+              <div>
+                <span className="text-slate-400 block text-[11px] font-medium">Kısa Duvarlar (2×):</span>
+                <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</b>
+                <span className="text-slate-500 block text-[10px] mt-0.5">{roomW}m × {roomH}m (2 × {shortCols*shortRows} PJ)</span>
+              </div>
+              <div className="mt-2 pt-1.5 border-t border-slate-800 text-[10.5px]">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Piksel Boyutu (Mevcut):</span>
+                  <span className="font-mono font-bold text-sky-400">~{immersiveCalc.shortAvgMm} mm/px</span>
+                </div>
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="text-slate-500">Piksel Yoğunluğu:</span>
+                  <span className="text-slate-300 font-mono">{immersiveCalc.shortPpi} PPI</span>
+                </div>
+                <div className="flex justify-between items-center text-[10px] text-emerald-400/80">
+                  <span>İdeal Müze / İmmersive:</span>
+                  <span>2.0 - 3.5 mm</span>
+                </div>
+              </div>
             </div>
-            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded">
-              <span className="text-slate-400 block text-[11px]">Zemin (Floor):</span>
-              <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</b>
-              <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomW}m ({floorCols*floorRows} PJ)</span>
+
+            <div className="p-2.5 bg-slate-900 border border-slate-800 rounded flex flex-col justify-between">
+              <div>
+                <span className="text-slate-400 block text-[11px] font-medium">Zemin (Floor):</span>
+                <b className="text-sm text-emerald-400 font-mono">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</b>
+                <span className="text-slate-500 block text-[10px] mt-0.5">{roomL}m × {roomW}m ({floorCols*floorRows} PJ)</span>
+              </div>
+              <div className="mt-2 pt-1.5 border-t border-slate-800 text-[10.5px]">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Piksel Boyutu (Mevcut):</span>
+                  <span className="font-mono font-bold text-sky-400">~{immersiveCalc.floorAvgMm} mm/px</span>
+                </div>
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="text-slate-500">Piksel Yoğunluğu:</span>
+                  <span className="text-slate-300 font-mono">{immersiveCalc.floorPpi} PPI</span>
+                </div>
+                <div className="flex justify-between items-center text-[10px] text-emerald-400/80">
+                  <span>İdeal Zemin Yürüyüş:</span>
+                  <span>2.5 - 4.5 mm</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -387,29 +444,34 @@ TOPLAM SİSTEM:
               <svg viewBox="0 0 700 840" className="max-w-full max-h-[350px] drop-shadow-md">
                 {/* Merkez: Zemin */}
                 <rect x="250" y="160" width="200" height="480" fill="#bae6fd" stroke="#0284c7" strokeWidth="3" />
-                <text x="350" y="380" fill="#0369a1" fontSize="16" fontWeight="bold" textAnchor="middle">ZEMİN (FLOOR)</text>
-                <text x="350" y="405" fill="#0f172a" fontSize="15" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</text>
-                <text x="350" y="425" fill="#475569" fontSize="13" textAnchor="middle">({roomL}m × {roomW}m) · {floorCols*floorRows} PJ</text>
+                <text x="350" y="370" fill="#0369a1" fontSize="16" fontWeight="bold" textAnchor="middle">ZEMİN (FLOOR)</text>
+                <text x="350" y="395" fill="#0f172a" fontSize="15" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</text>
+                <text x="350" y="415" fill="#0369a1" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">Piksel: ~{immersiveCalc.floorAvgMm} mm/px ({immersiveCalc.floorPpi} PPI)</text>
+                <text x="350" y="435" fill="#475569" fontSize="12" textAnchor="middle">({roomL}m × {roomW}m) · {floorCols*floorRows} PJ</text>
 
                 {/* Sol Uzun Duvar */}
                 <rect x="90" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="170" y="380" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(-90 170 380)">SOL UZUN DUVAR</text>
-                <text x="170" y="405" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 405)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
+                <text x="170" y="370" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(-90 170 370)">SOL UZUN DUVAR</text>
+                <text x="170" y="395" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 395)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
+                <text x="170" y="415" fill="#0369a1" fontSize="12" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(-90 170 415)">Piksel: ~{immersiveCalc.longAvgMm} mm/px ({immersiveCalc.longPpi} PPI)</text>
 
                 {/* Sağ Uzun Duvar */}
                 <rect x="450" y="160" width="160" height="480" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="530" y="380" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(90 530 380)">SAĞ UZUN DUVAR</text>
-                <text x="530" y="405" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 405)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
+                <text x="530" y="370" fill="#0369a1" fontSize="15" fontWeight="bold" textAnchor="middle" transform="rotate(90 530 370)">SAĞ UZUN DUVAR</text>
+                <text x="530" y="395" fill="#0f172a" fontSize="14" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 395)">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px ({longCols*longRows} PJ)</text>
+                <text x="530" y="415" fill="#0369a1" fontSize="12" fontWeight="bold" fontFamily="monospace" textAnchor="middle" transform="rotate(90 530 415)">Piksel: ~{immersiveCalc.longAvgMm} mm/px ({immersiveCalc.longPpi} PPI)</text>
 
                 {/* Üst Kısa Duvar */}
                 <rect x="250" y="40" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="350" y="95" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ÖN KISA DUVAR</text>
-                <text x="350" y="115" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
+                <text x="350" y="85" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ÖN KISA DUVAR</text>
+                <text x="350" y="105" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
+                <text x="350" y="125" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">Piksel: ~{immersiveCalc.shortAvgMm} mm/px ({immersiveCalc.shortPpi} PPI)</text>
 
                 {/* Alt Kısa Duvar */}
                 <rect x="250" y="640" width="200" height="120" fill="#e0f2fe" stroke="#0284c7" strokeWidth="3" />
-                <text x="350" y="695" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ARKA KISA DUVAR</text>
-                <text x="350" y="715" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
+                <text x="350" y="685" fill="#0369a1" fontSize="14" fontWeight="bold" textAnchor="middle">ARKA KISA DUVAR</text>
+                <text x="350" y="705" fill="#0f172a" fontSize="13" fontWeight="bold" fontFamily="monospace" textAnchor="middle">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px ({shortCols*shortRows} PJ)</text>
+                <text x="350" y="725" fill="#0369a1" fontSize="11" fontWeight="bold" fontFamily="monospace" textAnchor="middle">Piksel: ~{immersiveCalc.shortAvgMm} mm/px ({immersiveCalc.shortPpi} PPI)</text>
 
                 {/* Ölçülendirme Çizgileri */}
                 <line x1="250" y1="25" x2="450" y2="25" stroke="#f59e0b" strokeWidth="2" />
