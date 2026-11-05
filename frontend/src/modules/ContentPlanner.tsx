@@ -264,8 +264,14 @@ TOPLAM SİSTEM:
                   <option value="portrait">Dikey (Portrait)</option>
                 </select>
               </label>
-              <label>Yan Yana Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={longCols} onChange={e => setLongCols(Math.max(1, Math.round(+e.target.value)))} /></label>
-              <label>Üst Üste Sıra (Satır)<input className="inp" type="number" min="1" max="4" value={longRows} onChange={e => setLongRows(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Projektör Sayısı (Adet)<input className="inp" type="number" min="1" max="16" value={longCols} onChange={e => setLongCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Overlap / Örtüşme (% veya Px)
+                <div className="flex gap-1">
+                  <input className="inp font-bold" type="number" min="0" max="50" value={longBlendPct} onChange={e => setLongBlendPct(+e.target.value)} />
+                  <span className="self-center text-slate-400 font-mono text-[10px]">% ({longCols > 1 ? pctToPx(longBlendPct, longOrient === 'landscape' ? RESOLUTIONS[longResIdx].w : RESOLUTIONS[longResIdx].h) : 0}px)</span>
+                </div>
+              </label>
+              <label>Sıra (Düşey Satır)<input className="inp" type="number" min="1" max="4" value={longRows} onChange={e => setLongRows(Math.max(1, Math.round(+e.target.value)))} /></label>
             </div>
             <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
               <span>Çözünürlük: <b className="text-emerald-400">{immersiveCalc.longWallW} × {immersiveCalc.longWallH} px</b></span>
@@ -291,8 +297,14 @@ TOPLAM SİSTEM:
                   <option value="portrait">Dikey (Portrait)</option>
                 </select>
               </label>
-              <label>Yan Yana Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={shortCols} onChange={e => setShortCols(Math.max(1, Math.round(+e.target.value)))} /></label>
-              <label>Üst Üste Sıra (Satır)<input className="inp" type="number" min="1" max="4" value={shortRows} onChange={e => setShortRows(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Projektör Sayısı (Adet)<input className="inp" type="number" min="1" max="16" value={shortCols} onChange={e => setShortCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Overlap / Örtüşme (% veya Px)
+                <div className="flex gap-1">
+                  <input className="inp font-bold" type="number" min="0" max="50" value={shortBlendPct} onChange={e => setShortBlendPct(+e.target.value)} />
+                  <span className="self-center text-slate-400 font-mono text-[10px]">% ({shortCols > 1 ? pctToPx(shortBlendPct, shortOrient === 'landscape' ? RESOLUTIONS[shortResIdx].w : RESOLUTIONS[shortResIdx].h) : 0}px)</span>
+                </div>
+              </label>
+              <label>Sıra (Düşey Satır)<input className="inp" type="number" min="1" max="4" value={shortRows} onChange={e => setShortRows(Math.max(1, Math.round(+e.target.value)))} /></label>
             </div>
             <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
               <span>Çözünürlük: <b className="text-emerald-400">{immersiveCalc.shortWallW} × {immersiveCalc.shortWallH} px</b></span>
@@ -318,8 +330,14 @@ TOPLAM SİSTEM:
                   <option value="portrait">Dikey (Portrait)</option>
                 </select>
               </label>
-              <label>Boyuna Adet (Sütun)<input className="inp" type="number" min="1" max="16" value={floorCols} onChange={e => setFloorCols(Math.max(1, Math.round(+e.target.value)))} /></label>
-              <label>Enine Adet (Satır)<input className="inp" type="number" min="1" max="8" value={floorRows} onChange={e => setFloorRows(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Projektör Sayısı (Boyuna X)<input className="inp" type="number" min="1" max="16" value={floorCols} onChange={e => setFloorCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+              <label>Overlap / Örtüşme (% veya Px)
+                <div className="flex gap-1">
+                  <input className="inp font-bold" type="number" min="0" max="50" value={floorBlendPct} onChange={e => setFloorBlendPct(+e.target.value)} />
+                  <span className="self-center text-slate-400 font-mono text-[10px]">% ({floorCols > 1 ? pctToPx(floorBlendPct, floorOrient === 'landscape' ? RESOLUTIONS[floorResIdx].w : RESOLUTIONS[floorResIdx].h) : 0}px)</span>
+                </div>
+              </label>
+              <label>Sıra Sayısı (Enine Y)<input className="inp" type="number" min="1" max="8" value={floorRows} onChange={e => setFloorRows(Math.max(1, Math.round(+e.target.value)))} /></label>
             </div>
             <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-800 text-slate-300">
               <span>Çözünürlük: <b className="text-emerald-400">{immersiveCalc.floorW} × {immersiveCalc.floorH} px</b></span>
@@ -557,7 +575,10 @@ TOPLAM SİSTEM:
                   </text>
 
                   {/* Toplam Canvas Alt Özet */}
-                  <rect x="15" y="315" width="310" height="1" fill="#334155" />
+                  <line x1="20" y1="315" x2="320" y2="315" stroke="#334155" strokeWidth="1" />
+                  <text x="20" y="335" fill="#facc15" fontSize="13" fontWeight="bold">
+                    Overlap Formülü: W = (N×w) - ((N-1)×O)
+                  </text>
                 </g>
               </svg>
             </div>
