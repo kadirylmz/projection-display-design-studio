@@ -5,6 +5,7 @@ import LuxCalculator from './modules/LuxCalculator';
 import GeometrySimulator from './modules/GeometrySimulator';
 import MultiProjectorDesigner from './modules/MultiProjectorDesigner';
 import PixelMappingStudio from './modules/PixelMappingStudio';
+import ContentPlanner from './modules/ContentPlanner';
 import LedCalculator from './modules/LedCalculator';
 import LcdCalculator from './modules/LcdCalculator';
 import EquipmentDatabase from './modules/EquipmentDatabase';
@@ -23,6 +24,7 @@ const MODULES: Mod[] = [
   { id: 'lux', name: 'Lux & Parlaklık', ready: true, phase: 2 },
   { id: 'geometry', name: 'Projeksiyon Geometrisi', ready: true, phase: 2 },
   { id: 'multi', name: 'Çoklu Projektör', ready: true, phase: 3 },
+  { id: 'content', name: 'İçerik Çözünürlüğü Planlayıcı', ready: true, phase: 3 },
   { id: 'pixel', name: 'Piksel Haritalama', ready: true, phase: 3 },
   { id: 'led', name: 'LED Duvar', ready: true, phase: 4 },
   { id: 'lcd', name: 'LCD Video Duvarı', ready: true, phase: 4 },
@@ -78,6 +80,7 @@ export default function App() {
             : active === 'lux' ? <LuxCalculator unit={unit} />
             : active === 'geometry' ? <GeometrySimulator unit={unit} />
             : active === 'multi' ? <MultiProjectorDesigner />
+            : active === 'content' ? <ContentPlanner unit={unit} />
             : active === 'pixel' ? <PixelMappingStudio />
             : active === 'led' ? <LedCalculator unit={unit} />
             : active === 'lcd' ? <LcdCalculator unit={unit} />
