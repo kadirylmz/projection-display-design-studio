@@ -33,6 +33,47 @@ export function layoutToSvg(L: LayoutResult, o: SvgOptions = {}): string {
     parts.push(`<rect data-id="${esc(s.id)}" x="${s.x}" y="${s.y}" width="${s.w}" height="${s.h}" fill="${c}" fill-opacity="0.18" stroke="${c}" stroke-width="${fs / 10}"/>`);
     if (a.w !== s.w || a.h !== s.h)
       parts.push(`<rect x="${a.x}" y="${a.y}" width="${a.w}" height="${a.h}" fill="none" stroke="${c}" stroke-dasharray="${fs / 2} ${fs / 3}" stroke-width="${fs / 14}"/>`);
+    if (s.blend) {
+      const b = s.blend;
+      if (b.l > 0) parts.push(`<rect x="${s.x}" y="${s.y}" width="${b.l}" height="${s.h}" fill="${c}" fill-opacity="0.15" stroke="${c}" stroke-dasharray="${fs / 4}"/>`);
+      if (b.r > 0) parts.push(`<rect x="${s.x + s.w - b.r}" y="${s.y}" width="${b.r}" height="${s.h}" fill="${c}" fill-opacity="0.15" stroke="${c}" stroke-dasharray="${fs / 4}"/>`);
+      if (b.t > 0) parts.push(`<rect x="${s.x}" y="${s.y}" width="${s.w}" height="${b.t}" fill="${c}" fill-opacity="0.15" stroke="${c}" stroke-dasharray="${fs / 4}"/>`);
+      if (b.b > 0) parts.push(`<rect x="${s.x}" y="${s.y + s.h - b.b}" width="${s.w}" height="${b.b}" fill="${c}" fill-opacity="0.15" stroke="${c}" stroke-dasharray="${fs / 4}"/>`);
+    }
+    if (s.polygonMask && s.polygonMask.length >= 3) {
+      const pts = s.polygonMask.map(p => `${s.x + p.x},${s.y + p.y}`).join(' ');
+      parts.push(`<polygon points="${pts}" fill="${c}" fill-opacity="0.22" stroke="#facc15" stroke-width="${fs / 10}"/>`);
+    }
+    if (s.bezierMask && s.bezierMask.length >= 2) {
+      const bm = s.bezierMask;
+      const dPath: string[] = [`M ${s.x + bm[0].x} ${s.y + bm[0].y}`];
+      for (let k = 0; k < bm.length; k++) {
+        const cur = bm[k], nxt = bm[(k + 1) % bm.length];
+        dPath.push(`C ${s.x + cur.cp2x} ${s.y + cur.cp2y}, ${s.x + nxt.cp1x} ${s.y + nxt.cp1y}, ${s.x + nxt.x} ${s.y + nxt.y}`);
+      }
+      parts.push(`<path d="${dPath.join(' ')} Z" fill="${c}" fill-opacity="0.22" stroke="#fb7185" stroke-width="${fs / 10}"/>`);
+    }
+    if (s.warp && s.warp.points.length === (s.warp.cols + 1) * (s.warp.rows + 1)) {
+      const { cols, rows, points } = s.warp;
+      const wp = (r: number, cl: number) => points[r * (cols + 1) + cl];
+      const wLines: string[] = [];
+      for (let r = 0; r <= rows; r++) {
+        for (let cl = 0; cl < cols; cl++) {
+          const p1 = wp(r, cl), p2 = wp(r, cl + 1);
+          wLines.push(`M${s.x + p1.x} ${s.y + p1.y}L${s.x + p2.x} ${s.y + p2.y}`);
+        }
+      }
+      for (let cl = 0; cl <= cols; cl++) {
+        for (let r = 0; r < rows; r++) {
+          const p1 = wp(r, cl), p2 = wp(r + 1, cl);
+          wLines.push(`M${s.x + p1.x} ${s.y + p1.y}L${s.x + p2.x} ${s.y + p2.y}`);
+        }
+      }
+      parts.push(`<path d="${wLines.join('')}" stroke="#38bdf8" stroke-opacity="0.65" stroke-width="${fs / 18}" fill="none"/>`);
+      for (const pt of points) {
+        parts.push(`<circle cx="${s.x + pt.x}" cy="${s.y + pt.y}" r="${fs / 5}" fill="#38bdf8"/>`);
+      }
+    }
   });
   if (o.showOverlaps !== false)
     for (const r of L.overlaps)

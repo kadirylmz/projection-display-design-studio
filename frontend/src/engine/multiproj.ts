@@ -6,6 +6,21 @@
  */
 export interface Crop { l: number; r: number; t: number; b: number }
 
+export interface Point2D { x: number; y: number }
+
+export interface BezierPoint {
+  x: number; y: number;
+  cp1x: number; cp1y: number;
+  cp2x: number; cp2y: number;
+}
+
+export interface WarpGrid {
+  cols: number;
+  rows: number;
+  /** (cols+1)*(rows+1) uzunluğunda, projektör yerel piksel uzayında (0..w, 0..h) kontrol noktaları */
+  points: Point2D[];
+}
+
 export interface ProjectorSlot {
   id: string;
   label: string;
@@ -13,8 +28,41 @@ export interface ProjectorSlot {
   w: number; h: number;       // projektör çıkış çözünürlüğü
   output?: string;            // ör. "DP-1"
   crop?: Crop;                // maskelenen (kırpılan) piksel miktarları
-  /** Harman bölgesi genişlikleri (piksel). Izgara düzeninde otomatik üretilir. */
+  /** Harman bölgesi genişlikleri (piksel). Izgara düzeninde otomatik üretilir veya elle girilir. */
   blend?: { l: number; r: number; t: number; b: number };
+  /** Projektör yerel koordinatlarında (0..w, 0..h) çokgen maske köşeleri */
+  polygonMask?: Point2D[];
+  /** Projektör yerel koordinatlarında (0..w, 0..h) kapalı kübik Bezier maskesi */
+  bezierMask?: BezierPoint[];
+  /** Mesh warping kontrol ızgarası */
+  warp?: WarpGrid;
+}
+
+/** Varsayılan düzgün (deforme olmamış) mesh warp ızgarası üretir. */
+export function createUniformWarp(w: number, h: number, cols = 3, rows = 3): WarpGrid {
+  if (cols < 1 || rows < 1 || !Number.isInteger(cols) || !Number.isInteger(rows)) {
+    throw new RangeError('Warp ızgara sütun/satır sayısı pozitif tam sayı olmalı');
+  }
+  const points: Point2D[] = [];
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      points.push({ x: Math.round((c / cols) * w), y: Math.round((r / rows) * h) });
+    }
+  }
+  return { cols, rows, points };
+}
+
+/** Varsayılan eliptik/yumuşak köşeli 4 noktalı kapalı Bezier maskesi üretir. */
+export function createDefaultBezierMask(w: number, h: number, marginRatio = 0.08): BezierPoint[] {
+  const mx = Math.round(w * marginRatio), my = Math.round(h * marginRatio);
+  const cx = Math.round(w / 2), cy = Math.round(h / 2);
+  const kx = Math.round((w / 2 - mx) * 0.55), ky = Math.round((h / 2 - my) * 0.55);
+  return [
+    { x: cx, y: my, cp1x: cx - kx, cp1y: my, cp2x: cx + kx, cp2y: my },
+    { x: w - mx, y: cy, cp1x: w - mx, cp1y: cy - ky, cp2x: w - mx, cp2y: cy + ky },
+    { x: cx, y: h - my, cp1x: cx + kx, cp1y: h - my, cp2x: cx - kx, cp2y: h - my },
+    { x: mx, y: cy, cp1x: mx, cp1y: cy + ky, cp2x: mx, cp2y: cy - ky },
+  ];
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }
