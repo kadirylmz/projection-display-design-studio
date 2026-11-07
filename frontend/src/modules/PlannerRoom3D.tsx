@@ -14,7 +14,132 @@ interface PlannerRoom3DProps {
 const PROJ_COLORS = ['#38bdf8', '#facc15', '#4ade80', '#f472b6', '#a78bfa', '#fb923c'];
 
 /**
- * Tek bir projektör cihazı + 3B Işık Konisi (Frustum) + Duvardaki Görüntü Çerçevesi + Kaç m Açtığı Etiketi
+ * Gerçekçi 3B İnsan (İzleyici) Modeli (1.75m boy: Ayakkabı, Bacaklar, Gövde, Omuz, Kollar, Boyun, Baş, Göz Hizası)
+ */
+function RealisticHuman3D({
+  position,
+  rotationY = 0,
+  label,
+}: {
+  position: [number, number, number];
+  rotationY?: number;
+  label?: string;
+}) {
+  return (
+    <group position={position} rotation={[0, rotationY, 0]}>
+      {/* Zemindeki Duruş Halkası */}
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.25, 0.34, 32]} />
+        <meshBasicMaterial color="#10b981" side={THREE.DoubleSide} transparent opacity={0.7} />
+      </mesh>
+
+      {/* Sol & Sağ Ayakkabı */}
+      <mesh position={[-0.1, 0.05, 0.04]}>
+        <boxGeometry args={[0.11, 0.09, 0.24]} />
+        <meshStandardMaterial color="#0f172a" roughness={0.6} />
+      </mesh>
+      <mesh position={[0.1, 0.05, 0.04]}>
+        <boxGeometry args={[0.11, 0.09, 0.24]} />
+        <meshStandardMaterial color="#0f172a" roughness={0.6} />
+      </mesh>
+
+      {/* Sol & Sağ Bacak (Pantolon) */}
+      <mesh position={[-0.1, 0.48, 0]}>
+        <cylinderGeometry args={[0.075, 0.06, 0.78, 16]} />
+        <meshStandardMaterial color="#1e3a8a" roughness={0.7} />
+      </mesh>
+      <mesh position={[0.1, 0.48, 0]}>
+        <cylinderGeometry args={[0.075, 0.06, 0.78, 16]} />
+        <meshStandardMaterial color="#1e3a8a" roughness={0.7} />
+      </mesh>
+
+      {/* Kalça / Kemer */}
+      <mesh position={[0, 0.89, 0]}>
+        <boxGeometry args={[0.34, 0.12, 0.2]} />
+        <meshStandardMaterial color="#172554" roughness={0.7} />
+      </mesh>
+
+      {/* Gövde / Ceket (Torso) */}
+      <mesh position={[0, 1.19, 0]}>
+        <boxGeometry args={[0.38, 0.5, 0.22]} />
+        <meshStandardMaterial color="#0284c7" roughness={0.5} />
+      </mesh>
+
+      {/* Omuzlar */}
+      <mesh position={[0, 1.42, 0]}>
+        <boxGeometry args={[0.46, 0.09, 0.23]} />
+        <meshStandardMaterial color="#0369a1" roughness={0.5} />
+      </mesh>
+
+      {/* Sol & Sağ Kol */}
+      <mesh position={[-0.25, 1.15, 0]} rotation={[0, 0, 0.08]}>
+        <cylinderGeometry args={[0.052, 0.044, 0.54, 14]} />
+        <meshStandardMaterial color="#0284c7" roughness={0.5} />
+      </mesh>
+      <mesh position={[0.25, 1.15, 0]} rotation={[0, 0, -0.08]}>
+        <cylinderGeometry args={[0.052, 0.044, 0.54, 14]} />
+        <meshStandardMaterial color="#0284c7" roughness={0.5} />
+      </mesh>
+
+      {/* Sol & Sağ El */}
+      <mesh position={[-0.27, 0.86, 0]}>
+        <sphereGeometry args={[0.048, 12, 12]} />
+        <meshStandardMaterial color="#fdba74" roughness={0.6} />
+      </mesh>
+      <mesh position={[0.27, 0.86, 0]}>
+        <sphereGeometry args={[0.048, 12, 12]} />
+        <meshStandardMaterial color="#fdba74" roughness={0.6} />
+      </mesh>
+
+      {/* Boyun */}
+      <mesh position={[0, 1.49, 0]}>
+        <cylinderGeometry args={[0.055, 0.06, 0.1, 14]} />
+        <meshStandardMaterial color="#fdba74" roughness={0.6} />
+      </mesh>
+
+      {/* Baş (Kafa) */}
+      <mesh position={[0, 1.63, 0]}>
+        <sphereGeometry args={[0.115, 20, 20]} />
+        <meshStandardMaterial color="#fed7aa" roughness={0.5} />
+      </mesh>
+
+      {/* Saç / Üst Kafa */}
+      <mesh position={[0, 1.66, -0.015]}>
+        <sphereGeometry args={[0.118, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.55]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.8} />
+      </mesh>
+
+      {/* Gözler (Bakış yönü +Z) */}
+      <mesh position={[-0.04, 1.64, 0.105]}>
+        <sphereGeometry args={[0.016, 8, 8]} />
+        <meshBasicMaterial color="#0f172a" />
+      </mesh>
+      <mesh position={[0.04, 1.64, 0.105]}>
+        <sphereGeometry args={[0.016, 8, 8]} />
+        <meshBasicMaterial color="#0f172a" />
+      </mesh>
+
+      {/* Baş Üstü Etiket */}
+      {label && (
+        <Text
+          position={[0, 1.92, 0]}
+          fontSize={0.23}
+          color="#4ade80"
+          anchorX="center"
+          anchorY="bottom"
+          outlineWidth={0.025}
+          outlineColor="#020617"
+        >
+          {label}
+        </Text>
+      )}
+    </group>
+  );
+}
+
+/**
+ * Tek bir projektör cihazı + 3B Işık Konisi (Frustum) + Duvarda Aydınlanan Gerçek Görüntü Yüzeyi (Quad)
+ * + İzleyici Işığın Önündeyse Duvarda Oluşan İnsan Gölgesi (Shadow Occlusion) Simülasyonu!
  */
 function ProjectorFrustum3D({
   pos,
@@ -23,11 +148,17 @@ function ProjectorFrustum3D({
   rightVec,
   imgW,
   imgH,
+  surfW,
+  surfH,
+  wallCenter,
+  humanPos,
   throwDist,
   color,
   label,
   detailText,
   showLabels,
+  showSurfaceFill = true,
+  isCurvedSurface = false,
 }: {
   pos: [number, number, number];
   targetCenter: [number, number, number];
@@ -35,17 +166,30 @@ function ProjectorFrustum3D({
   rightVec: [number, number, number];
   imgW: number;
   imgH: number;
+  surfW?: number;
+  surfH?: number;
+  wallCenter?: [number, number, number];
+  humanPos?: [number, number, number] | null;
   throwDist: number;
   color: string;
   label: string;
   detailText: string;
   showLabels: boolean;
+  showSurfaceFill?: boolean;
+  isCurvedSurface?: boolean;
 }) {
-  const { beamGeo, corners, lookQuat } = useMemo(() => {
+  const {
+    beamGeo,
+    corners,
+    lookQuat,
+    litPlaneMatrix,
+    shadowData,
+  } = useMemo(() => {
     const p = new THREE.Vector3(...pos);
     const c = new THREE.Vector3(...targetCenter);
     const u = new THREE.Vector3(...upVec).normalize();
     const r = new THREE.Vector3(...rightVec).normalize();
+    const normal = new THREE.Vector3().crossVectors(r, u).normalize();
 
     const halfW = imgW / 2;
     const halfH = imgH / 2;
@@ -70,15 +214,92 @@ function ProjectorFrustum3D({
     g.computeVertexNormals();
 
     // Projektör gövdesi yönelimi
-    const m = new THREE.Matrix4().lookAt(p, c, u);
-    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    const mLook = new THREE.Matrix4().lookAt(p, c, u);
+    const q = new THREE.Quaternion().setFromRotationMatrix(mLook);
+
+    // Duvardaki aydınlanan yüzey (Quad) dönüşüm matrisi (Z-fighting önlemek için 0.015m öne)
+    const litCenter = c.clone().addScaledVector(normal, 0.018);
+    const mPlane = new THREE.Matrix4().makeBasis(r, u, normal).setPosition(litCenter);
+
+    // İZLEYİCİ GÖLGE (SHADOW OCCLUSION) HESABI:
+    // İzleyici projektör ile duvar arasında mı ve ışın konisinin içinden geçiyor mu?
+    let shadow: {
+      matrix: THREE.Matrix4;
+      shadowW: number;
+      shadowH: number;
+      rayStart: [number, number, number];
+      rayEnd: [number, number, number];
+    } | null = null;
+
+    if (humanPos) {
+      const hBase = new THREE.Vector3(humanPos[0], 0, humanPos[2]);
+      const hCenter = new THREE.Vector3(humanPos[0], 0.9, humanPos[2]);
+      const hHead = new THREE.Vector3(humanPos[0], 1.75, humanPos[2]);
+
+      // Projektörden izleyici başına ve merkezine giden vektörün duvar düzlemiyle kesişimi
+      const planeD = normal.dot(c);
+      const dirCenter = hCenter.clone().sub(p);
+      const denom = normal.dot(dirCenter);
+
+      // Eğer ışın duvara doğru gidiyorsa (denom < -0.01)
+      if (denom < -0.001) {
+        const tHit = (planeD - normal.dot(p)) / denom;
+        // tHit > 1.0 ise izleyici projektör ile duvar arasındadır!
+        if (tHit > 1.01 && tHit < 8.0) {
+          const hitPt = p.clone().addScaledVector(dirCenter, tHit);
+          const rel = hitPt.clone().sub(c);
+          const localX = rel.dot(r);
+          const localY = rel.dot(u);
+
+          // Gölge bu projektörün duvardaki görüntü alanı içine düşüyor mu?
+          if (Math.abs(localX) <= halfW + 0.35 && localY >= -halfH - 0.5 && localY <= halfH + 0.5) {
+            // Büyütme faktörü (Magnification = tHit)
+            const mag = Math.min(3.5, Math.max(1.05, tHit));
+            const sW = 0.46 * mag;
+
+            // Baş ve ayak izdüşümü
+            const dirHead = hHead.clone().sub(p);
+            const tHead = (planeD - normal.dot(p)) / normal.dot(dirHead);
+            const headHit = p.clone().addScaledVector(dirHead, tHead);
+            const headLocalY = Math.min(halfH, headHit.clone().sub(c).dot(u));
+            const bottomLocalY = -halfH; // Gölge duvarın altından başlar
+
+            const sH = Math.max(0.35, headLocalY - bottomLocalY);
+            if (sH > 0.35 && headLocalY > -halfH + 0.2) {
+              const shadowCenterY = (headLocalY + bottomLocalY) / 2;
+              const shadowWorldPos = c
+                .clone()
+                .addScaledVector(r, localX)
+                .addScaledVector(u, shadowCenterY)
+                .addScaledVector(normal, 0.032);
+
+              const sMat = new THREE.Matrix4().makeBasis(r, u, normal).setPosition(shadowWorldPos);
+              shadow = {
+                matrix: sMat,
+                shadowW: sW,
+                shadowH: sH,
+                rayStart: [hHead.x, hHead.y, hHead.z],
+                rayEnd: [
+                  c.x + r.x * localX + u.x * headLocalY,
+                  c.y + r.y * localX + u.y * headLocalY,
+                  c.z + r.z * localX + u.z * headLocalY,
+                ],
+              };
+            }
+          }
+        }
+      }
+      void hBase;
+    }
 
     return {
       beamGeo: g,
       corners: pts.map(v => [v.x, v.y, v.z] as [number, number, number]),
       lookQuat: q,
+      litPlaneMatrix: mPlane,
+      shadowData: shadow,
     };
-  }, [pos, targetCenter, upVec, rightVec, imgW, imgH]);
+  }, [pos, targetCenter, upVec, rightVec, imgW, imgH, surfW, surfH, wallCenter, humanPos]);
 
   const midBeamPos: [number, number, number] = [
     (pos[0] + targetCenter[0]) / 2,
@@ -97,7 +318,7 @@ function ProjectorFrustum3D({
         {/* Lens */}
         <mesh position={[0, 0, -0.26]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.06, 0.07, 0.08, 16]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.6} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.7} />
         </mesh>
       </group>
 
@@ -106,11 +327,100 @@ function ProjectorFrustum3D({
         <meshBasicMaterial
           color={color}
           transparent
-          opacity={0.13}
+          opacity={0.12}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
       </mesh>
+
+      {/* DUVARDA / YÜZEYDE PROJEKTÖRÜN AYDINLATTIĞI GERÇEK GÖRÜNTÜ DOLGUSU (YÜZEYİ DOLDURUP DOLDURMADIĞINI GÖSTERİR) */}
+      {showSurfaceFill && !isCurvedSurface && (
+        <group matrixAutoUpdate={false} matrix={litPlaneMatrix}>
+          {/* Parlak projeksiyon görüntü yüzeyi */}
+          <mesh>
+            <planeGeometry args={[imgW, imgH]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={0.34}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+            />
+          </mesh>
+          {/* İç ızgara (Test Pattern Grid) */}
+          <Line
+            points={[
+              [-imgW / 2, 0, 0.002],
+              [imgW / 2, 0, 0.002],
+            ]}
+            color="#ffffff"
+            lineWidth={1}
+            transparent
+            opacity={0.35}
+          />
+          <Line
+            points={[
+              [0, -imgH / 2, 0.002],
+              [0, imgH / 2, 0.002],
+            ]}
+            color="#ffffff"
+            lineWidth={1}
+            transparent
+            opacity={0.35}
+          />
+        </group>
+      )}
+
+      {/* EĞER İZLEYİCİ IŞIĞIN ÖNÜNDEYSE DUVARDA OLUŞAN GÖLGE (SHADOW OCCLUSION) */}
+      {shadowData && (
+        <group>
+          <group matrixAutoUpdate={false} matrix={shadowData.matrix}>
+            {/* Gölge Gövdesi */}
+            <mesh position={[0, -shadowData.shadowH * 0.08, 0]}>
+              <planeGeometry args={[shadowData.shadowW, shadowData.shadowH * 0.82]} />
+              <meshBasicMaterial color="#020617" transparent opacity={0.88} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Gölge Kafası */}
+            <mesh position={[0, shadowData.shadowH * 0.38, 0.002]}>
+              <circleGeometry args={[shadowData.shadowW * 0.32, 20]} />
+              <meshBasicMaterial color="#020617" transparent opacity={0.92} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Kırmızı Gölge Uyarı Çerçevesi */}
+            <Line
+              points={[
+                [-shadowData.shadowW / 2, -shadowData.shadowH / 2, 0.005],
+                [shadowData.shadowW / 2, -shadowData.shadowH / 2, 0.005],
+                [shadowData.shadowW / 2, shadowData.shadowH / 2, 0.005],
+                [-shadowData.shadowW / 2, shadowData.shadowH / 2, 0.005],
+                [-shadowData.shadowW / 2, -shadowData.shadowH / 2, 0.005],
+              ]}
+              color="#ef4444"
+              lineWidth={2}
+            />
+            <Text
+              position={[0, 0, 0.01]}
+              fontSize={0.18}
+              color="#f87171"
+              anchorX="center"
+              anchorY="middle"
+              outlineWidth={0.02}
+              outlineColor="#020617"
+            >
+              {`⚠ GÖLGE (${shadowData.shadowH.toFixed(1)}m)`}
+            </Text>
+          </group>
+
+          {/* İnsanın Başından Duvara Giden Gölge Işını */}
+          <Line
+            points={[shadowData.rayStart, shadowData.rayEnd]}
+            color="#ef4444"
+            lineWidth={1.8}
+            dashed
+            dashSize={0.2}
+            gapSize={0.15}
+          />
+        </group>
+      )}
 
       {/* Köşe Işın Çizgileri */}
       {corners.map((corner, idx) => (
@@ -128,7 +438,7 @@ function ProjectorFrustum3D({
       <Line
         points={[corners[0], corners[1], corners[2], corners[3], corners[0]]}
         color={color}
-        lineWidth={2.2}
+        lineWidth={2.5}
       />
 
       {/* Projektör Üstü ve Duvardaki Ölçü Etiketleri */}
@@ -177,18 +487,53 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
 
   const activeSurf = surfaces.find(s => s.id === selectedId) || surfaces[0];
 
+  // Seçili Yüzey İçin Doluluk (Coverage) & Gölge Analizi
+  const coverageStats = useMemo(() => {
+    if (!activeSurf) return null;
+    const covPctW = Math.round((activeSurf.totalOpticalWidthM / Math.max(0.1, activeSurf.effectiveWidthM)) * 100);
+    const covPctH = Math.round(
+      ((activeSurf.rows * activeSurf.singleProjHeightM) / Math.max(0.1, activeSurf.effectiveHeightM)) * 100
+    );
+    const diffW = +(activeSurf.totalOpticalWidthM - activeSurf.effectiveWidthM).toFixed(2);
+    const diffH = +(activeSurf.rows * activeSurf.singleProjHeightM - activeSurf.effectiveHeightM).toFixed(2);
+
+    // Gölge kontrolü: İzleyici duvara projektörden daha yakınsa (viewDistM < throwDistM) ışığın önündedir
+    const projHeight = Math.max(2.2, activeSurf.effectiveHeightM - 0.15);
+    const humanH = 1.75;
+    let hasShadowRisk = false;
+    let shadowHeightOnWall = 0;
+
+    if (activeSurf.type === 'wall' && activeSurf.viewDistM < activeSurf.throwDistM) {
+      // Projektör yüksekliği (projHeight) üzerinden (throwDistM - viewDistM) mesafede 1.75m insan ışını keser mi?
+      const distFromProjToHuman = activeSurf.throwDistM - activeSurf.viewDistM;
+      const tHit = activeSurf.throwDistM / Math.max(0.1, distFromProjToHuman);
+      const shadowTopY = projHeight + (humanH - projHeight) * tHit;
+      if (shadowTopY > 0.1) {
+        hasShadowRisk = true;
+        shadowHeightOnWall = +Math.min(activeSurf.effectiveHeightM, shadowTopY).toFixed(2);
+      }
+    }
+
+    return {
+      covPctW,
+      covPctH,
+      diffW,
+      diffH,
+      hasShadowRisk,
+      shadowHeightOnWall,
+    };
+  }, [activeSurf]);
+
   // Oda / Sahne 3B Geometri ve Projektör Konumlarını Hesapla
   const sceneData = useMemo(() => {
     const walls = surfaces.filter(s => s.type === 'wall');
     const floor = surfaces.find(s => s.type === 'floor');
     const ceiling = surfaces.find(s => s.type === 'ceiling');
 
-    // Özel tekil geometriler var mı? (Silindir, Küre, Kubbe, Kavis)
     const specialSurf = surfaces.find(
       s => s.geometry === 'cylinder_360' || s.geometry === 'sphere' || s.geometry === 'dome' || s.geometry === 'concave_arc'
     );
 
-    // Oda genişliği (X), uzunluğu (Z) ve yüksekliği (Y)
     const roomLengthZ = walls[0]?.effectiveWidthM || floor?.effectiveWidthM || 20;
     const roomWidthX = walls[1]?.effectiveWidthM || floor?.effectiveHeightM || 7;
     const roomHeightY = walls[0]?.effectiveHeightM || 4.3;
@@ -241,12 +586,11 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
     const camera = cameraRef.current;
     if (!gl || !scene || !camera) return;
 
-    // Güncel kareyi zorla render et
     gl.render(scene, camera);
     const srcCanvas = gl.domElement;
 
     const outCanvas = document.createElement('canvas');
-    const bannerH = includeHudOnExport ? 110 : 0;
+    const bannerH = includeHudOnExport ? 115 : 0;
     outCanvas.width = srcCanvas.width;
     outCanvas.height = srcCanvas.height + bannerH;
 
@@ -254,11 +598,9 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
     ctx.fillStyle = '#070b14';
     ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
 
-    // 3B WebGL görüntüsünü çiz
     ctx.drawImage(srcCanvas, 0, 0);
 
-    // Alt Teknik Bilgi Anteti (HUD)
-    if (includeHudOnExport && activeSurf) {
+    if (includeHudOnExport && activeSurf && coverageStats) {
       const y0 = srcCanvas.height;
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(0, y0, outCanvas.width, bannerH);
@@ -271,12 +613,12 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
       ctx.stroke();
 
       const fsTitle = Math.max(15, Math.round(outCanvas.width / 72));
-      const fsSub = Math.max(12, Math.round(outCanvas.width / 92));
+      const fsSub = Math.max(12, Math.round(outCanvas.width / 94));
 
       ctx.fillStyle = '#38bdf8';
       ctx.font = `bold ${fsTitle}px sans-serif`;
       ctx.fillText(
-        `3B ODA & PROJEKSİYON ATIM SİMÜLASYONU — ${activeSurf.name.toUpperCase()} (${activeSurf.effectiveWidthM}m × ${activeSurf.effectiveHeightM}m)`,
+        `3B ODA, DOLULUK & GÖLGE SİMÜLASYONU — ${activeSurf.name.toUpperCase()} (${activeSurf.effectiveWidthM}m × ${activeSurf.effectiveHeightM}m)`,
         24,
         y0 + 32
       );
@@ -284,17 +626,21 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
       ctx.fillStyle = '#4ade80';
       ctx.font = `bold ${fsSub}px monospace`;
       ctx.fillText(
-        `İçerik Pixel Map: ${activeSurf.netW} × ${activeSurf.netH} px (Oran ${activeSurf.aspectContent}:1)  |  Duvar Piksel Boyutu: ${activeSurf.avgMmPerPx} mm/px (${activeSurf.pxPerMeterW} px/m · ${activeSurf.ppi} PPI)`,
+        `İçerik: ${activeSurf.netW}×${activeSurf.netH} px  |  Piksel: ${activeSurf.avgMmPerPx} mm/px (${activeSurf.ppi} PPI)  |  Yüzey Doluluk: Yatay %${coverageStats.covPctW} (${activeSurf.totalOpticalWidthM}m / ${activeSurf.effectiveWidthM}m) · Dikey %${coverageStats.covPctH}`,
         24,
         y0 + 62
       );
 
-      ctx.fillStyle = '#facc15';
+      ctx.fillStyle = coverageStats.hasShadowRisk ? '#f87171' : '#facc15';
       ctx.font = `${fsSub}px monospace`;
       ctx.fillText(
-        `PJ Uzaklık: D = ${activeSurf.throwDistM}m  |  Lens TR = ${activeSurf.throwRatio}:1  |  1 PJ Açılımı: ${activeSurf.singleProjWidthM}m × ${activeSurf.singleProjHeightM}m (${activeSurf.distMmPerPx} mm/px)  |  Dizilim: ${activeSurf.cols}×${activeSurf.rows} PJ  |  İzleyici: ${activeSurf.viewDistM}m (İdeal ≤${activeSurf.idealMuseumMmPerPx}mm)`,
+        `PJ Uzaklık: D=${activeSurf.throwDistM}m (TR ${activeSurf.throwRatio}:1 → 1 PJ: ${activeSurf.singleProjWidthM}m×${activeSurf.singleProjHeightM}m)  |  İzleyici: ${activeSurf.viewDistM}m ${
+          coverageStats.hasShadowRisk
+            ? `⚠ DUVARDA İNSAN GÖLGESİ OLUŞUYOR (${coverageStats.shadowHeightOnWall}m Yükseklik)`
+            : '✓ Gölge Yok'
+        }`,
         24,
-        y0 + 90
+        y0 + 92
       );
     }
 
@@ -358,7 +704,7 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
         <div className="flex flex-wrap items-center gap-2.5">
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showBeams} onChange={e => setShowBeams(e.target.checked)} />
-            <span>Işık Konileri</span>
+            <span>Işık Konileri & Doluluk</span>
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} />
@@ -366,7 +712,7 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showHuman} onChange={e => setShowHuman(e.target.checked)} />
-            <span>İzleyici ({activeSurf?.viewDistM}m)</span>
+            <span>İnsan & Gölge ({activeSurf?.viewDistM}m)</span>
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-sky-300" title="İndirilen 3B PNG altına teknik özet barı ekler">
             <input type="checkbox" checked={includeHudOnExport} onChange={e => setIncludeHudOnExport(e.target.checked)} />
@@ -381,31 +727,68 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
         </div>
       </div>
 
-      {/* SEÇİLİ YÜZEYİN OPTİK SİMÜLASYON BİLGİ ŞERİDİ */}
-      {activeSurf && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-900/70 p-2 rounded border border-sky-900/60 font-mono text-[11px]">
+      {/* SEÇİLİ YÜZEYİN YÜZEY DOLULUK (COVERAGE) & GÖLGE ANALİZ ŞERİDİ */}
+      {activeSurf && coverageStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-900/80 p-2 rounded border border-sky-900/60 font-mono text-[11px]">
           <div>
-            <span className="text-slate-400 block text-[10px]">Seçili Yüzey & Açınım:</span>
-            <b className="text-sky-300">{activeSurf.name} ({activeSurf.effectiveWidthM}m × {activeSurf.effectiveHeightM}m)</b>
+            <span className="text-slate-400 block text-[10px]">1. Tek Projektörün Açtığı Alan:</span>
+            <b className="text-amber-300">
+              {activeSurf.singleProjWidthM}m × {activeSurf.singleProjHeightM}m (@D={activeSurf.throwDistM}m)
+            </b>
           </div>
+
           <div>
-            <span className="text-slate-400 block text-[10px]">Projektör Atım Uzaklığı (D) & Lens:</span>
-            <b className="text-amber-300">D = {activeSurf.throwDistM}m | Lens TR = {activeSurf.throwRatio}:1</b>
+            <span className="text-slate-400 block text-[10px]">2. Yatay Yüzey Doluluk Oranı:</span>
+            <b
+              className={
+                coverageStats.covPctW >= 98 && coverageStats.covPctW <= 108
+                  ? 'text-emerald-400'
+                  : coverageStats.covPctW < 98
+                  ? 'text-rose-400'
+                  : 'text-amber-300'
+              }
+            >
+              %{coverageStats.covPctW} ({activeSurf.totalOpticalWidthM}m / {activeSurf.effectiveWidthM}m){' '}
+              {coverageStats.diffW < -0.05
+                ? `⚠ ${Math.abs(coverageStats.diffW)}m Boşluk Var!`
+                : coverageStats.diffW > 0.25
+                ? `⚠ +${coverageStats.diffW}m Dışarı Taşıyor`
+                : '✓ Tam Dolduruyor'}
+            </b>
           </div>
+
           <div>
-            <span className="text-slate-400 block text-[10px]">1 Projektörün Duvarda Açtığı Boyut:</span>
-            <b className="text-emerald-400">{activeSurf.singleProjWidthM}m × {activeSurf.singleProjHeightM}m ({activeSurf.distMmPerPx} mm/px)</b>
+            <span className="text-slate-400 block text-[10px]">3. Dikey Yükseklik Doluluk Oranı:</span>
+            <b
+              className={
+                coverageStats.covPctH >= 98 && coverageStats.covPctH <= 108
+                  ? 'text-emerald-400'
+                  : coverageStats.covPctH < 98
+                  ? 'text-rose-400'
+                  : 'text-amber-300'
+              }
+            >
+              %{coverageStats.covPctH} ({(activeSurf.rows * activeSurf.singleProjHeightM).toFixed(2)}m / {activeSurf.effectiveHeightM}m){' '}
+              {coverageStats.diffH < -0.05
+                ? `⚠ ${Math.abs(coverageStats.diffH)}m Eksik`
+                : coverageStats.diffH > 0.2
+                ? `⚠ +${coverageStats.diffH}m Taşıyor`
+                : '✓ Tam Dolduruyor'}
+            </b>
           </div>
+
           <div>
-            <span className="text-slate-400 block text-[10px]">{activeSurf.cols}×{activeSurf.rows} PJ Toplam Optik Kapsama:</span>
-            <b className={activeSurf.totalOpticalWidthM >= activeSurf.effectiveWidthM * 0.98 ? 'text-emerald-400' : 'text-rose-400'}>
-              {activeSurf.totalOpticalWidthM}m Genişlik {activeSurf.totalOpticalWidthM >= activeSurf.effectiveWidthM * 0.98 ? '✓ (Tam Dolduruyor)' : `⚠ (${activeSurf.effectiveWidthM}m için Eksik)`}
+            <span className="text-slate-400 block text-[10px]">4. İzleyici Gölge (Occlusion) Durumu:</span>
+            <b className={coverageStats.hasShadowRisk ? 'text-rose-400' : 'text-emerald-400'}>
+              {coverageStats.hasShadowRisk
+                ? `⚠ Duvarda ${coverageStats.shadowHeightOnWall}m İnsan Gölgesi Oluşuyor!`
+                : `✓ Gölge Yok (İzleyici ${activeSurf.viewDistM}m'de)`}
             </b>
           </div>
         </div>
       )}
 
-      {/* 3B WEBGL SAHNESİ (preserveDrawingBuffer: true ile anlık PNG yakalama aktif) */}
+      {/* 3B WEBGL SAHNESİ */}
       <div className="flex-1 min-h-[480px] w-full rounded border border-slate-800 bg-slate-950 relative overflow-hidden">
         <Canvas
           camera={{ position: [18, 14, 22], fov: 48, near: 0.1, far: 500 }}
@@ -432,7 +815,6 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
           />
 
           <Suspense fallback={null}>
-            {/* DURUM 1: ÖZEL GEOMETRİLER (360° SİLİNDİR, KAVİSLİ DUVAR, KUBBE, KÜRE) */}
             {sceneData.specialSurf ? (
               <SpecialGeometryScene
                 surf={sceneData.specialSurf}
@@ -443,7 +825,6 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
                 onSelect={onSelect}
               />
             ) : (
-              /* DURUM 2: ÇOK DUVARLI KUTU / U-ODA VE ZEMİN MİMARİSİ */
               <RoomBoxScene
                 surfaces={surfaces}
                 selectedId={selectedId}
@@ -460,8 +841,11 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
           </Suspense>
         </Canvas>
 
-        <div className="absolute bottom-2 left-2 bg-slate-950/85 border border-slate-800 px-2.5 py-1.5 rounded text-[10px] text-slate-300 pointer-events-none">
-          🖱️ <b>Sol Tık + Sürükle:</b> 360° Döndür &nbsp;|&nbsp; <b>Sağ Tık + Sürükle:</b> Kaydır (Pan) &nbsp;|&nbsp; <b>Tekerlek:</b> Yakınlaş/Uzaklaş &nbsp;|&nbsp; <b>Duvara Tıkla:</b> Yüzey Seç
+        {/* Sol Alt Renk ve Doluluk Açıklaması (Legend) */}
+        <div className="absolute bottom-2 left-2 bg-slate-950/90 border border-slate-800 px-2.5 py-1.5 rounded text-[10px] text-slate-300 pointer-events-none flex flex-wrap items-center gap-3">
+          <span>🟥 <b>Koyu Kırmızı Alan:</b> Projektörün Dolduramadığı Boş Duvar</span>
+          <span>🟦🟨 <b>Parlak Renkli Alan:</b> Projektörlerin Aydınlattığı Görüntü</span>
+          <span>⬛🟥 <b>Siyah Silüet:</b> Duvardaki İnsan Gölgesi</span>
         </div>
       </div>
     </div>
@@ -477,7 +861,7 @@ function RoomBoxScene({
   viewFilter,
   roomWidthX,
   roomLengthZ,
-  roomHeightY,
+  roomHeightY: _roomHeightY,
   showBeams,
   showLabels,
   showHuman,
@@ -497,13 +881,11 @@ function RoomBoxScene({
   const walls = surfaces.filter(s => s.type === 'wall');
   const floor = surfaces.find(s => s.type === 'floor');
 
-  // Duvarların 3B uzaydaki pozisyon, yönelim ve normal vektörlerini çıkar
   const wallPlacements = useMemo(() => {
     return walls.map((w, idx) => {
-      const len = w.effectiveWidthM;
       const h = w.effectiveHeightM;
 
-      // idx 0: Sol Uzun Duvar (x = -roomWidthX/2, z: -len/2..+len/2, normal +X)
+      // idx 0: Sol Uzun Duvar (x = -roomWidthX/2, normal +X)
       if (idx === 0) {
         return {
           surf: w,
@@ -512,9 +894,10 @@ function RoomBoxScene({
           normal: [1, 0, 0] as [number, number, number],
           rightDir: [0, 0, -1] as [number, number, number],
           upDir: [0, 1, 0] as [number, number, number],
+          humanRotY: -Math.PI / 2,
         };
       }
-      // idx 1: Ön Kısa Duvar (z = -roomLengthZ/2, x: -len/2..+len/2, normal +Z)
+      // idx 1: Ön Kısa Duvar (z = -roomLengthZ/2, normal +Z)
       if (idx === 1) {
         return {
           surf: w,
@@ -523,9 +906,10 @@ function RoomBoxScene({
           normal: [0, 0, 1] as [number, number, number],
           rightDir: [1, 0, 0] as [number, number, number],
           upDir: [0, 1, 0] as [number, number, number],
+          humanRotY: Math.PI,
         };
       }
-      // idx 2: Sağ Uzun Duvar (x = +roomWidthX/2, z: -len/2..+len/2, normal -X)
+      // idx 2: Sağ Uzun Duvar (x = +roomWidthX/2, normal -X)
       if (idx === 2) {
         return {
           surf: w,
@@ -534,6 +918,7 @@ function RoomBoxScene({
           normal: [-1, 0, 0] as [number, number, number],
           rightDir: [0, 0, 1] as [number, number, number],
           upDir: [0, 1, 0] as [number, number, number],
+          humanRotY: Math.PI / 2,
         };
       }
       // idx 3+: Arka Kısa Duvar (z = +roomLengthZ/2, normal -Z)
@@ -544,22 +929,44 @@ function RoomBoxScene({
         normal: [0, 0, -1] as [number, number, number],
         rightDir: [-1, 0, 0] as [number, number, number],
         upDir: [0, 1, 0] as [number, number, number],
+        humanRotY: 0,
       };
     });
   }, [walls, roomWidthX, roomLengthZ]);
 
   const activePlacement = wallPlacements.find(wp => wp.surf.id === selectedId) || wallPlacements[0];
 
+  // İzleyicinin 3B konumu (Seçili duvardan viewDistM içeride)
+  const activeHumanPos: [number, number, number] | null = useMemo(() => {
+    if (!showHuman || !activePlacement) return null;
+    const { surf, center, normal } = activePlacement;
+    return [
+      center[0] + normal[0] * surf.viewDistM,
+      0,
+      center[2] + normal[2] * surf.viewDistM,
+    ];
+  }, [showHuman, activePlacement]);
+
   return (
     <group>
-      {/* 1. DUVAR YÜZEYLERİ VE PROJEKTÖRLERİ */}
+      {/* 1. DUVAR YÜZEYLERİ, DOLULUK KONTROLÜ VE PROJEKTÖRLERİ */}
       {wallPlacements.map((wp, wIdx) => {
         const { surf, center, rot, normal, rightDir, upDir } = wp;
         const isSel = surf.id === selectedId;
         const showThisProjectors = showBeams && (viewFilter === 'all' || isSel);
         const col = PROJ_COLORS[wIdx % PROJ_COLORS.length];
 
-        // Bu duvara bakan projektörlerin konumlarını hesapla
+        const singleW = surf.singleProjWidthM;
+        const singleH = surf.singleProjHeightM;
+        const ovRatioX = surf.projW > 0 ? surf.ovPxX / surf.projW : 0.15;
+        const stepW = singleW * (1 - ovRatioX);
+        const totalOptW = surf.cols === 1 ? singleW : singleW + (surf.cols - 1) * stepW;
+        const totalOptH = surf.rows * singleH;
+
+        const isUnderfilledW = totalOptW < surf.effectiveWidthM - 0.08;
+        const isOverfilledW = totalOptW > surf.effectiveWidthM + 0.15;
+        const covPctW = Math.round((totalOptW / Math.max(0.1, surf.effectiveWidthM)) * 100);
+
         const projItems: {
           pos: [number, number, number];
           target: [number, number, number];
@@ -567,12 +974,6 @@ function RoomBoxScene({
         }[] = [];
 
         if (showThisProjectors) {
-          const singleW = surf.singleProjWidthM;
-          const singleH = surf.singleProjHeightM;
-          const ovRatioX = surf.projW > 0 ? surf.ovPxX / surf.projW : 0.15;
-          const stepW = singleW * (1 - ovRatioX);
-          const totalOptW = surf.cols === 1 ? singleW : singleW + (surf.cols - 1) * stepW;
-
           for (let r = 0; r < surf.rows; r++) {
             for (let c = 0; c < surf.cols; c++) {
               const offsetRight =
@@ -584,12 +985,10 @@ function RoomBoxScene({
                   ? 0
                   : ((surf.rows - 1) / 2 - r) * (singleH * 0.85);
 
-              // Duvardaki hedef merkez noktası
               const tx = center[0] + rightDir[0] * offsetRight + upDir[0] * offsetUp;
               const ty = center[1] + rightDir[1] * offsetRight + upDir[1] * offsetUp;
               const tz = center[2] + rightDir[2] * offsetRight + upDir[2] * offsetUp;
 
-              // Projektör tavana yakın (y = surf.effectiveHeightM - 0.15) ve duvardan throwDistM uzaklıkta
               const px = tx + normal[0] * surf.throwDistM;
               const py = Math.max(2.2, surf.effectiveHeightM - 0.15) + offsetUp * 0.3;
               const pz = tz + normal[2] * surf.throwDistM;
@@ -597,7 +996,7 @@ function RoomBoxScene({
               projItems.push({
                 pos: [px, py, pz],
                 target: [tx, ty, tz],
-                label: `PJ ${ c + 1 }${surf.rows > 1 ? `.${r + 1}` : ''}`,
+                label: `PJ ${c + 1}${surf.rows > 1 ? `.${r + 1}` : ''}`,
               });
             }
           }
@@ -605,7 +1004,7 @@ function RoomBoxScene({
 
         return (
           <group key={surf.id}>
-            {/* Duvar Mesh */}
+            {/* Duvar Ham Fiziksel Yüzeyi (Eğer projektör doldurmuyorsa koyu kırmızı/bordo görünür) */}
             <group
               position={center}
               rotation={rot}
@@ -617,41 +1016,98 @@ function RoomBoxScene({
               <mesh>
                 <planeGeometry args={[surf.effectiveWidthM, surf.effectiveHeightM]} />
                 <meshStandardMaterial
-                  color={isSel ? '#0284c7' : surf.color}
+                  color={isUnderfilledW ? '#450a0a' : '#0f172a'}
                   transparent
-                  opacity={isSel ? 0.42 : 0.24}
+                  opacity={0.78}
                   side={THREE.DoubleSide}
                 />
               </mesh>
 
-              {/* Duvar Çerçevesi */}
+              {/* Sol ve Sağda Boş Kalan (Karanlık) Duvar Bölgeleri Vurgusu */}
+              {isUnderfilledW && (
+                <>
+                  {/* Sol Boşluk */}
+                  <mesh position={[-(totalOptW + (surf.effectiveWidthM - totalOptW) / 2) / 2, 0, 0.01]}>
+                    <planeGeometry args={[(surf.effectiveWidthM - totalOptW) / 2, surf.effectiveHeightM]} />
+                    <meshBasicMaterial color="#dc2626" transparent opacity={0.35} side={THREE.DoubleSide} />
+                  </mesh>
+                  {/* Sağ Boşluk */}
+                  <mesh position={[(totalOptW + (surf.effectiveWidthM - totalOptW) / 2) / 2, 0, 0.01]}>
+                    <planeGeometry args={[(surf.effectiveWidthM - totalOptW) / 2, surf.effectiveHeightM]} />
+                    <meshBasicMaterial color="#dc2626" transparent opacity={0.35} side={THREE.DoubleSide} />
+                  </mesh>
+                  <Text
+                    position={[0, -surf.effectiveHeightM / 2 + 0.35, 0.04]}
+                    fontSize={0.28}
+                    color="#f87171"
+                    anchorX="center"
+                    anchorY="middle"
+                    outlineWidth={0.025}
+                    outlineColor="#020617"
+                  >
+                    {`⚠ YÜZEY TAM DOLMUYOR: Projektörler ${totalOptW.toFixed(2)}m açıyor (${(surf.effectiveWidthM - totalOptW).toFixed(2)}m Boşluk Var!)`}
+                  </Text>
+                </>
+              )}
+
+              {/* Eğer Görüntü Duvardan Dışarı Taşıyorsa Uyarı */}
+              {isOverfilledW && (
+                <Text
+                  position={[0, -surf.effectiveHeightM / 2 + 0.35, 0.04]}
+                  fontSize={0.26}
+                  color="#fbbf24"
+                  anchorX="center"
+                  anchorY="middle"
+                  outlineWidth={0.025}
+                  outlineColor="#020617"
+                >
+                  {`⚠ GÖRÜNTÜ DUVARDAN TAŞIYOR: Toplam ${totalOptW.toFixed(2)}m (+${(totalOptW - surf.effectiveWidthM).toFixed(2)}m Fazla)`}
+                </Text>
+              )}
+
+              {/* Tam Doluyorsa Onay Yazısı */}
+              {!isUnderfilledW && !isOverfilledW && (
+                <Text
+                  position={[0, -surf.effectiveHeightM / 2 + 0.32, 0.04]}
+                  fontSize={0.25}
+                  color="#4ade80"
+                  anchorX="center"
+                  anchorY="middle"
+                  outlineWidth={0.025}
+                  outlineColor="#020617"
+                >
+                  {`✓ YÜZEY TAM DOLU (%${covPctW} Kapsama: ${totalOptW.toFixed(2)}m × ${totalOptH.toFixed(2)}m)`}
+                </Text>
+              )}
+
+              {/* Duvar Fiziksel Sınır Çerçevesi */}
               <Line
                 points={[
-                  [-surf.effectiveWidthM / 2, -surf.effectiveHeightM / 2, 0],
-                  [surf.effectiveWidthM / 2, -surf.effectiveHeightM / 2, 0],
-                  [surf.effectiveWidthM / 2, surf.effectiveHeightM / 2, 0],
-                  [-surf.effectiveWidthM / 2, surf.effectiveHeightM / 2, 0],
-                  [-surf.effectiveWidthM / 2, -surf.effectiveHeightM / 2, 0],
+                  [-surf.effectiveWidthM / 2, -surf.effectiveHeightM / 2, 0.02],
+                  [surf.effectiveWidthM / 2, -surf.effectiveHeightM / 2, 0.02],
+                  [surf.effectiveWidthM / 2, surf.effectiveHeightM / 2, 0.02],
+                  [-surf.effectiveWidthM / 2, surf.effectiveHeightM / 2, 0.02],
+                  [-surf.effectiveWidthM / 2, -surf.effectiveHeightM / 2, 0.02],
                 ]}
-                color={isSel ? '#facc15' : surf.color}
-                lineWidth={isSel ? 3 : 1.5}
+                color={isSel ? '#facc15' : '#94a3b8'}
+                lineWidth={isSel ? 3.2 : 1.8}
               />
 
               {/* Duvar Üstü Bilgi Yazısı */}
               <Text
-                position={[0, surf.effectiveHeightM / 2 + 0.45, 0.05]}
-                fontSize={0.36}
+                position={[0, surf.effectiveHeightM / 2 + 0.48, 0.05]}
+                fontSize={0.34}
                 color={isSel ? '#facc15' : '#f8fafc'}
                 anchorX="center"
                 anchorY="middle"
                 outlineWidth={0.03}
                 outlineColor="#020617"
               >
-                {`${surf.name} (${surf.effectiveWidthM}m × ${surf.effectiveHeightM}m → ${surf.netW}×${surf.netH}px | ${surf.avgMmPerPx} mm/px)`}
+                {`${surf.name} (${surf.effectiveWidthM}m × ${surf.effectiveHeightM}m → ${surf.netW}×${surf.netH}px | Doluluk: %${covPctW})`}
               </Text>
             </group>
 
-            {/* Bu Duvara Ait Projektörler ve Işık Konileri */}
+            {/* Bu Duvara Ait Projektörler, Duvardaki Parlak Görüntü Dolgusu ve İnsan Gölgesi */}
             {projItems.map((item, pIdx) => (
               <ProjectorFrustum3D
                 key={`proj-${surf.id}-${pIdx}`}
@@ -661,11 +1117,16 @@ function RoomBoxScene({
                 rightVec={rightDir}
                 imgW={surf.singleProjWidthM}
                 imgH={surf.singleProjHeightM}
+                surfW={surf.effectiveWidthM}
+                surfH={surf.effectiveHeightM}
+                wallCenter={center}
+                humanPos={isSel ? activeHumanPos : null}
                 throwDist={surf.throwDistM}
                 color={col}
                 label={item.label}
                 detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
                 showLabels={showLabels}
+                showSurfaceFill={true}
               />
             ))}
           </group>
@@ -685,9 +1146,9 @@ function RoomBoxScene({
           >
             <planeGeometry args={[floor.effectiveHeightM, floor.effectiveWidthM]} />
             <meshStandardMaterial
-              color={floor.id === selectedId ? '#eab308' : floor.color}
+              color="#0f172a"
               transparent
-              opacity={floor.id === selectedId ? 0.38 : 0.2}
+              opacity={0.8}
               side={THREE.DoubleSide}
             />
           </mesh>
@@ -695,7 +1156,7 @@ function RoomBoxScene({
           <Text
             position={[0, 0.08, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
-            fontSize={0.42}
+            fontSize={0.4}
             color="#fde047"
             anchorX="center"
             anchorY="middle"
@@ -705,7 +1166,6 @@ function RoomBoxScene({
             {`${floor.name}: ${floor.effectiveWidthM}m × ${floor.effectiveHeightM}m (${floor.netW}×${floor.netH}px · ${floor.avgMmPerPx} mm/px)`}
           </Text>
 
-          {/* Zemin Projektörleri (Tavandan Zemine Dik Atım) */}
           {showBeams && (viewFilter === 'all' || floor.id === selectedId) && (() => {
             const items: JSX.Element[] = [];
             const singleW = floor.singleProjWidthM;
@@ -732,6 +1192,7 @@ function RoomBoxScene({
                     label={`Zemin PJ ${c + 1}.${r + 1}`}
                     detailText={`${singleW}m×${singleH}m`}
                     showLabels={showLabels}
+                    showSurfaceFill={true}
                   />
                 );
               }
@@ -741,44 +1202,25 @@ function RoomBoxScene({
         </group>
       )}
 
-      {/* 3. İZLEYİCİ (İNSAN MODELİ) VE BAKIŞ MESAFESİ ÇİZGİSİ */}
-      {showHuman && activePlacement && (() => {
-        const { surf, center, normal } = activePlacement;
-        const hx = center[0] + normal[0] * surf.viewDistM;
-        const hz = center[2] + normal[2] * surf.viewDistM;
-        const wallPt: [number, number, number] = [center[0], 1.65, center[2]];
-        const eyePt: [number, number, number] = [hx, 1.65, hz];
+      {/* 3. GERÇEKÇİ 3B İZLEYİCİ (İNSAN MODELİ) VE GÖZ HİZASI BAKIŞ MESAFESİ ÇİZGİSİ */}
+      {showHuman && activePlacement && activeHumanPos && (() => {
+        const { surf, center, humanRotY } = activePlacement;
+        const wallPt: [number, number, number] = [center[0], 1.64, center[2]];
+        const eyePt: [number, number, number] = [activeHumanPos[0], 1.64, activeHumanPos[2]];
 
         return (
           <group>
-            {/* İnsan Silüeti (1.75m boy) */}
-            <group position={[hx, 0, hz]}>
-              <mesh position={[0, 0.85, 0]}>
-                <capsuleGeometry args={[0.22, 1.25, 8, 16]} />
-                <meshStandardMaterial color="#10b981" />
-              </mesh>
-              <mesh position={[0, 1.68, 0]}>
-                <sphereGeometry args={[0.14, 16, 16]} />
-                <meshStandardMaterial color="#6ee7b7" />
-              </mesh>
-              <Text
-                position={[0, 2.1, 0]}
-                fontSize={0.24}
-                color="#4ade80"
-                anchorX="center"
-                anchorY="bottom"
-                outlineWidth={0.025}
-                outlineColor="#020617"
-              >
-                {`İzleyici (${surf.viewDistM}m → İdeal ≤${surf.idealMuseumMmPerPx}mm)`}
-              </Text>
-            </group>
+            <RealisticHuman3D
+              position={activeHumanPos}
+              rotationY={humanRotY}
+              label={`İzleyici (${surf.viewDistM}m → İdeal ≤${surf.idealMuseumMmPerPx}mm)`}
+            />
 
             {/* Göz Hizasından Duvara Bakış Mesafesi Çizgisi */}
             <Line
               points={[eyePt, wallPt]}
               color="#10b981"
-              lineWidth={2}
+              lineWidth={2.2}
               dashed
               dashSize={0.25}
               gapSize={0.15}
@@ -813,11 +1255,21 @@ function SpecialGeometryScene({
   const arcAngleRad =
     surf.geometry === 'concave_arc' ? THREE.MathUtils.degToRad(surf.angleDeg) : Math.PI * 2;
 
+  const covPctW = Math.round((surf.totalOpticalWidthM / Math.max(0.1, surf.effectiveWidthM)) * 100);
+  const coveredAngleRad = Math.min(
+    arcAngleRad,
+    arcAngleRad * (surf.totalOpticalWidthM / Math.max(0.1, surf.effectiveWidthM))
+  );
+
+  // Özel geometrilerde izleyici konumu (duvardan viewDistM içeride)
+  const humanPos: [number, number, number] = [0, 0, Math.max(0, r - surf.viewDistM)];
+
   return (
     <group>
       {/* 1. KAVİSLİ DUVAR VEYA 360° SİLİNDİR */}
       {(surf.geometry === 'cylinder_360' || surf.geometry === 'concave_arc') && (
         <group>
+          {/* Ham Silindir / Kavis Yüzeyi (Boş kalan kısımlar koyu kırmızı/gri) */}
           <mesh
             position={[0, h / 2, 0]}
             onClick={e => {
@@ -838,23 +1290,47 @@ function SpecialGeometryScene({
               ]}
             />
             <meshStandardMaterial
-              color={surf.color}
+              color={covPctW < 98 ? '#7f1d1d' : '#0f172a'}
               transparent
-              opacity={0.32}
+              opacity={0.65}
               side={THREE.DoubleSide}
             />
           </mesh>
 
+          {/* Projektörlerin Aydınlattığı Kavisli Yüzey Dolgusu */}
+          {showBeams && (
+            <mesh position={[0, h / 2, 0]}>
+              <cylinderGeometry
+                args={[
+                  r * 0.996,
+                  r * 0.996,
+                  Math.min(h, surf.rows * surf.singleProjHeightM),
+                  64,
+                  1,
+                  true,
+                  surf.geometry === 'concave_arc' ? -coveredAngleRad / 2 + Math.PI : 0,
+                  coveredAngleRad,
+                ]}
+              />
+              <meshBasicMaterial
+                color={surf.color}
+                transparent
+                opacity={0.38}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          )}
+
           <Text
-            position={[0, h + 0.6, 0]}
-            fontSize={0.42}
+            position={[0, h + 0.65, 0]}
+            fontSize={0.4}
             color="#38bdf8"
             anchorX="center"
             anchorY="middle"
             outlineWidth={0.03}
             outlineColor="#020617"
           >
-            {`${surf.name} | R=${r}m (Açınım: ${surf.effectiveWidthM}m × ${h}m → ${surf.netW}×${surf.netH}px)`}
+            {`${surf.name} | R=${r}m (Açınım: ${surf.effectiveWidthM}m × ${h}m → Yüzey Doluluk: %${covPctW})`}
           </Text>
 
           {/* Çevresel Projektörler (Yatay cols × Dikey rows) */}
@@ -876,21 +1352,17 @@ function SpecialGeometryScene({
                 const theta = startAng + (idx + 0.5) * step;
                 const pIdx = row * surf.cols + idx;
 
-                // Duvardaki hedef nokta
                 const tx = Math.sin(theta) * r;
                 const ty = h / 2 + offsetUp;
                 const tz = Math.cos(theta) * r;
 
-                // Merkeze doğru normal vektör
                 const nx = -Math.sin(theta);
                 const nz = -Math.cos(theta);
 
-                // Projektör konumu: duvardan throwDistM geride
                 const px = tx + nx * surf.throwDistM;
                 const py = Math.max(1.8, h - 0.2 + offsetUp * 0.4);
                 const pz = tz + nz * surf.throwDistM;
 
-                // Teğet (sağ) vektör
                 const rx = Math.cos(theta);
                 const rz = -Math.sin(theta);
 
@@ -903,11 +1375,13 @@ function SpecialGeometryScene({
                     rightVec={[rx, 0, rz]}
                     imgW={surf.singleProjWidthM}
                     imgH={surf.singleProjHeightM}
+                    humanPos={showHuman && idx === 0 ? humanPos : null}
                     throwDist={surf.throwDistM}
                     color={PROJ_COLORS[pIdx % PROJ_COLORS.length]}
                     label={`PJ #${idx + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
                     detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
                     showLabels={showLabels}
+                    showSurfaceFill={true}
                   />
                 );
               }
@@ -939,11 +1413,10 @@ function SpecialGeometryScene({
                 ]}
               />
               <meshStandardMaterial
-                color={surf.color}
+                color={covPctW < 95 ? '#7f1d1d' : surf.color}
                 transparent
-                opacity={0.26}
+                opacity={0.28}
                 side={THREE.DoubleSide}
-                wireframe={false}
               />
             </mesh>
             <mesh>
@@ -958,31 +1431,28 @@ function SpecialGeometryScene({
                   surf.geometry === 'dome' ? Math.PI / 2 : Math.PI,
                 ]}
               />
-              <meshBasicMaterial color={surf.color} wireframe transparent opacity={0.22} />
+              <meshBasicMaterial color={surf.color} wireframe transparent opacity={0.25} />
             </mesh>
 
             <Text
               position={[0, r + 0.8, 0]}
-              fontSize={0.45}
+              fontSize={0.44}
               color="#c084fc"
               anchorX="center"
               anchorY="middle"
               outlineWidth={0.03}
               outlineColor="#020617"
             >
-              {`${surf.name} | Çap=${r * 2}m (${surf.netW}×${surf.netH}px · ${surf.avgMmPerPx} mm/px)`}
+              {`${surf.name} | Çap=${r * 2}m (${surf.netW}×${surf.netH}px · Doluluk: %${covPctW})`}
             </Text>
           </group>
 
-          {/* KUBBE (DOME) VE KÜRE (SPHERE) ÇEVRESEL & MERİDYEN PROJEKTÖRLERİ */}
+          {/* KUBBE VE KÜRE ÇEVRESEL & MERİDYEN PROJEKTÖRLERİ */}
           {showBeams && (() => {
             const items: JSX.Element[] = [];
             const centerY = surf.geometry === 'sphere' ? r : 0;
 
             for (let row = 0; row < surf.rows; row++) {
-              // Dikey (Elevation) açı:
-              // Kubbede (dome) ufuk (15°) ile tepe/zenit (75°) arası
-              // Kürede (sphere) alt yarıküre (-45°) ile üst yarıküre (+45°) arası
               const elevDeg =
                 surf.geometry === 'dome'
                   ? surf.rows === 1
@@ -997,7 +1467,6 @@ function SpecialGeometryScene({
                 const azimRad = (col / Math.max(1, surf.cols)) * Math.PI * 2;
                 const pIdx = row * surf.cols + col;
 
-                // Küre / Kubbe yüzeyindeki hedef nokta (tx, ty, tz)
                 const dirX = Math.cos(elevRad) * Math.sin(azimRad);
                 const dirY = Math.sin(elevRad);
                 const dirZ = Math.cos(elevRad) * Math.cos(azimRad);
@@ -1006,13 +1475,10 @@ function SpecialGeometryScene({
                 const ty = centerY + dirY * r;
                 const tz = dirZ * r;
 
-                // Projektör konumu:
-                // Kubbede karşı/çevre coving halkasından veya merkezden throwDistM geriden hedef noktaya atım yapar
                 const px = tx - dirX * surf.throwDistM;
                 const py = Math.max(0.6, ty - dirY * surf.throwDistM);
                 const pz = tz - dirZ * surf.throwDistM;
 
-                // Sağ (teğet) ve Yukarı (meridyen) vektörleri
                 const rx = Math.cos(azimRad);
                 const rz = -Math.sin(azimRad);
                 const ux = -Math.sin(elevRad) * Math.sin(azimRad);
@@ -1033,6 +1499,7 @@ function SpecialGeometryScene({
                     label={`PJ ${col + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
                     detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
                     showLabels={showLabels}
+                    showSurfaceFill={true}
                   />
                 );
               }
@@ -1042,7 +1509,7 @@ function SpecialGeometryScene({
         </group>
       )}
 
-      {/* DAİRESEL ZEMİN VARSA (YÜZEY + PROJEKTÖRLERİ) */}
+      {/* DAİRESEL ZEMİN VARSA */}
       {floorSurf && (
         <group>
           <mesh
@@ -1054,7 +1521,7 @@ function SpecialGeometryScene({
             }}
           >
             <circleGeometry args={[floorSurf.radiusM, 64]} />
-            <meshStandardMaterial color={floorSurf.color} transparent opacity={0.25} side={THREE.DoubleSide} />
+            <meshStandardMaterial color="#0f172a" transparent opacity={0.8} side={THREE.DoubleSide} />
           </mesh>
 
           <Text
@@ -1097,6 +1564,7 @@ function SpecialGeometryScene({
                     label={`Zemin PJ ${cIdx + 1}.${rIdx + 1}`}
                     detailText={`${singleW}m×${singleH}m`}
                     showLabels={showLabels}
+                    showSurfaceFill={true}
                   />
                 );
               }
@@ -1106,18 +1574,13 @@ function SpecialGeometryScene({
         </group>
       )}
 
-      {/* İZLEYİCİ */}
+      {/* GERÇEKÇİ 3B İZLEYİCİ (İNSAN MODELİ) */}
       {showHuman && (
-        <group position={[0, 0, 0]}>
-          <mesh position={[0, 0.85, 0]}>
-            <capsuleGeometry args={[0.22, 1.25, 8, 16]} />
-            <meshStandardMaterial color="#10b981" />
-          </mesh>
-          <mesh position={[0, 1.68, 0]}>
-            <sphereGeometry args={[0.14, 16, 16]} />
-            <meshStandardMaterial color="#6ee7b7" />
-          </mesh>
-        </group>
+        <RealisticHuman3D
+          position={humanPos}
+          rotationY={0}
+          label={`İzleyici (${surf.viewDistM}m → İdeal ≤${surf.idealMuseumMmPerPx}mm)`}
+        />
       )}
     </group>
   );
