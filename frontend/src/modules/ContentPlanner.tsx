@@ -177,7 +177,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: SURFACE_COLORS[0],
     canvasX: 0,
     canvasY: 0,
-    rotate90: false,
+    rotate90: true,
   },
   {
     id: 'surf-2',
@@ -229,7 +229,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: SURFACE_COLORS[2],
     canvasX: 0,
     canvasY: 0,
-    rotate90: false,
+    rotate90: true,
   },
   {
     id: 'surf-4',
@@ -255,7 +255,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: SURFACE_COLORS[3],
     canvasX: 0,
     canvasY: 0,
-    rotate90: false,
+    rotate90: true,
     syncFloorWithWalls: true,
   },
 ];
@@ -725,22 +725,28 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       let curX = 0;
       let maxWallH = 0;
       walls.forEach(w => {
-        positioned.push({ ...w, rotate90: false, drawW: w.netW, drawH: w.netH, posX: curX, posY: 0 });
-        curX += w.netW;
-        if (w.netH > maxWallH) maxWallH = w.netH;
+        const dW = w.rotate90 ? w.netH : w.netW;
+        const dH = w.rotate90 ? w.netW : w.netH;
+        positioned.push({ ...w, drawW: dW, drawH: dH, posX: curX, posY: 0 });
+        curX += dW;
+        if (dH > maxWallH) maxWallH = dH;
       });
 
       let curY = maxWallH;
       let otherX = 0;
       others.forEach(o => {
-        positioned.push({ ...o, rotate90: false, drawW: o.netW, drawH: o.netH, posX: otherX, posY: curY });
-        otherX += o.netW;
+        const dW = o.rotate90 ? o.netH : o.netW;
+        const dH = o.rotate90 ? o.netW : o.netH;
+        positioned.push({ ...o, drawW: dW, drawH: dH, posX: otherX, posY: curY });
+        otherX += dW;
       });
     } else if (layoutMode === 'stacked') {
       let curY = 0;
       rawCalculated.forEach(s => {
-        positioned.push({ ...s, rotate90: false, drawW: s.netW, drawH: s.netH, posX: 0, posY: curY });
-        curY += s.netH;
+        const dW = s.rotate90 ? s.netH : s.netW;
+        const dH = s.rotate90 ? s.netW : s.netH;
+        positioned.push({ ...s, drawW: dW, drawH: dH, posX: 0, posY: curY });
+        curY += dH;
       });
     } else if (layoutMode === 'cross') {
       const floor = rawCalculated.find(s => s.type === 'floor') || rawCalculated[0];
@@ -751,71 +757,77 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const rightWall = walls[2];
       const bottomWall = walls[3];
 
-      const leftMargin = leftWall ? leftWall.netH : 0;
-      const topMargin = topWall ? topWall.netH : 0;
+      const leftW = leftWall ? (leftWall.rotate90 ? leftWall.netH : leftWall.netW) : 0;
+      const leftH = leftWall ? (leftWall.rotate90 ? leftWall.netW : leftWall.netH) : 0;
 
-      const floorDrawW = floor.netH;
-      const floorDrawH = floor.netW;
+      const topW = topWall ? (topWall.rotate90 ? topWall.netH : topWall.netW) : 0;
+      const topH = topWall ? (topWall.rotate90 ? topWall.netW : topWall.netH) : 0;
+
+      const rightW = rightWall ? (rightWall.rotate90 ? rightWall.netH : rightWall.netW) : 0;
+      const rightH = rightWall ? (rightWall.rotate90 ? rightWall.netW : rightWall.netH) : 0;
+
+      const bottomW = bottomWall ? (bottomWall.rotate90 ? bottomWall.netH : bottomWall.netW) : 0;
+      const bottomH = bottomWall ? (bottomWall.rotate90 ? bottomWall.netW : bottomWall.netH) : 0;
+
+      const floorDrawW = floor.rotate90 ? floor.netH : floor.netW;
+      const floorDrawH = floor.rotate90 ? floor.netW : floor.netH;
+
       positioned.push({
         ...floor,
-        rotate90: true,
         drawW: floorDrawW,
         drawH: floorDrawH,
-        posX: leftMargin,
-        posY: topMargin,
+        posX: leftW,
+        posY: topH,
       });
 
       if (leftWall) {
         positioned.push({
           ...leftWall,
-          rotate90: true,
-          drawW: leftWall.netH,
-          drawH: leftWall.netW,
+          drawW: leftW,
+          drawH: leftH,
           posX: 0,
-          posY: topMargin,
+          posY: topH,
         });
       }
       if (topWall) {
         positioned.push({
           ...topWall,
-          rotate90: false,
-          drawW: topWall.netW,
-          drawH: topWall.netH,
-          posX: leftMargin,
+          drawW: topW,
+          drawH: topH,
+          posX: leftW,
           posY: 0,
         });
       }
       if (rightWall) {
         positioned.push({
           ...rightWall,
-          rotate90: true,
-          drawW: rightWall.netH,
-          drawH: rightWall.netW,
-          posX: leftMargin + floorDrawW,
-          posY: topMargin,
+          drawW: rightW,
+          drawH: rightH,
+          posX: leftW + floorDrawW,
+          posY: topH,
         });
       }
       if (bottomWall) {
         positioned.push({
           ...bottomWall,
-          rotate90: false,
-          drawW: bottomWall.netW,
-          drawH: bottomWall.netH,
-          posX: leftMargin,
-          posY: topMargin + floorDrawH,
+          drawW: bottomW,
+          drawH: bottomH,
+          posX: leftW,
+          posY: topH + floorDrawH,
         });
       }
-      let extraY = topMargin + floorDrawH + (bottomWall ? bottomWall.netH : 0);
+      let extraY = topH + floorDrawH + bottomH;
       walls.slice(4).forEach(ex => {
+        const exW = ex.rotate90 ? ex.netH : ex.netW;
+        const exH = ex.rotate90 ? ex.netW : ex.netH;
         positioned.push({
           ...ex,
-          rotate90: false,
-          drawW: ex.netW,
-          drawH: ex.netH,
-          posX: leftMargin,
+          drawW: exW,
+          drawH: exH,
+          posX: leftW,
           posY: extraY,
         });
-        extraY += ex.netH;
+        extraY += exH;
       });
     } else {
       rawCalculated.forEach(s => {
@@ -1192,6 +1204,17 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
                     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                       <button
+                        onClick={() => updateSurface(s.id, { rotate90: !s.rotate90 })}
+                        title="Bu yüzeyi çizimde 90° Çevir (Yatay / Dikey)"
+                        className={`px-1.5 py-0.5 rounded font-bold text-[10px] transition ${
+                          s.rotate90
+                            ? 'bg-amber-600 text-white hover:bg-amber-500'
+                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        }`}
+                      >
+                        ↻ 90°
+                      </button>
+                      <button
                         onClick={() => moveSurface(idx, -1)}
                         disabled={idx === 0}
                         className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-300"
@@ -1232,9 +1255,22 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   />
                   <span className="font-bold text-sky-400 text-sm">{activeSurface.name}</span>
                 </div>
-                <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono text-[11px] font-bold">
-                  {activeSurface.netW} × {activeSurface.netH} px
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => updateSurface(activeSurface.id, { rotate90: !activeSurface.rotate90 })}
+                    className={`px-2 py-0.5 rounded text-[10.5px] font-bold border transition ${
+                      activeSurface.rotate90
+                        ? 'bg-amber-600 text-white border-amber-400 shadow'
+                        : 'bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700'
+                    }`}
+                    title="Seçili duvarı/yüzeyi çizimde 90° döndür (Yatay ↔ Dikey)"
+                  >
+                    ↻ Çizimde 90° Çevir ({activeSurface.rotate90 ? 'Dikey Duruyor' : 'Yatay Duruyor'})
+                  </button>
+                  <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono text-[11px] font-bold">
+                    {activeSurface.netW} × {activeSurface.netH} px
+                  </span>
+                </div>
               </div>
 
               {/* A) Yüzey Adı ve Geometri Tipi Seçimi */}
