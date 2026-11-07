@@ -508,20 +508,20 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const projW = s.orient === 'landscape' ? baseW : baseH;
       const projH = s.orient === 'landscape' ? baseH : baseW;
 
-      const overlapCountX = isClosedLoopX ? s.cols : Math.max(0, s.cols - 1);
+      const overlapCountX = isClosedLoopX ? (s.cols > 1 ? s.cols : 0) : Math.max(0, s.cols - 1);
       const overlapCountY = Math.max(0, s.rows - 1);
 
-      const ovPxX = overlapCountX > 0
-        ? (s.overlapMode === 'percent' ? pctToPx(s.overlapX, projW) : Math.round(s.overlapX))
-        : 0;
-      const ovPxY = overlapCountY > 0
-        ? (s.overlapMode === 'percent' ? pctToPx(s.overlapY, projH) : Math.round(s.overlapY))
-        : 0;
+      // 1 projektör olsa bile kullanıcının manuel girdiği overlap/kırpma (px) değerini her zaman hesapla
+      const ovPxX = s.overlapMode === 'percent' ? pctToPx(s.overlapX, projW) : Math.round(s.overlapX);
+      const ovPxY = s.overlapMode === 'percent' ? pctToPx(s.overlapY, projH) : Math.round(s.overlapY);
 
       const totalRawW = s.cols * projW;
       const totalRawH = s.rows * projH;
-      const totalOvW = overlapCountX * ovPxX;
-      const totalOvH = overlapCountY * ovPxY;
+      // N > 1 ise (N-1)*ovPxX, N = 1 ise (eğer kullanıcı 1 projektörde manuel overlap/pay girdiyse) 1*ovPxX uygulanır
+      const effectiveOvCountX = s.cols === 1 ? (s.overlapX > 0 ? 1 : 0) : overlapCountX;
+      const effectiveOvCountY = s.rows === 1 ? (s.overlapY > 0 ? 1 : 0) : overlapCountY;
+      const totalOvW = effectiveOvCountX * ovPxX;
+      const totalOvH = effectiveOvCountY * ovPxY;
 
       const projNetW = Math.max(100, totalRawW - totalOvW);
       const projNetH = Math.max(100, totalRawH - totalOvH);
@@ -546,10 +546,11 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const aspectProjector = round(projNetW / Math.max(1, projNetH), 2);
       const aspectContent = round(netW / Math.max(1, netH), 2);
 
-      // İçerik genişliğini (netW) tutturmak için gereken gerçek overlap:
+      // İçerik genişliğini (netW) tutturmak için gereken gerçek overlap (1 projektörde de manuel pay olarak gösterilir):
       const impliedTotalOvW = totalRawW - netW;
-      const impliedOvPxX = overlapCountX > 0 ? round(impliedTotalOvW / overlapCountX, 1) : 0;
-      const impliedOvPctX = overlapCountX > 0 ? round((impliedOvPxX / projW) * 100, 1) : 0;
+      const denomX = overlapCountX > 0 ? overlapCountX : 1;
+      const impliedOvPxX = round(impliedTotalOvW / denomX, 1);
+      const impliedOvPctX = round((impliedOvPxX / projW) * 100, 1);
 
       const drawW = s.rotate90 ? netH : netW;
       const drawH = s.rotate90 ? netW : netH;
@@ -872,7 +873,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         }
       }
 
-      if (showSlices && !s.rotate90) {
+      if (showSlices && !s.rotate90 && s.totalProjectors > 1) {
         s.projSlices.forEach(sl => {
           g.strokeStyle = 'rgba(250, 204, 21, 0.45)';
           g.lineWidth = 3;
@@ -1617,14 +1618,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </div>
                 </div>
 
-                {activeSurface.overlapCountX > 0 && (
-                  <div className="text-[10.5px] text-amber-300 bg-slate-900/90 p-2 rounded border border-slate-800 font-mono">
-                    • <b>{activeSurface.cols} Projektör ({activeSurface.totalRawW}px ham, {activeSurface.overlapCountX} overlap)</b> ile{' '}
-                    <b>{activeSurface.netW}px</b> içeriği eşlemek için gereken overlap:{' '}
-                    <b>Toplam {activeSurface.impliedTotalOvW} px</b> (Projektör arası{' '}
-                    <b>~{activeSurface.impliedOvPxX} px / %{activeSurface.impliedOvPctX}</b>)
-                  </div>
-                )}
+                <div className="text-[10.5px] text-amber-300 bg-slate-900/90 p-2 rounded border border-slate-800 font-mono">
+                  • <b>{activeSurface.cols} Projektör ({activeSurface.totalRawW}px ham{activeSurface.overlapCountX > 0 ? `, ${activeSurface.overlapCountX} overlap` : ', Manuel Pay'})</b> ile{' '}
+                  <b>{activeSurface.netW}px</b> içeriği eşlemek için gereken overlap/pay:{' '}
+                  <b>Toplam {activeSurface.impliedTotalOvW} px</b> ({activeSurface.overlapCountX > 0 ? 'Projektör arası ' : 'Manuel Pay '}
+                  <b>~{activeSurface.impliedOvPxX} px / %{activeSurface.impliedOvPctX}</b>)
+                </div>
               </div>
 
               {/* E) Projektör Çözünürlüğü, Sayısı ve Overlap */}
@@ -1633,7 +1632,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   <span className="font-semibold text-slate-300 text-[11px]">
                     Projektör Donanımı & Dizilimi
                   </span>
-                  {calcMethod === 'aspect_ref' && activeSurface.overlapCountX > 0 && (
+                  {calcMethod === 'aspect_ref' && (
                     <button
                       onClick={() =>
                         updateSurface(activeSurface.id, {
@@ -1699,7 +1698,20 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
                 <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-900">
                   <label>
-                    Yatay Overlap ({activeSurface.overlapMode === 'percent' ? '%' : 'px'})
+                    <div className="flex justify-between items-center">
+                      <span>Yatay Overlap ({activeSurface.overlapMode === 'percent' ? '%' : 'px'})</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSurface(activeSurface.id, {
+                            overlapMode: activeSurface.overlapMode === 'percent' ? 'pixel' : 'percent',
+                          })
+                        }
+                        className="text-[9.5px] text-sky-400 hover:underline"
+                      >
+                        {activeSurface.overlapMode === 'percent' ? 'px yap' : '% yap'}
+                      </button>
+                    </div>
                     <div className="flex items-center gap-1.5">
                       <input
                         className="inp font-bold"
@@ -1707,7 +1719,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         step="0.5"
                         min="0"
                         value={activeSurface.overlapX}
-                        disabled={activeSurface.overlapCountX <= 0}
                         onChange={e => updateSurface(activeSurface.id, { overlapX: Math.max(0, +e.target.value) })}
                       />
                       <span className="text-[10px] font-mono text-sky-400 shrink-0">
@@ -1724,7 +1735,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         step="0.5"
                         min="0"
                         value={activeSurface.overlapY}
-                        disabled={activeSurface.rows <= 1}
                         onChange={e => updateSurface(activeSurface.id, { overlapY: Math.max(0, +e.target.value) })}
                       />
                       <span className="text-[10px] font-mono text-sky-400 shrink-0">
@@ -2085,7 +2095,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               </g>
                             )}
 
-                            {showSlices && !s.rotate90 && s.projSlices.map(sl => (
+                            {showSlices && !s.rotate90 && s.totalProjectors > 1 && s.projSlices.map(sl => (
                               <g key={sl.index}>
                                 <rect
                                   x={sx + sl.startX}
