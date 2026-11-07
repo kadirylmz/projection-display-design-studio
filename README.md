@@ -48,6 +48,18 @@ Profesyonel AV sistem entegratörleri, projeksiyon haritalama (mapping) şirketl
       - *Oda & Projeksiyon Planı (Üst Görünüş)*
       - *LED Duvar Ön Görünüş Paftası*
       - *Piksel Haritalama Paftası*
+15. **İçerik & Projeksiyon Planlayıcı (ContentPlanner) ve Canlı 3B Oda Simülasyonu (PlannerRoom3D)**
+    - **Çoklu Mimari Geometri Desteği:** Düz Duvar, Dikdörtgen Zemin, İçe Kavisli Duvar (Concave Arc), 360° Silindir, Kubbe (Dome / Domemaster 1:1), Tam Küre (Sphere 360° 2:1 Harita) ve Dairesel Yuvarlak Zemin.
+    - **Fiziksel Oda Kabuğu (Architectural Shell):** Projeksiyon duvar ebatlarından bağımsız fiziksel oda tavan yüksekliği, genişlik ve boy sınırları; tek tıkla açılıp kapanabilen mimari tel kafes ve kolonlar.
+    - **Projektör Montaj Yüksekliği & Kaydırma (Shift):** Her yüzey için bağımsız projektör montaj yüksekliği (projMountHeightM), yatay sağa/sola (projShiftXM) ve dikey (projShiftYM) lens offset ayarları.
+    - **Uzaklık & Lens Bazlı Optik Piksel Yoğunluğu:**
+      - *Projektör Optik Atımı:* Throw Distance ($) ve Lens Throw Ratio ($) üzerinden tek projektörün açtığı gerçek alan ( = D / TR$) ve duvardaki gerçek piksel boyutu (mm/px, PPI).
+      - *Duvar İçerik Piksel Yoğunluğu:* Yüzey açınımına oturan toplam kanvas piksel boyutu (px/m, PPI).
+      - *İzleyici Bakış Açısı & Göz Çözünürlüğü (Visual Acuity):* İzleyici mesafesine (D_izleyici) göre insan gözünün retina (1.2 arcmin) ve ideal müze/deneyim (2.5 arcmin) piksel ayırt edilebilirlik sınırları ve minimum izleme mesafesi analizi.
+    - **Etkileşimli 3B Ziyaretçi Modelleri & Canlı Gölge Simülasyonu:**
+      - Fare ile zemin düzleminde (y = 0) özgürce sürüklenebilen çoklu insan modelleri (Erkek Ziyaretçi, Kadın Ziyaretçi, Müze Küratörü/Mimar, Çocuk Ziyaretçi, Bankta Oturan İzleyici).
+      - Projektör ışığının önüne geçildiğinde duvarda gerçek zamanlı insan silüeti, kırmızı gölge uyarı çerçevesi, tepe ışını ve zeminde uzanan izdüşüm gölgesi analizi.
+      - 3B kameradan yüksek çözünürlüklü teknik antetli PNG dışa aktarımı.
 
 ---
 
