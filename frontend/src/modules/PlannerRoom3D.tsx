@@ -857,124 +857,253 @@ function SpecialGeometryScene({
             {`${surf.name} | R=${r}m (Açınım: ${surf.effectiveWidthM}m × ${h}m → ${surf.netW}×${surf.netH}px)`}
           </Text>
 
-          {/* Çevresel Projektörler */}
-          {showBeams &&
-            Array.from({ length: surf.cols }).map((_, idx) => {
-              const startAng = surf.geometry === 'concave_arc' ? -arcAngleRad / 2 + Math.PI : 0;
-              const step =
-                surf.geometry === 'concave_arc'
-                  ? arcAngleRad / Math.max(1, surf.cols)
-                  : (Math.PI * 2) / Math.max(1, surf.cols);
-              const theta = startAng + (idx + 0.5) * step;
+          {/* Çevresel Projektörler (Yatay cols × Dikey rows) */}
+          {showBeams && (() => {
+            const items: JSX.Element[] = [];
+            const startAng = surf.geometry === 'concave_arc' ? -arcAngleRad / 2 + Math.PI : 0;
+            const step =
+              surf.geometry === 'concave_arc'
+                ? arcAngleRad / Math.max(1, surf.cols)
+                : (Math.PI * 2) / Math.max(1, surf.cols);
 
-              // Duvardaki hedef nokta
-              const tx = Math.sin(theta) * r;
-              const ty = h / 2;
-              const tz = Math.cos(theta) * r;
+            for (let row = 0; row < surf.rows; row++) {
+              const offsetUp =
+                surf.rows === 1
+                  ? 0
+                  : ((surf.rows - 1) / 2 - row) * (surf.singleProjHeightM * 0.85);
 
-              // Merkeze doğru normal vektör
-              const nx = -Math.sin(theta);
-              const nz = -Math.cos(theta);
+              for (let idx = 0; idx < surf.cols; idx++) {
+                const theta = startAng + (idx + 0.5) * step;
+                const pIdx = row * surf.cols + idx;
 
-              // Projektör konumu: duvardan throwDistM geride
-              const px = tx + nx * surf.throwDistM;
-              const py = Math.max(2.2, h - 0.2);
-              const pz = tz + nz * surf.throwDistM;
+                // Duvardaki hedef nokta
+                const tx = Math.sin(theta) * r;
+                const ty = h / 2 + offsetUp;
+                const tz = Math.cos(theta) * r;
 
-              // Teğet (sağ) vektör
-              const rx = Math.cos(theta);
-              const rz = -Math.sin(theta);
+                // Merkeze doğru normal vektör
+                const nx = -Math.sin(theta);
+                const nz = -Math.cos(theta);
 
-              return (
-                <ProjectorFrustum3D
-                  key={`cyl-pj-${idx}`}
-                  pos={[px, py, pz]}
-                  targetCenter={[tx, ty, tz]}
-                  upVec={[0, 1, 0]}
-                  rightVec={[rx, 0, rz]}
-                  imgW={surf.singleProjWidthM}
-                  imgH={surf.singleProjHeightM}
-                  throwDist={surf.throwDistM}
-                  color={PROJ_COLORS[idx % PROJ_COLORS.length]}
-                  label={`PJ #${idx + 1}`}
-                  detailText={`${surf.singleProjWidthM}m (${surf.distMmPerPx}mm/px)`}
-                  showLabels={showLabels}
-                />
-              );
-            })}
+                // Projektör konumu: duvardan throwDistM geride
+                const px = tx + nx * surf.throwDistM;
+                const py = Math.max(1.8, h - 0.2 + offsetUp * 0.4);
+                const pz = tz + nz * surf.throwDistM;
+
+                // Teğet (sağ) vektör
+                const rx = Math.cos(theta);
+                const rz = -Math.sin(theta);
+
+                items.push(
+                  <ProjectorFrustum3D
+                    key={`cyl-pj-${row}-${idx}`}
+                    pos={[px, py, pz]}
+                    targetCenter={[tx, ty, tz]}
+                    upVec={[0, 1, 0]}
+                    rightVec={[rx, 0, rz]}
+                    imgW={surf.singleProjWidthM}
+                    imgH={surf.singleProjHeightM}
+                    throwDist={surf.throwDistM}
+                    color={PROJ_COLORS[pIdx % PROJ_COLORS.length]}
+                    label={`PJ #${idx + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
+                    detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
+                    showLabels={showLabels}
+                  />
+                );
+              }
+            }
+            return items;
+          })()}
         </group>
       )}
 
       {/* 2. KUBBE (DOME) VEYA TAM KÜRE (SPHERE) */}
       {(surf.geometry === 'dome' || surf.geometry === 'sphere') && (
-        <group position={[0, surf.geometry === 'sphere' ? r : 0, 0]}>
+        <group>
+          <group position={[0, surf.geometry === 'sphere' ? r : 0, 0]}>
+            <mesh
+              onClick={e => {
+                e.stopPropagation();
+                onSelect(surf.id);
+              }}
+            >
+              <sphereGeometry
+                args={[
+                  r,
+                  48,
+                  32,
+                  0,
+                  Math.PI * 2,
+                  0,
+                  surf.geometry === 'dome' ? Math.PI / 2 : Math.PI,
+                ]}
+              />
+              <meshStandardMaterial
+                color={surf.color}
+                transparent
+                opacity={0.26}
+                side={THREE.DoubleSide}
+                wireframe={false}
+              />
+            </mesh>
+            <mesh>
+              <sphereGeometry
+                args={[
+                  r * 1.002,
+                  24,
+                  16,
+                  0,
+                  Math.PI * 2,
+                  0,
+                  surf.geometry === 'dome' ? Math.PI / 2 : Math.PI,
+                ]}
+              />
+              <meshBasicMaterial color={surf.color} wireframe transparent opacity={0.22} />
+            </mesh>
+
+            <Text
+              position={[0, r + 0.8, 0]}
+              fontSize={0.45}
+              color="#c084fc"
+              anchorX="center"
+              anchorY="middle"
+              outlineWidth={0.03}
+              outlineColor="#020617"
+            >
+              {`${surf.name} | Çap=${r * 2}m (${surf.netW}×${surf.netH}px · ${surf.avgMmPerPx} mm/px)`}
+            </Text>
+          </group>
+
+          {/* KUBBE (DOME) VE KÜRE (SPHERE) ÇEVRESEL & MERİDYEN PROJEKTÖRLERİ */}
+          {showBeams && (() => {
+            const items: JSX.Element[] = [];
+            const centerY = surf.geometry === 'sphere' ? r : 0;
+
+            for (let row = 0; row < surf.rows; row++) {
+              // Dikey (Elevation) açı:
+              // Kubbede (dome) ufuk (15°) ile tepe/zenit (75°) arası
+              // Kürede (sphere) alt yarıküre (-45°) ile üst yarıküre (+45°) arası
+              const elevDeg =
+                surf.geometry === 'dome'
+                  ? surf.rows === 1
+                    ? 42
+                    : 22 + (row / Math.max(1, surf.rows - 1)) * 45
+                  : surf.rows === 1
+                  ? 0
+                  : -35 + (row / Math.max(1, surf.rows - 1)) * 70;
+              const elevRad = THREE.MathUtils.degToRad(elevDeg);
+
+              for (let col = 0; col < surf.cols; col++) {
+                const azimRad = (col / Math.max(1, surf.cols)) * Math.PI * 2;
+                const pIdx = row * surf.cols + col;
+
+                // Küre / Kubbe yüzeyindeki hedef nokta (tx, ty, tz)
+                const dirX = Math.cos(elevRad) * Math.sin(azimRad);
+                const dirY = Math.sin(elevRad);
+                const dirZ = Math.cos(elevRad) * Math.cos(azimRad);
+
+                const tx = dirX * r;
+                const ty = centerY + dirY * r;
+                const tz = dirZ * r;
+
+                // Projektör konumu:
+                // Kubbede karşı/çevre coving halkasından veya merkezden throwDistM geriden hedef noktaya atım yapar
+                const px = tx - dirX * surf.throwDistM;
+                const py = Math.max(0.6, ty - dirY * surf.throwDistM);
+                const pz = tz - dirZ * surf.throwDistM;
+
+                // Sağ (teğet) ve Yukarı (meridyen) vektörleri
+                const rx = Math.cos(azimRad);
+                const rz = -Math.sin(azimRad);
+                const ux = -Math.sin(elevRad) * Math.sin(azimRad);
+                const uy = Math.cos(elevRad);
+                const uz = -Math.sin(elevRad) * Math.cos(azimRad);
+
+                items.push(
+                  <ProjectorFrustum3D
+                    key={`dome-sphere-pj-${row}-${col}`}
+                    pos={[px, py, pz]}
+                    targetCenter={[tx, ty, tz]}
+                    upVec={[ux, uy, uz]}
+                    rightVec={[rx, 0, rz]}
+                    imgW={surf.singleProjWidthM}
+                    imgH={surf.singleProjHeightM}
+                    throwDist={surf.throwDistM}
+                    color={PROJ_COLORS[pIdx % PROJ_COLORS.length]}
+                    label={`PJ ${col + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
+                    detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
+                    showLabels={showLabels}
+                  />
+                );
+              }
+            }
+            return items;
+          })()}
+        </group>
+      )}
+
+      {/* DAİRESEL ZEMİN VARSA (YÜZEY + PROJEKTÖRLERİ) */}
+      {floorSurf && (
+        <group>
           <mesh
+            position={[0, 0.02, 0]}
+            rotation={[-Math.PI / 2, 0, 0]}
             onClick={e => {
               e.stopPropagation();
-              onSelect(surf.id);
+              onSelect(floorSurf.id);
             }}
           >
-            <sphereGeometry
-              args={[
-                r,
-                48,
-                32,
-                0,
-                Math.PI * 2,
-                0,
-                surf.geometry === 'dome' ? Math.PI / 2 : Math.PI,
-              ]}
-            />
-            <meshStandardMaterial
-              color={surf.color}
-              transparent
-              opacity={0.28}
-              side={THREE.DoubleSide}
-              wireframe={false}
-            />
-          </mesh>
-          <mesh>
-            <sphereGeometry
-              args={[
-                r * 1.002,
-                24,
-                16,
-                0,
-                Math.PI * 2,
-                0,
-                surf.geometry === 'dome' ? Math.PI / 2 : Math.PI,
-              ]}
-            />
-            <meshBasicMaterial color={surf.color} wireframe transparent opacity={0.22} />
+            <circleGeometry args={[floorSurf.radiusM, 64]} />
+            <meshStandardMaterial color={floorSurf.color} transparent opacity={0.25} side={THREE.DoubleSide} />
           </mesh>
 
           <Text
-            position={[0, r + 0.8, 0]}
-            fontSize={0.45}
-            color="#c084fc"
+            position={[0, 0.12, 0]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            fontSize={0.4}
+            color="#fde047"
             anchorX="center"
             anchorY="middle"
             outlineWidth={0.03}
             outlineColor="#020617"
           >
-            {`${surf.name} | Çap=${r * 2}m (${surf.netW}×${surf.netH}px · ${surf.avgMmPerPx} mm/px)`}
+            {`${floorSurf.name} (Çap=${floorSurf.radiusM * 2}m → ${floorSurf.netW}×${floorSurf.netH}px)`}
           </Text>
-        </group>
-      )}
 
-      {/* DAİRESEL ZEMİN VARSA */}
-      {floorSurf && (
-        <mesh
-          position={[0, 0.02, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-          onClick={e => {
-            e.stopPropagation();
-            onSelect(floorSurf.id);
-          }}
-        >
-          <circleGeometry args={[floorSurf.radiusM, 64]} />
-          <meshStandardMaterial color={floorSurf.color} transparent opacity={0.25} side={THREE.DoubleSide} />
-        </mesh>
+          {showBeams && (() => {
+            const items: JSX.Element[] = [];
+            const singleW = floorSurf.singleProjWidthM;
+            const singleH = floorSurf.singleProjHeightM;
+            const diam = floorSurf.radiusM * 2;
+            const stepZ = floorSurf.cols > 1 ? (diam - singleW) / (floorSurf.cols - 1) : 0;
+            const stepX = floorSurf.rows > 1 ? (diam - singleH) / (floorSurf.rows - 1) : 0;
+
+            for (let rIdx = 0; rIdx < floorSurf.rows; rIdx++) {
+              for (let cIdx = 0; cIdx < floorSurf.cols; cIdx++) {
+                const tz = floorSurf.cols === 1 ? 0 : -diam / 2 + singleW / 2 + cIdx * stepZ;
+                const tx = floorSurf.rows === 1 ? 0 : -diam / 2 + singleH / 2 + rIdx * stepX;
+
+                items.push(
+                  <ProjectorFrustum3D
+                    key={`circle-floor-pj-${rIdx}-${cIdx}`}
+                    pos={[tx, floorSurf.throwDistM, tz]}
+                    targetCenter={[tx, 0.03, tz]}
+                    upVec={[1, 0, 0]}
+                    rightVec={[0, 0, 1]}
+                    imgW={singleW}
+                    imgH={singleH}
+                    throwDist={floorSurf.throwDistM}
+                    color="#facc15"
+                    label={`Zemin PJ ${cIdx + 1}.${rIdx + 1}`}
+                    detailText={`${singleW}m×${singleH}m`}
+                    showLabels={showLabels}
+                  />
+                );
+              }
+            }
+            return items;
+          })()}
+        </group>
       )}
 
       {/* İZLEYİCİ */}
