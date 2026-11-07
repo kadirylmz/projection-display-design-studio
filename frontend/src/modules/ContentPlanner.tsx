@@ -1,7 +1,8 @@
-import { useState, useMemo, lazy, Suspense } from 'react';
+import { useState, useMemo, lazy, Suspense, useEffect } from 'react';
 import { pctToPx } from '../engine/multiproj';
 import { LengthUnit, round } from '../engine/units';
 import { download } from '../util';
+import { usePlannerStore } from '../plannerStore';
 
 const PlannerRoom3D = lazy(() => import('./PlannerRoom3D'));
 
@@ -271,7 +272,13 @@ export interface PhysicalRoomConfig {
 }
 
 export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
-  const [surfaces, setSurfaces] = useState<SurfaceItem[]>(INITIAL_SURFACES);
+  const storeSurfaces = usePlannerStore(state => state.surfaces);
+  const storePhysicalRoom = usePlannerStore(state => state.physicalRoom);
+  const setStoreSurfaces = usePlannerStore(state => state.setSurfaces);
+  const setStorePhysicalRoom = usePlannerStore(state => state.setPhysicalRoom);
+  const setStoreCalculatedSurfaces = usePlannerStore(state => state.setCalculatedSurfaces);
+
+  const [surfaces, setSurfaces] = useState<SurfaceItem[]>(storeSurfaces);
   const [selectedId, setSelectedId] = useState<string>('surf-1');
   const [calcMethod, setCalcMethod] = useState<CalcMethod>('aspect_ref');
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('cross');
@@ -280,12 +287,16 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
-  const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>({
-    enabled: true,
-    widthM: 8.5,
-    lengthM: 25.0,
-    heightM: 5.5,
-  });
+  const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
+
+  // Değişiklikleri CAD & Elektrik modülünün okuduğu ortak plannerStore'a yaz
+  useEffect(() => {
+    setStoreSurfaces(surfaces);
+  }, [surfaces, setStoreSurfaces]);
+
+  useEffect(() => {
+    setStorePhysicalRoom(physicalRoom);
+  }, [physicalRoom, setStorePhysicalRoom]);
 
   // ==========================================
   // HAZIR ODA & ÖZEL GEOMETRİ ŞABLONLARI
@@ -892,6 +903,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   }, [surfaces, layoutMode, calcMethod]);
 
   const activeSurface = calculation.surfaces.find(s => s.id === selectedId) || calculation.surfaces[0];
+
+  useEffect(() => {
+    setStoreCalculatedSurfaces(calculation.surfaces);
+  }, [calculation.surfaces, setStoreCalculatedSurfaces]);
 
   // ==========================================
   // 1:1 PNG PIXEL MAP ŞABLONU İNDİRME
