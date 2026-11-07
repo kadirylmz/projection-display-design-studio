@@ -13,22 +13,33 @@ const RESOLUTIONS: PresetRes[] = [
   { label: 'Özel (Custom)', w: 1920, h: 1080 },
 ];
 
-export type SurfaceType = 'wall' | 'floor' | 'ceiling' | 'column' | 'curved';
-export type LayoutMode = 'strip' | 'cross' | 'stacked' | 'custom';
+export type SurfaceType = 'wall' | 'floor' | 'ceiling';
+export type SurfaceGeometry =
+  | 'flat'          // Düz Duvar / Dikdörtgen Zemin
+  | 'concave_arc'   // İçbükey / Dışbükey Kavisli Duvar (Yarıçap R + Açı °)
+  | 'cylinder_360'  // 360° Tam Yuvarlak Silindir Oda (Çap D + Yükseklik H, Sonsuz Döngü N Overlap)
+  | 'dome'          // Kubbe / Yarım Küre (Fulldome Fisheye 1:1 Kare Master)
+  | 'sphere'        // Tam Küre 360°×180° (Equirectangular 2:1 Açınım)
+  | 'circle_floor'; // Yuvarlak Dairesel Zemin (1:1 Kare İçinde Daire Maske)
+
+export type LayoutMode = 'cross' | 'strip' | 'stacked' | 'custom';
 export type CalcMethod = 'aspect_ref' | 'projector_blend';
 
 export interface SurfaceItem {
   id: string;
   name: string;
   type: SurfaceType;
-  widthM: number;       // Fiziksel genişlik (m)
-  heightM: number;      // Fiziksel yükseklik/derinlik (m)
+  geometry: SurfaceGeometry;
+  widthM: number;       // Düz duvar genişliği (m) — Kavis/Silindir/Küre modlarında otomatik yay uzunluğu
+  heightM: number;      // Yükseklik (m)
+  radiusM: number;      // Kavis yarıçapı (R) veya Silindir/Kubbe/Küre yarıçapı (m)
+  angleDeg: number;     // Kavis merkez açısı (derece, örn: 120°, 180°, 360°)
   resIdx: number;       // Seçili çözünürlük indeksi
   customW: number;      // Özel projektör genişliği (px)
   customH: number;      // Özel projektör yüksekliği (px)
   orient: 'landscape' | 'portrait';
-  cols: number;         // Yatay projektör sayısı (N_x)
-  rows: number;         // Dikey projektör sırası (N_y)
+  cols: number;         // Yatay/Çevresel projektör sayısı (N_x)
+  rows: number;         // Dikey/Meridyen projektör sırası (N_y)
   overlapMode: 'percent' | 'pixel';
   overlapX: number;     // Yatay overlap (% veya px)
   overlapY: number;     // Dikey overlap (% veya px)
@@ -39,30 +50,38 @@ export interface SurfaceItem {
 }
 
 export interface CalculatedSurface extends SurfaceItem {
-  projW: number;            // Oryantasyona göre tek projektör W
-  projH: number;            // Oryantasyona göre tek projektör H
-  aspectPhysical: number;   // Duvar Fiziksel Oranı (W_m / H_m)
-  aspectProjector: number;  // Toplam Projeksiyon Oranı (projNetW / projNetH)
-  aspectContent: number;    // Aktif İçerik Oranı (netW / netH)
+  effectiveWidthM: number;   // Hesaplanan gerçek açınım genişliği (Yay/Çevre/Meridyen m)
+  effectiveHeightM: number;  // Hesaplanan gerçek açınım yüksekliği (m)
+  chordWidthM: number;       // Kavisli duvarda iki uç arası düz mesafe (Kiriş / Chord m)
+  sagittaM: number;          // Kavis derinliği (Ok yüksekliği / Sagitta m)
+  isClosedLoopX: boolean;    // 360° tam turda son projektör ilk projektörle birleşir (N overlap)
+  isCircularMask: boolean;   // Kubbe (Domemaster) veya Dairesel Zemin için dairesel maske
+
+  projW: number;
+  projH: number;
+  aspectPhysical: number;    // Açınım Fiziksel Oranı (effectiveWidthM / effectiveHeightM)
+  aspectProjector: number;   // Toplam Projeksiyon Oranı (projNetW / projNetH)
+  aspectContent: number;     // Aktif İçerik Oranı (netW / netH)
 
   // 1) Orana Göre İçerik Çözünürlüğü (Aspect Ratio Bazlı)
-  aspectW: number;          // round(refPxH * (widthM / heightM))
-  aspectH: number;          // refPxH (örn. 1200 px)
+  aspectW: number;
+  aspectH: number;
 
   // 2) Projeksiyon & Overlap Bazlı Donanım Çözünürlüğü
-  ovPxX: number;            // İki projektör arası yatay overlap (px)
-  ovPxY: number;            // İki projektör arası dikey overlap (px)
-  totalRawW: number;        // Ham genişlik (N * W)
-  totalRawH: number;        // Ham yükseklik (M * H)
-  totalOvW: number;         // Toplam düşülen yatay overlap ((N-1) * O_x)
-  totalOvH: number;         // Toplam düşülen dikey overlap ((M-1) * O_y)
-  projNetW: number;         // Donanım Net Genişlik: (N*W) - ((N-1)*O_x)
-  projNetH: number;         // Donanım Net Yükseklik: (M*H) - ((M-1)*O_y)
+  ovPxX: number;
+  ovPxY: number;
+  overlapCountX: number;     // Düz/Kavis = cols - 1, 360° Silindir = cols
+  totalRawW: number;
+  totalRawH: number;
+  totalOvW: number;
+  totalOvH: number;
+  projNetW: number;
+  projNetH: number;
 
   // İçerik (Oran) için gereken ideal overlap
-  impliedTotalOvW: number;  // totalRawW - aspectW
-  impliedOvPxX: number;     // (totalRawW - aspectW) / (cols - 1)
-  impliedOvPctX: number;    // (impliedOvPxX / projW) * 100
+  impliedTotalOvW: number;
+  impliedOvPxX: number;
+  impliedOvPctX: number;
 
   // Seçili metoda göre aktif kullanılan netW ve netH
   netW: number;
@@ -76,6 +95,7 @@ export interface CalculatedSurface extends SurfaceItem {
   avgMmPerPx: number;
   ppi: number;
   totalProjectors: number;
+  geometryFormulaText: string;
   projSlices: { index: number; col: number; row: number; startX: number; endX: number; startY: number; endY: number }[];
 }
 
@@ -89,13 +109,25 @@ const SURFACE_COLORS = [
   '#14b8a6', // Teal
 ];
 
+const GEOMETRY_LABELS: Record<SurfaceGeometry, string> = {
+  flat: 'Düz Yüzey (Dikdörtgen Duvar / Zemin)',
+  concave_arc: 'İçbükey / Dışbükey Kavisli Duvar (Concave / Convex Arc)',
+  cylinder_360: '360° Tam Yuvarlak Silindir Oda (Sonsuz Döngü)',
+  dome: 'Kubbe / Yarım Küre (Fulldome 1:1 Fisheye Master)',
+  sphere: 'Tam Küre 360°×180° (Equirectangular 2:1 Açınım)',
+  circle_floor: 'Tam Yuvarlak Dairesel Zemin (1:1 Daire Maskeli)',
+};
+
 const INITIAL_SURFACES: SurfaceItem[] = [
   {
     id: 'surf-1',
     name: '1. Duvar (Sol Uzun)',
     type: 'wall',
+    geometry: 'flat',
     widthM: 23.30,
     heightM: 4.30,
+    radiusM: 6.0,
+    angleDeg: 120,
     resIdx: 0,
     customW: 1920,
     customH: 1200,
@@ -114,8 +146,11 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     id: 'surf-2',
     name: '2. Duvar (Ön Kısa)',
     type: 'wall',
+    geometry: 'flat',
     widthM: 7.00,
     heightM: 4.30,
+    radiusM: 6.0,
+    angleDeg: 90,
     resIdx: 0,
     customW: 1920,
     customH: 1200,
@@ -134,8 +169,11 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     id: 'surf-3',
     name: '3. Duvar (Sağ Uzun)',
     type: 'wall',
+    geometry: 'flat',
     widthM: 23.30,
     heightM: 4.30,
+    radiusM: 6.0,
+    angleDeg: 120,
     resIdx: 0,
     customW: 1920,
     customH: 1200,
@@ -154,8 +192,11 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     id: 'surf-4',
     name: 'Zemin (Floor)',
     type: 'floor',
+    geometry: 'flat',
     widthM: 23.30,
     heightM: 7.00,
+    radiusM: 6.0,
+    angleDeg: 360,
     resIdx: 0,
     customW: 1920,
     customH: 1200,
@@ -183,62 +224,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [showGrid, setShowGrid] = useState<boolean>(true);
 
   // ==========================================
-  // HAZIR ODA ŞABLONLARI (HIZLI YÜKLEME)
+  // HAZIR ODA & ÖZEL GEOMETRİ ŞABLONLARI
   // ==========================================
-  const applyPreset = (preset: 'single' | 'l-wall' | 'u-3wall' | 'u-floor' | 'box-5') => {
-    if (preset === 'single') {
-      const s: SurfaceItem[] = [{
-        id: 'surf-1', name: '1. Ana Duvar', type: 'wall', widthM: 16.0, heightM: 4.0,
-        resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 3, rows: 1,
-        overlapMode: 'percent', overlapX: 10, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
-      }];
-      setRefHeightM(4.0);
-      setRefHeightPx(1200);
-      setSurfaces(s);
-      setSelectedId('surf-1');
-      setLayoutMode('strip');
-    } else if (preset === 'l-wall') {
-      const s: SurfaceItem[] = [
-        {
-          id: 'surf-1', name: '1. Duvar (Sol)', type: 'wall', widthM: 12.0, heightM: 4.0,
-          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 1,
-          overlapMode: 'percent', overlapX: 10, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
-        },
-        {
-          id: 'surf-2', name: '2. Duvar (Ön)', type: 'wall', widthM: 8.0, heightM: 4.0,
-          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 1,
-          overlapMode: 'percent', overlapX: 15, overlapY: 10, color: SURFACE_COLORS[1], canvasX: 0, canvasY: 0, rotate90: false,
-        },
-      ];
-      setRefHeightM(4.0);
-      setRefHeightPx(1200);
-      setSurfaces(s);
-      setSelectedId('surf-1');
-      setLayoutMode('strip');
-    } else if (preset === 'u-3wall') {
-      const s: SurfaceItem[] = [
-        {
-          id: 'surf-1', name: '1. Duvar (Sol)', type: 'wall', widthM: 15.0, heightM: 4.0,
-          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 3, rows: 1,
-          overlapMode: 'percent', overlapX: 10, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
-        },
-        {
-          id: 'surf-2', name: '2. Duvar (Merkez)', type: 'wall', widthM: 10.0, heightM: 4.0,
-          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 1,
-          overlapMode: 'percent', overlapX: 10, overlapY: 10, color: SURFACE_COLORS[1], canvasX: 0, canvasY: 0, rotate90: false,
-        },
-        {
-          id: 'surf-3', name: '3. Duvar (Sağ)', type: 'wall', widthM: 15.0, heightM: 4.0,
-          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 3, rows: 1,
-          overlapMode: 'percent', overlapX: 10, overlapY: 10, color: SURFACE_COLORS[2], canvasX: 0, canvasY: 0, rotate90: false,
-        },
-      ];
-      setRefHeightM(4.0);
-      setRefHeightPx(1200);
-      setSurfaces(s);
-      setSelectedId('surf-1');
-      setLayoutMode('strip');
-    } else if (preset === 'u-floor') {
+  const applyPreset = (preset: 'box-5' | 'u-floor' | 'concave' | 'cylinder-360' | 'dome-planetarium' | 'sphere-360') => {
+    if (preset === 'u-floor') {
       setRefHeightM(4.30);
       setRefHeightPx(1200);
       setSurfaces(INITIAL_SURFACES);
@@ -248,7 +237,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const s: SurfaceItem[] = [
         ...INITIAL_SURFACES.slice(0, 3),
         {
-          id: 'surf-5', name: '4. Duvar (Arka Kısa)', type: 'wall', widthM: 7.00, heightM: 4.30,
+          id: 'surf-5', name: '4. Duvar (Arka Kısa)', type: 'wall', geometry: 'flat',
+          widthM: 7.00, heightM: 4.30, radiusM: 5, angleDeg: 90,
           resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 1,
           overlapMode: 'percent', overlapX: 15, overlapY: 10, color: SURFACE_COLORS[4], canvasX: 0, canvasY: 0, rotate90: false,
         },
@@ -259,36 +249,103 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       setSurfaces(s);
       setSelectedId('surf-1');
       setLayoutMode('cross');
+    } else if (preset === 'concave') {
+      const s: SurfaceItem[] = [
+        {
+          id: 'surf-1', name: 'İçbükey Kavisli Sahne (135°)', type: 'wall', geometry: 'concave_arc',
+          widthM: 18.85, heightM: 4.00, radiusM: 8.0, angleDeg: 135,
+          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 4, rows: 1,
+          overlapMode: 'percent', overlapX: 15, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
+        },
+      ];
+      setRefHeightM(4.00);
+      setRefHeightPx(1200);
+      setSurfaces(s);
+      setSelectedId('surf-1');
+      setLayoutMode('strip');
+    } else if (preset === 'cylinder-360') {
+      const s: SurfaceItem[] = [
+        {
+          id: 'surf-1', name: '360° Silindir Duvar (Çap 10m)', type: 'wall', geometry: 'cylinder_360',
+          widthM: 31.42, heightM: 4.00, radiusM: 5.0, angleDeg: 360,
+          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 6, rows: 1,
+          overlapMode: 'percent', overlapX: 18, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
+        },
+        {
+          id: 'surf-2', name: 'Yuvarlak Zemin (Çap 10m)', type: 'floor', geometry: 'circle_floor',
+          widthM: 10.0, heightM: 10.0, radiusM: 5.0, angleDeg: 360,
+          resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 3,
+          overlapMode: 'percent', overlapX: 15, overlapY: 15, color: SURFACE_COLORS[3], canvasX: 0, canvasY: 0, rotate90: false,
+        },
+      ];
+      setRefHeightM(4.00);
+      setRefHeightPx(1200);
+      setSurfaces(s);
+      setSelectedId('surf-1');
+      setLayoutMode('strip');
+    } else if (preset === 'dome-planetarium') {
+      const s: SurfaceItem[] = [
+        {
+          id: 'surf-1', name: 'Kubbe / Planetarium (Çap 12m)', type: 'ceiling', geometry: 'dome',
+          widthM: 18.85, heightM: 18.85, radiusM: 6.0, angleDeg: 180,
+          resIdx: 2, customW: 3840, customH: 2160, orient: 'landscape', cols: 3, rows: 2,
+          overlapMode: 'percent', overlapX: 20, overlapY: 20, color: SURFACE_COLORS[5], canvasX: 0, canvasY: 0, rotate90: false,
+        },
+      ];
+      setRefHeightM(18.85);
+      setRefHeightPx(4096);
+      setSurfaces(s);
+      setSelectedId('surf-1');
+      setLayoutMode('strip');
+    } else if (preset === 'sphere-360') {
+      const s: SurfaceItem[] = [
+        {
+          id: 'surf-1', name: 'Tam Küre 360°×180° (Çap 8m)', type: 'wall', geometry: 'sphere',
+          widthM: 25.13, heightM: 12.57, radiusM: 4.0, angleDeg: 360,
+          resIdx: 2, customW: 3840, customH: 2160, orient: 'landscape', cols: 4, rows: 2,
+          overlapMode: 'percent', overlapX: 15, overlapY: 15, color: SURFACE_COLORS[4], canvasX: 0, canvasY: 0, rotate90: false,
+        },
+      ];
+      setRefHeightM(12.57);
+      setRefHeightPx(4096);
+      setSurfaces(s);
+      setSelectedId('surf-1');
+      setLayoutMode('strip');
     }
   };
 
   // ==========================================
   // YÜZEY EKLEME / SİLME / GÜNCELLEME
   // ==========================================
-  const addSurface = (type: SurfaceType) => {
+  const addSurface = (geometry: SurfaceGeometry, type: SurfaceType = 'wall') => {
     const id = `surf-${Date.now()}`;
-    const wallCount = surfaces.filter(s => s.type === 'wall').length;
+    const count = surfaces.length + 1;
     const defaultName =
-      type === 'wall' ? `${wallCount + 1}. Duvar` :
-      type === 'floor' ? 'Zemin (Floor)' :
-      type === 'ceiling' ? 'Tavan (Ceiling)' :
-      type === 'curved' ? 'Kavisli Yüzey (Curved)' : 'Kolon / Özel Yüzey';
+      geometry === 'flat' && type === 'wall' ? `${count}. Düz Duvar` :
+      geometry === 'flat' && type === 'floor' ? 'Dikdörtgen Zemin' :
+      geometry === 'concave_arc' ? `${count}. Kavisli Duvar (Concave)` :
+      geometry === 'cylinder_360' ? '360° Tam Silindir Duvar' :
+      geometry === 'dome' ? 'Kubbe / Yarım Küre (Dome)' :
+      geometry === 'sphere' ? 'Tam Küre (Sphere 360°)' : 'Dairesel Yuvarlak Zemin';
 
     const newSurf: SurfaceItem = {
       id,
       name: defaultName,
       type,
-      widthM: type === 'floor' ? 23.30 : 10.0,
-      heightM: type === 'floor' ? 7.0 : refHeightM,
+      geometry,
+      widthM: 12.0,
+      heightM: refHeightM,
+      radiusM: 5.0,
+      angleDeg: geometry === 'concave_arc' ? 120 : 360,
       resIdx: 0,
       customW: 1920,
       customH: 1200,
       orient: 'landscape',
-      cols: type === 'floor' ? 4 : 2,
-      rows: type === 'floor' ? 2 : 1,
+      cols: geometry === 'cylinder_360' ? 6 : 3,
+      rows: geometry === 'dome' || geometry === 'sphere' || geometry === 'circle_floor' ? 2 : 1,
       overlapMode: 'percent',
-      overlapX: 12,
-      overlapY: 10,
+      overlapX: 15,
+      overlapY: 15,
       color: SURFACE_COLORS[surfaces.length % SURFACE_COLORS.length],
       canvasX: 0,
       canvasY: 0,
@@ -322,14 +379,70 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   };
 
   // ==========================================
-  // DİNAMİK PIXEL MAP, ORAN VE KOORDİNAT MOTORU
+  // DİNAMİK GEOMETRİK AÇINIM (UNWRAP) VE PIXEL MAP MOTORU
   // ==========================================
   const calculation = useMemo(() => {
-    // 1. Birim metre başına düşen referans piksel yoğunluğu (Oran bazlı hesap için)
-    // Örn: Referans Yükseklik 4.30m = 1200px ise -> 1 metre = 279.069767 px
     const pxPerMeterRef = refHeightPx / Math.max(0.1, refHeightM);
 
     const rawCalculated: CalculatedSurface[] = surfaces.map(s => {
+      // 1. GEOMETRİ TİPİNE GÖRE FİZİKSEL AÇINIM (UNWRAP) GENİŞLİK VE YÜKSEKLİĞİ
+      let effectiveWidthM = s.widthM;
+      let effectiveHeightM = s.heightM;
+      let chordWidthM = s.widthM;
+      let sagittaM = 0;
+      let isClosedLoopX = false;
+      let isCircularMask = false;
+      let geometryFormulaText = `Düz Yüzey: ${s.widthM}m × ${s.heightM}m`;
+
+      const R = Math.max(0.5, s.radiusM);
+      const D = R * 2;
+      const rad = (s.angleDeg * Math.PI) / 180;
+
+      if (s.geometry === 'concave_arc') {
+        // Yay Uzunluğu: L = 2 * pi * R * (Açı / 360)
+        effectiveWidthM = round(2 * Math.PI * R * (s.angleDeg / 360), 2);
+        effectiveHeightM = s.heightM;
+        // Kiriş (iki uç arası düz mesafe): Chord = 2 * R * sin(Açı / 2)
+        chordWidthM = round(2 * R * Math.sin(rad / 2), 2);
+        // Kavis derinliği (Sagitta): s = R * (1 - cos(Açı / 2))
+        sagittaM = round(R * (1 - Math.cos(rad / 2)), 2);
+        geometryFormulaText = `Yay Açınımı: L = 2·π·${R}m·(${s.angleDeg}°/360°) = ${effectiveWidthM}m (Kiriş: ${chordWidthM}m, Derinlik: ${sagittaM}m)`;
+      } else if (s.geometry === 'cylinder_360') {
+        // 360° Tam Silindir: Çevre = 2 * pi * R = pi * D
+        effectiveWidthM = round(2 * Math.PI * R, 2);
+        effectiveHeightM = s.heightM;
+        chordWidthM = round(D, 2);
+        sagittaM = R;
+        isClosedLoopX = true; // 360 derecede son projektör ile ilk projektör de overlap yapar (N overlap)
+        geometryFormulaText = `360° Silindir Çevresi: L = π·D = 3.1416 × ${D}m = ${effectiveWidthM}m (360° Sonsuz Döngü: ${s.cols} Overlap)`;
+      } else if (s.geometry === 'dome') {
+        // Kubbe / Yarım Küre (Fulldome Fisheye Domemaster 1:1 Kare):
+        // Kubbe üzerinden geçen yay (ufuktan zenite ve karşı ufka) = pi * R
+        const domeArc = round(Math.PI * R, 2);
+        effectiveWidthM = domeArc;
+        effectiveHeightM = domeArc;
+        chordWidthM = round(D, 2);
+        sagittaM = R;
+        isCircularMask = true;
+        geometryFormulaText = `Kubbe (Domemaster 1:1 Polar Fisheye): Çap=${D}m, Kubbe Yay Uzunluğu = π·R = ${domeArc}m × ${domeArc}m (1:1 Kare İçinde Dairesel Maske)`;
+      } else if (s.geometry === 'sphere') {
+        // Tam Küre (Equirectangular 2:1 Açınım): Ekvator Çevresi = 2*pi*R, Kutup Yay Boyu = pi*R
+        effectiveWidthM = round(2 * Math.PI * R, 2);
+        effectiveHeightM = round(Math.PI * R, 2);
+        chordWidthM = round(D, 2);
+        sagittaM = R;
+        isClosedLoopX = true;
+        geometryFormulaText = `Tam Küre (Equirectangular 2:1 Harita): Ekvator = 2·π·R = ${effectiveWidthM}m, Meridyen = π·R = ${effectiveHeightM}m (Oran 2:1)`;
+      } else if (s.geometry === 'circle_floor') {
+        // Tam Yuvarlak Dairesel Zemin: Çap x Çap (1:1 Kare içinde Daire)
+        effectiveWidthM = round(D, 2);
+        effectiveHeightM = round(D, 2);
+        chordWidthM = round(D, 2);
+        isCircularMask = true;
+        geometryFormulaText = `Yuvarlak Zemin: Çap D = ${D}m × ${D}m (1:1 Kare Canvas İçinde Dairesel Maske)`;
+      }
+
+      // 2. PROJEKTÖR DONANIM VE OVERLAP HESABI
       const preset = RESOLUTIONS[s.resIdx];
       const baseW = s.resIdx === RESOLUTIONS.length - 1 ? s.customW : preset.w;
       const baseH = s.resIdx === RESOLUTIONS.length - 1 ? s.customH : preset.h;
@@ -337,55 +450,56 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const projW = s.orient === 'landscape' ? baseW : baseH;
       const projH = s.orient === 'landscape' ? baseH : baseW;
 
-      // A) DONANIM & OVERLAP BAZLI ÇÖZÜNÜRLÜK: W = (N*W) - ((N-1)*O)
-      const ovPxX = s.cols > 1
+      // 360° kapalı döngüde N adet overlap vardır, açık yüzeylerde (N - 1) adet overlap vardır!
+      const overlapCountX = isClosedLoopX ? s.cols : Math.max(0, s.cols - 1);
+      const overlapCountY = Math.max(0, s.rows - 1);
+
+      const ovPxX = overlapCountX > 0
         ? (s.overlapMode === 'percent' ? pctToPx(s.overlapX, projW) : Math.round(s.overlapX))
         : 0;
-      const ovPxY = s.rows > 1
+      const ovPxY = overlapCountY > 0
         ? (s.overlapMode === 'percent' ? pctToPx(s.overlapY, projH) : Math.round(s.overlapY))
         : 0;
 
       const totalRawW = s.cols * projW;
       const totalRawH = s.rows * projH;
-      const totalOvW = (s.cols - 1) * ovPxX;
-      const totalOvH = (s.rows - 1) * ovPxY;
+      const totalOvW = overlapCountX * ovPxX;
+      const totalOvH = overlapCountY * ovPxY;
 
       const projNetW = Math.max(100, totalRawW - totalOvW);
       const projNetH = Math.max(100, totalRawH - totalOvH);
 
-      // B) ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ (Duvar Fiziksel Ölçü Oranı = İçerik Piksel Oranı)
-      // Örn: 23.30m / 4.30m * 1200px = 6502.32 -> 6503 px
-      // Örn: 7.00m / 4.30m * 1200px = 1953.48 -> 1954 px
-      const aspectW = Math.max(100, Math.round(s.widthM * pxPerMeterRef));
-      const aspectH = Math.max(100, Math.round(s.heightM * pxPerMeterRef));
+      // 3. ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ (Fiziksel Açınım Oranı = İçerik Piksel Oranı)
+      const aspectW = Math.max(100, Math.round(effectiveWidthM * pxPerMeterRef));
+      const aspectH = Math.max(100, Math.round(effectiveHeightM * pxPerMeterRef));
 
-      // Seçili Hesaplama Metoduna göre aktif İçerik Çözünürlüğü (netW x netH)
       const netW = calcMethod === 'aspect_ref' ? aspectW : projNetW;
       const netH = calcMethod === 'aspect_ref' ? aspectH : projNetH;
 
       // Oranlar (Aspect Ratios)
-      const aspectPhysical = round(s.widthM / s.heightM, 2);
-      const aspectProjector = round(projNetW / projNetH, 2);
-      const aspectContent = round(netW / netH, 2);
+      const aspectPhysical = round(effectiveWidthM / Math.max(0.1, effectiveHeightM), 2);
+      const aspectProjector = round(projNetW / Math.max(1, projNetH), 2);
+      const aspectContent = round(netW / Math.max(1, netH), 2);
 
-      // Eğer Orana Göre İçerik çözünürlüğü (aspectW) kullanılıyorsa,
-      // seçilen projektörlerin bu alanı tam doldurması için gereken gerçek Overlap miktarı:
+      // İçerik genişliğini (netW) tutturmak için gereken gerçek overlap:
       const impliedTotalOvW = totalRawW - netW;
-      const impliedOvPxX = s.cols > 1 ? round(impliedTotalOvW / (s.cols - 1), 1) : 0;
-      const impliedOvPctX = s.cols > 1 ? round((impliedOvPxX / projW) * 100, 1) : 0;
+      const impliedOvPxX = overlapCountX > 0 ? round(impliedTotalOvW / overlapCountX, 1) : 0;
+      const impliedOvPctX = overlapCountX > 0 ? round((impliedOvPxX / projW) * 100, 1) : 0;
 
       const drawW = s.rotate90 ? netH : netW;
       const drawH = s.rotate90 ? netW : netH;
 
       // Piksel Yoğunluğu (mm/px ve PPI)
-      const mmPerPxW = round((s.widthM * 1000) / netW, 2);
-      const mmPerPxH = round((s.heightM * 1000) / netH, 2);
+      const mmPerPxW = round((effectiveWidthM * 1000) / netW, 2);
+      const mmPerPxH = round((effectiveHeightM * 1000) / netH, 2);
       const avgMmPerPx = round((mmPerPxW + mmPerPxH) / 2, 2);
       const ppi = round(25.4 / avgMmPerPx, 1);
 
       // Projektör Slice Koordinatları
-      const sliceStepX = s.cols > 1 ? (netW - projW) / (s.cols - 1) : 0;
-      const sliceStepY = s.rows > 1 ? (netH - projH) / (s.rows - 1) : 0;
+      const sliceStepX = overlapCountX > 0
+        ? (isClosedLoopX ? netW / s.cols : (netW - projW) / Math.max(1, s.cols - 1))
+        : 0;
+      const sliceStepY = overlapCountY > 0 ? (netH - projH) / Math.max(1, s.rows - 1) : 0;
       const projSlices: CalculatedSurface['projSlices'] = [];
       let idx = 1;
       for (let r = 0; r < s.rows; r++) {
@@ -400,6 +514,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
       return {
         ...s,
+        effectiveWidthM,
+        effectiveHeightM,
+        chordWidthM,
+        sagittaM,
+        isClosedLoopX,
+        isCircularMask,
         projW,
         projH,
         aspectPhysical,
@@ -409,6 +529,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         aspectH,
         ovPxX,
         ovPxY,
+        overlapCountX,
         totalRawW,
         totalRawH,
         totalOvW,
@@ -429,16 +550,17 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         avgMmPerPx,
         ppi,
         totalProjectors: s.cols * s.rows,
+        geometryFormulaText,
         projSlices,
       };
     });
 
-    // 2. Seçilen Yerleşim Moduna (LayoutMode) göre yüzeylerin Toplam Canvas üzerindeki X, Y koordinatlarını diz
+    // Seçilen Yerleşim Moduna (LayoutMode) göre yüzeyleri diz
     const positioned: CalculatedSurface[] = [];
 
     if (layoutMode === 'strip') {
-      const walls = rawCalculated.filter(s => s.type === 'wall' || s.type === 'curved' || s.type === 'column');
-      const others = rawCalculated.filter(s => s.type === 'floor' || s.type === 'ceiling');
+      const walls = rawCalculated.filter(s => s.type === 'wall');
+      const others = rawCalculated.filter(s => s.type !== 'wall');
 
       let curX = 0;
       let maxWallH = 0;
@@ -449,9 +571,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       });
 
       let curY = maxWallH;
+      let otherX = 0;
       others.forEach(o => {
-        positioned.push({ ...o, rotate90: false, drawW: o.netW, drawH: o.netH, posX: 0, posY: curY });
-        curY += o.netH;
+        positioned.push({ ...o, rotate90: false, drawW: o.netW, drawH: o.netH, posX: otherX, posY: curY });
+        otherX += o.netW;
       });
     } else if (layoutMode === 'stacked') {
       let curY = 0;
@@ -546,7 +669,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       });
     }
 
-    // 3. Toplam Canvas genişlik, yükseklik ve istatistikleri
     let totalCanvasW = 0;
     let totalCanvasH = 0;
     let totalActivePixels = 0;
@@ -599,6 +721,26 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       g.fillStyle = s.color + '28';
       g.fillRect(s.posX, s.posY, s.drawW, s.drawH);
 
+      // Kubbe veya Dairesel Zemin ise Polar Daire Maskesini Çiz
+      if (s.isCircularMask) {
+        const cx = s.posX + s.drawW / 2;
+        const cy = s.posY + s.drawH / 2;
+        const r = Math.min(s.drawW, s.drawH) / 2;
+        g.strokeStyle = s.color;
+        g.lineWidth = 6;
+        g.beginPath();
+        g.arc(cx, cy, r, 0, Math.PI * 2);
+        g.stroke();
+
+        // Polar halkalar (30°, 60°)
+        g.strokeStyle = 'rgba(255,255,255,0.2)';
+        g.lineWidth = 3;
+        g.setLineDash([12, 10]);
+        g.beginPath(); g.arc(cx, cy, r * 0.66, 0, Math.PI * 2); g.stroke();
+        g.beginPath(); g.arc(cx, cy, r * 0.33, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([]);
+      }
+
       if (showGrid) {
         g.strokeStyle = 'rgba(255,255,255,0.08)';
         g.lineWidth = 2;
@@ -639,7 +781,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
       g.fillStyle = '#94a3b8';
       g.font = `${Math.round(fs * 0.65)}px monospace`;
-      g.fillText(`${s.widthM}m × ${s.heightM}m | ${s.cols}×${s.rows} PJ | ~${s.avgMmPerPx} mm/px`, cx, cy + fs * 1.2);
+      g.fillText(`Açınım: ${s.effectiveWidthM}m × ${s.effectiveHeightM}m | ${s.cols}×${s.rows} PJ | ~${s.avgMmPerPx} mm/px`, cx, cy + fs * 1.2);
     });
 
     c.toBlob(blob => {
@@ -655,73 +797,68 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       '===================================================================',
       'PROJEKSİYON & İÇERİK ÇÖZÜNÜRLÜĞÜ (PIXEL MAP) TEKNİK RAPORU',
       '===================================================================',
-      `Hesaplama Yöntemi                : ${calcMethod === 'aspect_ref' ? 'Fiziksel Duvar Oranına Göre (Homojen Piksel)' : 'Projektör & Overlap Formülüne Göre'}`,
+      `Hesaplama Yöntemi                : ${calcMethod === 'aspect_ref' ? 'Fiziksel Açınım Oranına Göre (Homojen Piksel)' : 'Projektör & Overlap Formülüne Göre'}`,
       `Toplam İçerik Canvas Çözünürlüğü : ${calculation.totalCanvasW} × ${calculation.totalCanvasH} px (${calculation.megapixels} MP)`,
       `Toplam Projektör Sayısı          : ${calculation.totalProjectors} Adet`,
       `Piksel Yoğunluğu Aralığı         : ${calculation.minMm} - ${calculation.maxMm} mm/px`,
       '-------------------------------------------------------------------',
-      'YÜZEY BAZLI PIXEL MAP & ORAN DETAYLARI:',
+      'YÜZEY BAZLI GEOMETRİ, ORAN & PIXEL MAP DETAYLARI:',
     ];
 
     calculation.surfaces.forEach((s, idx) => {
       lines.push(
-        `\n${idx + 1}. ${s.name.toUpperCase()} (${s.widthM} m × ${s.heightM} m):`,
-        `   - Duvar Fiziksel Oranı       : ${s.aspectPhysical}:1 (${s.widthM}m / ${s.heightM}m)`,
-        `   - İçerik Pixel Map Çözünürlük: ${s.netW} × ${s.netH} px (Oran: ${s.aspectContent}:1)`,
-        `   - Projektör Donanım Dizilimi : ${s.cols}×${s.rows} Adet (${s.projW}×${s.projH} px)`,
-        `   - Donanım Kapasitesi (Ham)   : ${s.totalRawW} × ${s.totalRawH} px`,
-        `   - Gereken Overlap (Örtüşme)  : Toplam ${s.impliedTotalOvW} px (Projektör arası ~${s.impliedOvPxX} px / %${s.impliedOvPctX})`,
-        `   - Piksel Boyutu / Yoğunluk   : ~${s.avgMmPerPx} mm/px (${s.ppi} PPI)`
+        `\n${idx + 1}. ${s.name.toUpperCase()} [${GEOMETRY_LABELS[s.geometry]}]:`,
+        `   - Geometrik Açınım       : ${s.geometryFormulaText}`,
+        `   - Yüzey Fiziksel Oranı   : ${s.aspectPhysical}:1 (${s.effectiveWidthM}m / ${s.effectiveHeightM}m)`,
+        `   - İçerik Pixel Map       : ${s.netW} × ${s.netH} px (Oran: ${s.aspectContent}:1)`,
+        `   - Projektör Dizilimi     : ${s.cols}×${s.rows} Adet (${s.projW}×${s.projH} px, ${s.overlapCountX} Yatay Overlap)`,
+        `   - Gereken Overlap        : Toplam ${s.impliedTotalOvW} px (Projektör arası ~${s.impliedOvPxX} px / %${s.impliedOvPctX})`,
+        `   - Piksel Boyutu / PPI    : ~${s.avgMmPerPx} mm/px (${s.ppi} PPI)`
       );
     });
 
     lines.push('===================================================================');
     navigator.clipboard.writeText(lines.join('\n'));
-    alert('Tüm yüzeylerin Oran ve Pixel Map teknik raporu panoya kopyalandı!');
+    alert('Tüm yüzeylerin Geometri, Oran ve Pixel Map teknik raporu panoya kopyalandı!');
   };
 
   return (
     <div className="space-y-3 h-full flex flex-col text-xs">
-      {/* ÜST ARAÇ ÇUBUĞU: HESAPLAMA MODU & HIZLI ŞABLONLAR */}
+      {/* ÜST ARAÇ ÇUBUĞU: HESAPLAMA MODU & HIZLI GEOMETRİ ŞABLONLARI */}
       <div className="bg-slate-900 p-2.5 rounded border border-slate-800 flex flex-wrap justify-between items-center gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          {/* HESAPLAMA METODU SEÇİMİ */}
           <div className="flex rounded overflow-hidden border border-sky-700 bg-slate-950 p-0.5">
             <button
               onClick={() => setCalcMethod('aspect_ref')}
-              className={`px-3 py-1 rounded text-xs font-bold transition ${
+              className={`px-2.5 py-1 rounded text-xs font-bold transition ${
                 calcMethod === 'aspect_ref'
                   ? 'bg-emerald-600 text-white shadow'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Duvarın metre oranına göre (Örn: 23.30m / 4.30m × 1200px = 6503px) birebir ölçekli içerik çözünürlüğü hesaplar."
             >
-              1. Duvar Oranına Göre İçerik Çözünürlüğü (Önerilen)
+              1. Yüzey / Yay Oranına Göre İçerik (Homojen)
             </button>
             <button
               onClick={() => setCalcMethod('projector_blend')}
-              className={`px-3 py-1 rounded text-xs font-bold transition ${
+              className={`px-2.5 py-1 rounded text-xs font-bold transition ${
                 calcMethod === 'projector_blend'
                   ? 'bg-sky-600 text-white shadow'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Projektör adedi ve girilen % overlap formülüne göre W = (N×W) - ((N-1)×O) hesaplar."
             >
               2. Projektör & Overlap Formülüne Göre
             </button>
           </div>
 
-          {/* Oran Bazlı Referans Ölçek Ayarı */}
           {calcMethod === 'aspect_ref' && (
-            <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded border border-emerald-800/70">
+            <div className="flex items-center gap-1.5 bg-slate-950 px-2 py-1 rounded border border-emerald-800/70">
               <span className="text-emerald-400 font-semibold">Referans:</span>
               <input
                 type="number"
                 step="0.1"
                 value={refHeightM}
                 onChange={e => setRefHeightM(Math.max(0.5, +e.target.value))}
-                className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono font-bold text-white text-center"
-                title="Referans Duvar Yüksekliği (m)"
+                className="w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 font-mono font-bold text-white text-center"
               />
               <span className="text-slate-400">m =</span>
               <input
@@ -729,67 +866,87 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 step="10"
                 value={refHeightPx}
                 onChange={e => setRefHeightPx(Math.max(100, +e.target.value))}
-                className="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono font-bold text-emerald-400 text-center"
-                title="Referans Piksel Karşılığı (px)"
+                className="w-16 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 font-mono font-bold text-emerald-400 text-center"
               />
               <span className="text-slate-400">px</span>
-              <span className="text-[10px] text-slate-500 font-mono ml-1">
-                (1m = {calculation.pxPerMeterRef} px)
-              </span>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400 font-semibold">Şablon:</span>
-          <button onClick={() => applyPreset('single')} className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700">
-            Tek Duvar
+        {/* HIZLI ODA & GEOMETRİ ŞABLONLARI */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-slate-400 font-semibold">Hazır Şablonlar:</span>
+          <button onClick={() => applyPreset('box-5')} className="px-2 py-1 rounded bg-sky-900/60 hover:bg-sky-800 text-sky-200 border border-sky-700 font-semibold">
+            5-Yüzey Kutu
           </button>
-          <button onClick={() => applyPreset('u-3wall')} className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700">
-            3 Duvar
+          <button onClick={() => applyPreset('concave')} className="px-2 py-1 rounded bg-amber-900/50 hover:bg-amber-800 text-amber-200 border border-amber-700 font-semibold">
+            İçbükey Kavis (Concave)
           </button>
-          <button onClick={() => applyPreset('u-floor')} className="px-2 py-1 rounded bg-sky-900/60 hover:bg-sky-800 text-sky-200 border border-sky-700 font-semibold">
-            3 Duvar + Zemin
+          <button onClick={() => applyPreset('cylinder-360')} className="px-2 py-1 rounded bg-emerald-900/50 hover:bg-emerald-800 text-emerald-200 border border-emerald-700 font-semibold">
+            360° Silindir Oda + Yuvarlak Zemin
           </button>
-          <button onClick={() => applyPreset('box-5')} className="px-2 py-1 rounded bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 border border-indigo-700 font-semibold">
-            5-Yüzey Tam Kutu (23.3×7×4.3m)
+          <button onClick={() => applyPreset('dome-planetarium')} className="px-2 py-1 rounded bg-purple-900/50 hover:bg-purple-800 text-purple-200 border border-purple-700 font-semibold">
+            Kubbe (Dome 1:1)
+          </button>
+          <button onClick={() => applyPreset('sphere-360')} className="px-2 py-1 rounded bg-pink-900/50 hover:bg-pink-800 text-pink-200 border border-pink-700 font-semibold">
+            Tam Küre (Sphere 2:1)
           </button>
         </div>
       </div>
 
       {/* ANA ÇALIŞMA ALANI */}
-      <div className="grid lg:grid-cols-[460px_1fr] gap-3 flex-1 overflow-auto">
-        {/* SOL PANEL: YÜZEY LİSTESİ + SEÇİLİ YÜZEY HESAP VE ORAN EDİTÖRÜ */}
+      <div className="grid lg:grid-cols-[470px_1fr] gap-3 flex-1 overflow-auto">
+        {/* SOL PANEL: YÜZEY EKLEME LİSTESİ + SEÇİLİ YÜZEY GEOMETRİ & ORAN EDİTÖRÜ */}
         <div className="space-y-3 flex flex-col overflow-auto pr-1" style={{ maxHeight: '83vh' }}>
-          {/* 1. YÜZEY EKLEME VE SIRALAMA LİSTESİ */}
+          {/* 1. FARKLI GEOMETRİLERDE YÜZEY EKLEME BUTONLARI */}
           <div className="p-3 rounded bg-slate-900 border border-slate-700 space-y-2">
             <div className="flex justify-between items-center">
               <span className="font-bold text-slate-200 text-xs uppercase tracking-wider">
-                1. Proje Yüzeyleri ({surfaces.length} Alan)
+                1. Proje Yüzeyleri ({surfaces.length} Alan) — Yüzey Ekle:
               </span>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => addSurface('wall')}
-                  className="px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-semibold text-[11px]"
-                >
-                  + Duvar Ekle
-                </button>
-                <button
-                  onClick={() => addSurface('floor')}
-                  className="px-2 py-1 rounded bg-teal-700 hover:bg-teal-600 text-white font-semibold text-[11px]"
-                >
-                  + Zemin
-                </button>
-                <button
-                  onClick={() => addSurface('ceiling')}
-                  className="px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white font-semibold text-[11px]"
-                >
-                  + Tavan
-                </button>
-              </div>
             </div>
 
-            <div className="space-y-1.5 max-h-[195px] overflow-auto pr-0.5">
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                onClick={() => addSurface('flat', 'wall')}
+                className="px-2 py-1.5 rounded bg-sky-800/80 hover:bg-sky-700 text-white font-semibold text-[11px] border border-sky-600/50"
+              >
+                + Düz Duvar
+              </button>
+              <button
+                onClick={() => addSurface('concave_arc', 'wall')}
+                className="px-2 py-1.5 rounded bg-amber-800/80 hover:bg-amber-700 text-white font-semibold text-[11px] border border-amber-600/50"
+              >
+                + Kavisli (Concave)
+              </button>
+              <button
+                onClick={() => addSurface('cylinder_360', 'wall')}
+                className="px-2 py-1.5 rounded bg-emerald-800/80 hover:bg-emerald-700 text-white font-semibold text-[11px] border border-emerald-600/50"
+              >
+                + 360° Silindir
+              </button>
+              <button
+                onClick={() => addSurface('dome', 'ceiling')}
+                className="px-2 py-1.5 rounded bg-purple-800/80 hover:bg-purple-700 text-white font-semibold text-[11px] border border-purple-600/50"
+              >
+                + Kubbe (Dome)
+              </button>
+              <button
+                onClick={() => addSurface('sphere', 'wall')}
+                className="px-2 py-1.5 rounded bg-pink-800/80 hover:bg-pink-700 text-white font-semibold text-[11px] border border-pink-600/50"
+              >
+                + Küre (Sphere)
+              </button>
+              <button
+                onClick={() => addSurface('circle_floor', 'floor')}
+                className="px-2 py-1.5 rounded bg-teal-800/80 hover:bg-teal-700 text-white font-semibold text-[11px] border border-teal-600/50"
+              >
+                + Zemin (Düz/Daire)
+              </button>
+            </div>
+
+            {/* Eklenen Yüzeyler Listesi */}
+            <div className="space-y-1.5 max-h-[175px] overflow-auto pr-0.5 pt-1">
               {calculation.surfaces.map((s, idx) => {
                 const isSelected = s.id === activeSurface.id;
                 return (
@@ -812,7 +969,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                           </span>
                         </div>
                         <div className="text-[10px] text-slate-400 font-mono">
-                          {s.widthM}m × {s.heightM}m →{' '}
+                          Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m →{' '}
                           <b className="text-emerald-400">{s.netW} × {s.netH} px</b> ({s.cols}×{s.rows} PJ)
                         </div>
                       </div>
@@ -847,7 +1004,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
-          {/* 2. SEÇİLİ YÜZEYİN DETAYLI ÖLÇÜ, ORAN VE PROJEKSİYON GİRİŞİ */}
+          {/* 2. SEÇİLİ YÜZEYİN GEOMETRİ, ÖLÇÜ VE ORAN EDİTÖRÜ */}
           {activeSurface && (
             <div className="p-3 rounded bg-slate-900 border border-sky-800/80 space-y-3">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
@@ -865,9 +1022,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 </span>
               </div>
 
-              {/* A) Yüzey Adı ve Fiziksel Ölçüler */}
-              <div className="grid grid-cols-3 gap-2">
-                <label className="col-span-1">
+              {/* A) Yüzey Adı ve Geometri Tipi Seçimi */}
+              <div className="grid grid-cols-2 gap-2">
+                <label>
                   Yüzey Adı
                   <input
                     className="inp font-semibold text-white"
@@ -876,46 +1033,198 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   />
                 </label>
                 <label>
-                  Genişlik / Uzunluk (m)
-                  <input
-                    className="inp font-bold text-sky-300"
-                    type="number"
-                    step="0.1"
-                    min="0.5"
-                    value={activeSurface.widthM}
-                    onChange={e => updateSurface(activeSurface.id, { widthM: Math.max(0.1, +e.target.value) })}
-                  />
-                </label>
-                <label>
-                  Yükseklik / Kısa Kenar (m)
-                  <input
-                    className="inp font-bold text-sky-300"
-                    type="number"
-                    step="0.1"
-                    min="0.5"
-                    value={activeSurface.heightM}
-                    onChange={e => updateSurface(activeSurface.id, { heightM: Math.max(0.1, +e.target.value) })}
-                  />
+                  Yüzey Şekli / Geometrisi
+                  <select
+                    className="inp font-bold text-amber-300"
+                    value={activeSurface.geometry}
+                    onChange={e => updateSurface(activeSurface.id, { geometry: e.target.value as SurfaceGeometry })}
+                  >
+                    {Object.entries(GEOMETRY_LABELS).map(([k, label]) => (
+                      <option key={k} value={k}>{label}</option>
+                    ))}
+                  </select>
                 </label>
               </div>
 
-              {/* B) ORANLAR KARŞILAŞTIRMA KARTI (Kullanıcının İstediği Oran Analizi) */}
+              {/* B) GEOMETRİ TİPİNE GÖRE DİNAMİK FİZİKSEL ÖLÇÜ GİRİŞLERİ */}
+              <div className="p-2.5 rounded bg-slate-950 border border-slate-800 space-y-2">
+                {activeSurface.geometry === 'flat' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label>
+                      Duvar / Zemin Genişliği (m)
+                      <input
+                        className="inp font-bold text-sky-300"
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        value={activeSurface.widthM}
+                        onChange={e => updateSurface(activeSurface.id, { widthM: Math.max(0.1, +e.target.value) })}
+                      />
+                    </label>
+                    <label>
+                      Yükseklik / Kısa Kenar (m)
+                      <input
+                        className="inp font-bold text-sky-300"
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        value={activeSurface.heightM}
+                        onChange={e => updateSurface(activeSurface.id, { heightM: Math.max(0.1, +e.target.value) })}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {activeSurface.geometry === 'concave_arc' && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <label>
+                        Kavis Yarıçapı R (m)
+                        <input
+                          className="inp font-bold text-amber-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.radiusM}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Kavis Açısı (° Derece)
+                        <input
+                          className="inp font-bold text-amber-300"
+                          type="number"
+                          step="5"
+                          min="10"
+                          max="359"
+                          value={activeSurface.angleDeg}
+                          onChange={e => updateSurface(activeSurface.id, { angleDeg: Math.min(359, Math.max(10, +e.target.value)) })}
+                        />
+                      </label>
+                      <label>
+                        Duvar Yüksekliği (m)
+                        <input
+                          className="inp font-bold text-sky-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.heightM}
+                          onChange={e => updateSurface(activeSurface.id, { heightM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 text-[10.5px] bg-slate-900 p-2 rounded border border-amber-900/50 font-mono">
+                      <div>
+                        <span className="text-slate-400 block">Yay Açınımı (Gerçek):</span>
+                        <b className="text-emerald-400 text-xs">{activeSurface.effectiveWidthM} m</b>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Kiriş (Uçtan Uca Düz):</span>
+                        <b className="text-sky-300 text-xs">{activeSurface.chordWidthM} m</b>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Kavis Derinliği (Ok):</span>
+                        <b className="text-amber-300 text-xs">{activeSurface.sagittaM} m</b>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeSurface.geometry === 'cylinder_360' && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <label>
+                        Silindir Yarıçapı R (m)
+                        <input
+                          className="inp font-bold text-emerald-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.radiusM}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Silindir Çapı D (m)
+                        <input
+                          className="inp font-bold text-emerald-300"
+                          type="number"
+                          step="0.2"
+                          min="1"
+                          value={round(activeSurface.radiusM * 2, 2)}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value / 2) })}
+                        />
+                      </label>
+                      <label>
+                        Duvar Yüksekliği H (m)
+                        <input
+                          className="inp font-bold text-sky-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.heightM}
+                          onChange={e => updateSurface(activeSurface.id, { heightM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                    </div>
+                    <div className="text-[10.5px] bg-slate-900 p-2 rounded border border-emerald-900/50 font-mono text-emerald-300">
+                      • <b>360° Çevre Açınımı (π × D):</b> {activeSurface.effectiveWidthM} m × {activeSurface.effectiveHeightM} m
+                      <br />
+                      • <b>360° Kapalı Döngü:</b> Başlangıç ve bitiş birleştiği için {activeSurface.cols} projektörde <b>{activeSurface.cols} adet overlap</b> hesaba katılır!
+                    </div>
+                  </div>
+                )}
+
+                {(activeSurface.geometry === 'dome' || activeSurface.geometry === 'sphere' || activeSurface.geometry === 'circle_floor') && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label>
+                        Yarıçap R (m)
+                        <input
+                          className="inp font-bold text-purple-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.radiusM}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Toplam Çap D (m)
+                        <input
+                          className="inp font-bold text-purple-300"
+                          type="number"
+                          step="0.2"
+                          min="1"
+                          value={round(activeSurface.radiusM * 2, 2)}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value / 2) })}
+                        />
+                      </label>
+                    </div>
+                    <div className="text-[10.5px] bg-slate-900 p-2 rounded border border-purple-900/50 font-mono text-purple-200">
+                      {activeSurface.geometryFormulaText}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* C) ORANLAR KARŞILAŞTIRMA KARTI */}
               <div className="p-2.5 rounded bg-slate-950 border border-amber-700/60 space-y-2">
                 <div className="flex justify-between items-center border-b border-slate-800 pb-1">
                   <span className="font-bold text-amber-400 text-[11px] uppercase tracking-wider">
-                    Oran Analizi (Duvar vs İçerik vs Projeksiyon)
+                    Oran Analizi (Açınım vs İçerik vs Projeksiyon)
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">
-                    {activeSurface.widthM}m / {activeSurface.heightM}m = {activeSurface.aspectPhysical}:1
+                    {activeSurface.effectiveWidthM}m / {activeSurface.effectiveHeightM}m = {activeSurface.aspectPhysical}:1
                   </span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">1. Duvar Fiziksel Oranı</span>
+                    <span className="text-[10px] text-slate-400 block">1. Açınım Fiziksel Oranı</span>
                     <b className="text-sm text-amber-300 font-mono">{activeSurface.aspectPhysical} : 1</b>
                     <span className="text-[10px] text-slate-500 block font-mono">
-                      {activeSurface.widthM}m × {activeSurface.heightM}m
+                      {activeSurface.effectiveWidthM}m × {activeSurface.effectiveHeightM}m
                     </span>
                   </div>
 
@@ -936,18 +1245,11 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </div>
                 </div>
 
-                {/* Oran Hesabı Açıklaması */}
                 <div className="text-[10.5px] text-slate-300 bg-slate-900/90 p-2 rounded border border-slate-800 font-mono leading-relaxed">
-                  <div>
-                    • <b>Oran Hesabı:</b> ({activeSurface.widthM}m ÷ {refHeightM}m) × {refHeightPx}px ={' '}
-                    <b className="text-emerald-400">{activeSurface.aspectW} px</b> genişlik,{' '}
-                    ({activeSurface.heightM}m ÷ {refHeightM}m) × {refHeightPx}px ={' '}
-                    <b className="text-emerald-400">{activeSurface.aspectH} px</b> yükseklik.
-                  </div>
-                  {activeSurface.cols > 1 && (
-                    <div className="mt-1 text-amber-300">
-                      • <b>{activeSurface.cols} Projektör ({activeSurface.totalRawW}px ham)</b> ile{' '}
-                      <b>{activeSurface.aspectW}px</b> içeriği eşlemek için gereken overlap:{' '}
+                  {activeSurface.overlapCountX > 0 && (
+                    <div className="text-amber-300">
+                      • <b>{activeSurface.cols} Projektör ({activeSurface.totalRawW}px ham, {activeSurface.overlapCountX} overlap)</b> ile{' '}
+                      <b>{activeSurface.netW}px</b> içeriği eşlemek için gereken overlap:{' '}
                       <b>Toplam {activeSurface.impliedTotalOvW} px</b> (Projektör arası{' '}
                       <b>~{activeSurface.impliedOvPxX} px / %{activeSurface.impliedOvPctX}</b>)
                     </div>
@@ -955,13 +1257,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 </div>
               </div>
 
-              {/* C) Projektör Çözünürlüğü, Sayısı ve Overlap */}
+              {/* D) Projektör Çözünürlüğü, Sayısı ve Overlap */}
               <div className="p-2.5 rounded bg-slate-950 border border-slate-800 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-slate-300 text-[11px]">
                     Projektör Donanımı & Dizilimi
                   </span>
-                  {calcMethod === 'aspect_ref' && activeSurface.cols > 1 && (
+                  {calcMethod === 'aspect_ref' && activeSurface.overlapCountX > 0 && (
                     <button
                       onClick={() =>
                         updateSurface(activeSurface.id, {
@@ -970,7 +1272,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         })
                       }
                       className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-white text-[10px] font-semibold"
-                      title="Overlap değerini duvar oranına (içerik çözünürlüğüne) tam uyacak şekilde otomatik eşitle"
                     >
                       Overlap'i Orana Eşitle (%{activeSurface.impliedOvPctX})
                     </button>
@@ -1003,12 +1304,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </label>
 
                   <label>
-                    Yatay Projektör Sayısı (N)
+                    Yatay / Çevresel Projektör (N)
                     <input
                       className="inp font-bold text-amber-300"
                       type="number"
                       min="1"
-                      max="24"
+                      max="36"
                       value={activeSurface.cols}
                       onChange={e => updateSurface(activeSurface.id, { cols: Math.max(1, Math.round(+e.target.value)) })}
                     />
@@ -1026,7 +1327,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </label>
                 </div>
 
-                {/* Projektör & Overlap Modundaysa Manuel Overlap Girişi */}
                 <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-900">
                   <label>
                     Yatay Overlap ({activeSurface.overlapMode === 'percent' ? '%' : 'px'})
@@ -1037,7 +1337,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         step="0.5"
                         min="0"
                         value={activeSurface.overlapX}
-                        disabled={activeSurface.cols <= 1}
+                        disabled={activeSurface.overlapCountX <= 0}
                         onChange={e => updateSurface(activeSurface.id, { overlapX: Math.max(0, +e.target.value) })}
                       />
                       <span className="text-[10px] font-mono text-sky-400 shrink-0">
@@ -1064,21 +1364,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </label>
                 </div>
               </div>
-
-              {/* D) Piksel Yoğunluğu & İdeal Müze Standartları Özeti */}
-              <div className="p-2.5 rounded bg-emerald-950/30 border border-emerald-700/60 flex justify-between items-center">
-                <div>
-                  <span className="text-slate-400 text-[10px] block">Aktif İçerik Çözünürlüğü (Pixel Map):</span>
-                  <b className="text-lg text-emerald-400 font-mono">
-                    {activeSurface.netW} × {activeSurface.netH} pixel
-                  </b>
-                </div>
-                <div className="text-right">
-                  <span className="text-slate-400 text-[10px] block">Piksel Boyutu (Mevcut vs İdeal):</span>
-                  <b className="text-sm text-sky-300 font-mono">~{activeSurface.avgMmPerPx} mm/px ({activeSurface.ppi} PPI)</b>
-                  <span className="text-emerald-400/80 text-[10px] block">İdeal Standart: 2.0 - 3.5 mm/px</span>
-                </div>
-              </div>
             </div>
           )}
         </div>
@@ -1099,7 +1384,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 onClick={() => setLayoutMode('strip')}
                 className={`px-2.5 py-1 rounded font-semibold ${layoutMode === 'strip' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
               >
-                Yan Yana Şerit (1.Duvar + 2.Duvar...)
+                Yan Yana Şerit (Panorama / Silindir)
               </button>
               <button
                 onClick={() => setLayoutMode('stacked')}
@@ -1139,7 +1424,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           <div className="border border-slate-700 rounded bg-slate-950 p-3 flex-1 flex flex-col items-center justify-center min-h-[380px] relative">
             <div className="w-full flex justify-between items-center text-[11px] text-slate-400 mb-2 border-b border-slate-800 pb-1">
               <span>
-                Canlı Pixel Map & Oran Şeması ({calcMethod === 'aspect_ref' ? 'Duvar Oranına Göre Homojen Ölçekli' : 'Projektör Overlap Bazlı'})
+                Canlı Pixel Map & Geometrik Açınım Şeması (Düz, Kavisli, 360° Silindir, Kubbe & Küre)
               </span>
               <span className="font-mono text-sky-400 font-bold">
                 Toplam Canvas: {calculation.totalCanvasW} × {calculation.totalCanvasH} px ({calculation.megapixels} MP)
@@ -1182,6 +1467,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         26,
                         Math.min(baseFont * 1.1, Math.min(s.drawW, s.drawH) / 5.5)
                       );
+                      const cx = sx + s.drawW / 2;
+                      const cy = sy + s.drawH / 2;
+                      const circleR = Math.min(s.drawW, s.drawH) / 2;
 
                       return (
                         <g
@@ -1189,16 +1477,50 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                           onClick={() => setSelectedId(s.id)}
                           className="cursor-pointer transition-opacity hover:opacity-95"
                         >
-                          {/* Yüzey Arkaplanı */}
+                          {/* Yüzey Dikdörtgen Bounding Box */}
                           <rect
                             x={sx}
                             y={sy}
                             width={s.drawW}
                             height={s.drawH}
-                            fill={s.color + (isSel ? '38' : '22')}
+                            fill={s.color + (isSel ? '35' : '18')}
                             stroke={isSel ? '#facc15' : s.color}
                             strokeWidth={isSel ? Math.max(8, baseFont * 0.22) : Math.max(4, baseFont * 0.12)}
                           />
+
+                          {/* Kubbe (Dome) veya Dairesel Zemin ise Polar Fisheye / Daire Çizgileri */}
+                          {s.isCircularMask && (
+                            <g>
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={circleR * 0.98}
+                                fill={s.color + '25'}
+                                stroke="#facc15"
+                                strokeWidth={Math.max(5, baseFont * 0.14)}
+                              />
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={circleR * 0.65}
+                                fill="none"
+                                stroke="rgba(255,255,255,0.25)"
+                                strokeWidth={Math.max(3, baseFont * 0.08)}
+                                strokeDasharray={`${baseFont * 0.3} ${baseFont * 0.2}`}
+                              />
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={circleR * 0.33}
+                                fill="none"
+                                stroke="rgba(255,255,255,0.25)"
+                                strokeWidth={Math.max(3, baseFont * 0.08)}
+                                strokeDasharray={`${baseFont * 0.3} ${baseFont * 0.2}`}
+                              />
+                              <line x1={cx - circleR} y1={cy} x2={cx + circleR} y2={cy} stroke="rgba(255,255,255,0.2)" strokeWidth={Math.max(2, baseFont * 0.06)} />
+                              <line x1={cx} y1={cy - circleR} x2={cx} y2={cy + circleR} stroke="rgba(255,255,255,0.2)" strokeWidth={Math.max(2, baseFont * 0.06)} />
+                            </g>
+                          )}
 
                           {/* Projektör Slice & Overlap Alanları */}
                           {showSlices && !s.rotate90 && s.projSlices.map(sl => (
@@ -1218,8 +1540,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
                           {/* Yüzey Adı */}
                           <text
-                            x={sx + s.drawW / 2}
-                            y={sy + s.drawH / 2 - surfFont * 0.8}
+                            x={cx}
+                            y={cy - surfFont * 0.85}
                             fill="#f8fafc"
                             fontSize={surfFont * 0.95}
                             fontWeight="bold"
@@ -1230,8 +1552,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
                           {/* İçerik Pixel Map Çözünürlüğü */}
                           <text
-                            x={sx + s.drawW / 2}
-                            y={sy + s.drawH / 2 + surfFont * 0.25}
+                            x={cx}
+                            y={cy + surfFont * 0.2}
                             fill="#4ade80"
                             fontSize={surfFont * 1.1}
                             fontWeight="bold"
@@ -1241,16 +1563,16 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                             {s.netW} × {s.netH} pixel
                           </text>
 
-                          {/* Fiziksel Ölçü & Oran Bilgisi */}
+                          {/* Fiziksel Açınım & Oran Bilgisi */}
                           <text
-                            x={sx + s.drawW / 2}
-                            y={sy + s.drawH / 2 + surfFont * 1.2}
+                            x={cx}
+                            y={cy + surfFont * 1.15}
                             fill="#bae6fd"
-                            fontSize={surfFont * 0.72}
+                            fontSize={surfFont * 0.7}
                             fontFamily="monospace"
                             textAnchor="middle"
                           >
-                            {s.widthM}m × {s.heightM}m (Oran {s.aspectPhysical}:1) · ~{s.avgMmPerPx} mm/px
+                            Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m (Oran {s.aspectPhysical}:1) · ~{s.avgMmPerPx} mm/px
                           </text>
                         </g>
                       );
@@ -1261,10 +1583,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
-          {/* ALT TABLO: YÜZEY ORANLARI, İÇERİK ÇÖZÜNÜRLÜĞÜ VE PROJEKSİYON KARŞILAŞTIRMASI */}
+          {/* ALT TABLO: YÜZEY GEOMETRİSİ, ORANLARI VE İÇERİK ÇÖZÜNÜRLÜĞÜ TABLOSU */}
           <div className="p-2.5 rounded bg-slate-900 border border-slate-800 overflow-auto">
             <div className="font-bold text-slate-200 mb-1.5 flex justify-between items-center">
-              <span>Yüzey Oranları, İçerik Çözünürlüğü (Pixel Map) ve Projeksiyon Karşılaştırma Tablosu</span>
+              <span>Yüzey Geometrileri, Açınım Oranları ve İçerik Çözünürlüğü (Pixel Map) Tablosu</span>
               <span className="text-[10px] text-emerald-400 font-mono">
                 Referans: {refHeightM}m = {refHeightPx}px (~{round((refHeightM * 1000) / refHeightPx, 2)} mm/px)
               </span>
@@ -1273,12 +1595,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400">
                   <th className="py-1.5 pr-2">Yüzey Adı</th>
-                  <th className="py-1.5 pr-2">Fiziksel Ölçü</th>
-                  <th className="py-1.5 pr-2">Duvar Oranı</th>
-                  <th className="py-1.5 pr-2 text-emerald-400">Orana Göre İçerik (Pixel Map)</th>
-                  <th className="py-1.5 pr-2 text-sky-400">Projeksiyon Dizilimi</th>
+                  <th className="py-1.5 pr-2">Geometri</th>
+                  <th className="py-1.5 pr-2">Açınım Ölçüsü</th>
+                  <th className="py-1.5 pr-2">Oran</th>
+                  <th className="py-1.5 pr-2 text-emerald-400">İçerik Pixel Map</th>
+                  <th className="py-1.5 pr-2 text-sky-400">Projeksiyon</th>
                   <th className="py-1.5 pr-2 text-amber-400">Gereken Overlap</th>
-                  <th className="py-1.5">Piksel Boyutu</th>
+                  <th className="py-1.5">Yoğunluk</th>
                 </tr>
               </thead>
               <tbody>
@@ -1294,26 +1617,30 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                       <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
                       {s.name}
                     </td>
+                    <td className="py-1.5 pr-2 text-slate-400 text-[10px]">
+                      {s.geometry === 'flat' ? 'Düz' :
+                       s.geometry === 'concave_arc' ? `Kavis (${s.angleDeg}°, R=${s.radiusM}m)` :
+                       s.geometry === 'cylinder_360' ? `360° Silindir (D=${s.radiusM*2}m)` :
+                       s.geometry === 'dome' ? `Kubbe (D=${s.radiusM*2}m)` :
+                       s.geometry === 'sphere' ? `Küre (D=${s.radiusM*2}m)` : `Daire Zemin (D=${s.radiusM*2}m)`}
+                    </td>
                     <td className="py-1.5 pr-2 font-mono text-slate-300">
-                      {s.widthM}m × {s.heightM}m
+                      {s.effectiveWidthM}m × {s.effectiveHeightM}m
                     </td>
                     <td className="py-1.5 pr-2 font-mono font-bold text-amber-300">
-                      {s.aspectPhysical} : 1
+                      {s.aspectPhysical}:1
                     </td>
                     <td className="py-1.5 pr-2 font-mono font-bold text-emerald-400">
-                      {s.aspectW} × {s.aspectH} px{' '}
-                      <span className="text-[10px] text-emerald-500 font-normal">
-                        ({round(s.aspectW / s.aspectH, 2)}:1)
-                      </span>
+                      {s.netW} × {s.netH} px
                     </td>
                     <td className="py-1.5 pr-2 font-mono text-sky-300">
-                      {s.cols}×{s.rows} PJ ({s.totalRawW}×{s.totalRawH} ham)
+                      {s.cols}×{s.rows} PJ {s.isClosedLoopX ? '(360° Döngü)' : ''}
                     </td>
                     <td className="py-1.5 pr-2 font-mono text-amber-400">
-                      {s.cols > 1 ? `${s.impliedOvPxX} px (%${s.impliedOvPctX})` : 'Yok (Tek PJ)'}
+                      {s.overlapCountX > 0 ? `${s.impliedOvPxX} px (%${s.impliedOvPctX})` : 'Yok'}
                     </td>
                     <td className="py-1.5 font-mono text-slate-200">
-                      ~{s.avgMmPerPx} mm/px <span className="text-slate-500">({s.ppi} PPI)</span>
+                      ~{s.avgMmPerPx} mm/px
                     </td>
                   </tr>
                 ))}
