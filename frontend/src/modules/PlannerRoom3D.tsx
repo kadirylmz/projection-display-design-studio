@@ -105,7 +105,7 @@ export const HUMAN_VARIANT_CATALOG: Record<
 
 /**
  * Estetik, Yumuşak Hatlı (Capsule / Cylinder / Sphere), Seçilebilir 5 Farklı 3B İnsan Karakter Modeli
- * Mouse ile tıklanıp zeminde (y=0) sürüklenebilir!
+ * + Zemin Gölgesi + Mouse ile tıklanıp zeminde (y=0) sürüklenebilir!
  */
 function StylizedHuman3D({
   actor,
@@ -134,9 +134,15 @@ function StylizedHuman3D({
         onStartDrag(actor.id, e);
       }}
     >
-      {/* Zemindeki Sürükleme & Seçim Halkası (Her zaman y=0.01'de) */}
-      <mesh position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.28, isSelected ? 0.44 : 0.36, 36]} />
+      {/* İnsanın Zemindeki Doğal Gölgesi (Ground Contact Shadow) */}
+      <mesh position={[0, 0.008, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[1.15, 0.95, 1]}>
+        <circleGeometry args={[0.32, 32]} />
+        <meshBasicMaterial color="#020617" transparent opacity={0.68} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Zemindeki Sürükleme & Seçim Halkası */}
+      <mesh position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.3, isSelected ? 0.46 : 0.37, 36]} />
         <meshBasicMaterial
           color={isDragging ? '#facc15' : isSelected ? '#38bdf8' : '#10b981'}
           side={THREE.DoubleSide}
@@ -145,88 +151,72 @@ function StylizedHuman3D({
         />
       </mesh>
 
-      {/* Sürükleme Yön Okları (Seçiliyse zeminde görünür) */}
-      {isSelected && (
-        <mesh position={[0, 0.008, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <circleGeometry args={[0.28, 32]} />
-          <meshBasicMaterial color="#0284c7" transparent opacity={0.25} side={THREE.DoubleSide} />
-        </mesh>
-      )}
-
       {isSeated ? (
         /* OTURAN İZLEYİCİ + MÜZE BANKI MODELİ */
         <group>
-          {/* Müze Oturma Bankı (Ahşap/Metal) */}
-          <mesh position={[0, 0.42, -0.05]}>
+          <mesh position={[0, 0.42, -0.05]} castShadow receiveShadow>
             <boxGeometry args={[0.75, 0.06, 0.42]} />
             <meshStandardMaterial color="#78350f" roughness={0.6} />
           </mesh>
-          <mesh position={[-0.3, 0.21, -0.05]}>
+          <mesh position={[-0.3, 0.21, -0.05]} castShadow receiveShadow>
             <boxGeometry args={[0.06, 0.42, 0.38]} />
             <meshStandardMaterial color="#1e293b" metalness={0.6} roughness={0.3} />
           </mesh>
-          <mesh position={[0.3, 0.21, -0.05]}>
+          <mesh position={[0.3, 0.21, -0.05]} castShadow receiveShadow>
             <boxGeometry args={[0.06, 0.42, 0.38]} />
             <meshStandardMaterial color="#1e293b" metalness={0.6} roughness={0.3} />
           </mesh>
 
-          {/* Ayakkabılar */}
-          <mesh position={[-0.11, 0.05, 0.22]}>
+          <mesh position={[-0.11, 0.05, 0.22]} castShadow>
             <capsuleGeometry args={[0.048, 0.12, 8, 16]} />
             <meshStandardMaterial color="#0f172a" roughness={0.5} />
           </mesh>
-          <mesh position={[0.11, 0.05, 0.22]}>
+          <mesh position={[0.11, 0.05, 0.22]} castShadow>
             <capsuleGeometry args={[0.048, 0.12, 8, 16]} />
             <meshStandardMaterial color="#0f172a" roughness={0.5} />
           </mesh>
 
-          {/* Alt Bacaklar (Dikey) */}
-          <mesh position={[-0.11, 0.24, 0.18]}>
+          <mesh position={[-0.11, 0.24, 0.18]} castShadow>
             <capsuleGeometry args={[0.055, 0.28, 8, 16]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
-          <mesh position={[0.11, 0.24, 0.18]}>
+          <mesh position={[0.11, 0.24, 0.18]} castShadow>
             <capsuleGeometry args={[0.055, 0.28, 8, 16]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
 
-          {/* Üst Bacaklar (Yatay Oturur vaziyette) */}
-          <mesh position={[-0.11, 0.47, 0.04]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[-0.11, 0.47, 0.04]} rotation={[Math.PI / 2, 0, 0]} castShadow>
             <capsuleGeometry args={[0.062, 0.24, 8, 16]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
-          <mesh position={[0.11, 0.47, 0.04]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[0.11, 0.47, 0.04]} rotation={[Math.PI / 2, 0, 0]} castShadow>
             <capsuleGeometry args={[0.062, 0.24, 8, 16]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
 
-          {/* Gövde */}
-          <mesh position={[0, 0.76, -0.04]}>
+          <mesh position={[0, 0.76, -0.04]} castShadow>
             <capsuleGeometry args={[0.15, 0.34, 12, 24]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.45} />
           </mesh>
 
-          {/* Kollar */}
-          <mesh position={[-0.2, 0.72, 0.02]} rotation={[0.35, 0, 0.1]}>
+          <mesh position={[-0.2, 0.72, 0.02]} rotation={[0.35, 0, 0.1]} castShadow>
             <capsuleGeometry args={[0.042, 0.32, 8, 16]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.45} />
           </mesh>
-          <mesh position={[0.2, 0.72, 0.02]} rotation={[0.35, 0, -0.1]}>
+          <mesh position={[0.2, 0.72, 0.02]} rotation={[0.35, 0, -0.1]} castShadow>
             <capsuleGeometry args={[0.042, 0.32, 8, 16]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.45} />
           </mesh>
 
-          {/* Baş & Saç */}
-          <mesh position={[0, 1.14, -0.02]}>
+          <mesh position={[0, 1.14, -0.02]} castShadow>
             <sphereGeometry args={[0.115, 24, 24]} />
             <meshStandardMaterial color={cfg.skinColor} roughness={0.45} />
           </mesh>
-          <mesh position={[0, 1.17, -0.035]}>
+          <mesh position={[0, 1.17, -0.035]} castShadow>
             <sphereGeometry args={[0.12, 24, 18, 0, Math.PI * 2, 0, Math.PI * 0.58]} />
             <meshStandardMaterial color={cfg.hairColor} roughness={0.7} />
           </mesh>
 
-          {/* Gözler (+Z Bakış Yönü) */}
           <mesh position={[-0.04, 1.15, 0.088]}>
             <sphereGeometry args={[0.015, 10, 10]} />
             <meshBasicMaterial color="#0f172a" />
@@ -239,81 +229,72 @@ function StylizedHuman3D({
       ) : (
         /* AYAKTA DURAN STİLİZE / MİMARİ İNSAN MODELLERİ */
         <group scale={[scale, scale, scale]}>
-          {/* Sol & Sağ Ayakkabı (Yumuşak Kapsül Taban) */}
-          <mesh position={[-0.1, 0.05, 0.03]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[-0.1, 0.05, 0.03]} rotation={[Math.PI / 2, 0, 0]} castShadow>
             <capsuleGeometry args={[0.05, 0.13, 8, 16]} />
             <meshStandardMaterial color="#0f172a" roughness={0.5} />
           </mesh>
-          <mesh position={[0.1, 0.05, 0.03]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[0.1, 0.05, 0.03]} rotation={[Math.PI / 2, 0, 0]} castShadow>
             <capsuleGeometry args={[0.05, 0.13, 8, 16]} />
             <meshStandardMaterial color="#0f172a" roughness={0.5} />
           </mesh>
 
-          {/* Bacaklar */}
-          <mesh position={[-0.1, 0.47, 0]}>
+          <mesh position={[-0.1, 0.47, 0]} castShadow>
             <capsuleGeometry args={[0.064, 0.68, 10, 20]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
-          <mesh position={[0.1, 0.47, 0]}>
+          <mesh position={[0.1, 0.47, 0]} castShadow>
             <capsuleGeometry args={[0.064, 0.68, 10, 20]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
 
-          {/* Kadın Ziyaretçi İçin Elbise / Etek Konisi */}
           {actor.variant === 'female_dress' && (
-            <mesh position={[0, 0.72, 0]}>
+            <mesh position={[0, 0.72, 0]} castShadow>
               <cylinderGeometry args={[0.14, 0.26, 0.52, 24]} />
               <meshStandardMaterial color={cfg.jacketColor} roughness={0.45} />
             </mesh>
           )}
 
-          {/* Kalça / Bel Geçişi */}
-          <mesh position={[0, 0.88, 0]}>
+          <mesh position={[0, 0.88, 0]} castShadow>
             <capsuleGeometry args={[0.135, 0.12, 10, 20]} />
             <meshStandardMaterial color={cfg.pantsColor} roughness={0.6} />
           </mesh>
 
-          {/* Ana Gövde (Torso - Yuvarlatılmış Kapsül + Omuz) */}
-          <mesh position={[0, 1.19, 0]}>
+          <mesh position={[0, 1.19, 0]} castShadow>
             <capsuleGeometry args={[0.155, 0.36, 12, 24]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.42} />
           </mesh>
 
-          {/* İç Yaka / Gömlek / Fular Detayı */}
-          <mesh position={[0, 1.34, 0.095]}>
+          <mesh position={[0, 1.34, 0.095]} castShadow>
             <sphereGeometry args={[0.075, 16, 16]} />
             <meshStandardMaterial color={cfg.innerColor} roughness={0.4} />
           </mesh>
 
-          {/* Küratör / Mimar İçin Elinde Tablet / Dosya Detayı */}
           {actor.variant === 'curator_suit' && (
-            <mesh position={[0.22, 1.02, 0.16]} rotation={[0.4, -0.2, 0]}>
+            <mesh position={[0.22, 1.02, 0.16]} rotation={[0.4, -0.2, 0]} castShadow>
               <boxGeometry args={[0.18, 0.24, 0.015]} />
               <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.4} />
             </mesh>
           )}
 
-          {/* Omuz Köprüsü */}
-          <mesh position={[0, 1.4, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <mesh position={[0, 1.4, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
             <capsuleGeometry args={[0.065, 0.34, 10, 20]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.42} />
           </mesh>
 
-          {/* Sol & Sağ Kol (Yumuşak Kapsül) */}
-          <mesh position={[-0.23, 1.14, 0]} rotation={[0, 0, 0.09]}>
+          <mesh position={[-0.23, 1.14, 0]} rotation={[0, 0, 0.09]} castShadow>
             <capsuleGeometry args={[0.046, 0.44, 10, 20]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.45} />
           </mesh>
           <mesh
             position={[0.23, 1.14, actor.variant === 'curator_suit' ? 0.06 : 0]}
             rotation={[actor.variant === 'curator_suit' ? -0.45 : 0, 0, -0.09]}
+            castShadow
           >
             <capsuleGeometry args={[0.046, 0.44, 10, 20]} />
             <meshStandardMaterial color={cfg.jacketColor} roughness={0.45} />
           </mesh>
 
-          {/* Eller */}
-          <mesh position={[-0.25, 0.87, 0]}>
+          <mesh position={[-0.25, 0.87, 0]} castShadow>
             <sphereGeometry args={[0.046, 14, 14]} />
             <meshStandardMaterial color={cfg.skinColor} roughness={0.5} />
           </mesh>
@@ -323,37 +304,33 @@ function StylizedHuman3D({
               actor.variant === 'curator_suit' ? 0.98 : 0.87,
               actor.variant === 'curator_suit' ? 0.15 : 0,
             ]}
+            castShadow
           >
             <sphereGeometry args={[0.046, 14, 14]} />
             <meshStandardMaterial color={cfg.skinColor} roughness={0.5} />
           </mesh>
 
-          {/* Boyun */}
-          <mesh position={[0, 1.5, 0]}>
+          <mesh position={[0, 1.5, 0]} castShadow>
             <cylinderGeometry args={[0.052, 0.058, 0.1, 16]} />
             <meshStandardMaterial color={cfg.skinColor} roughness={0.5} />
           </mesh>
 
-          {/* Baş (Kafa) */}
-          <mesh position={[0, 1.64, 0]}>
+          <mesh position={[0, 1.64, 0]} castShadow>
             <sphereGeometry args={[0.118, 24, 24]} />
             <meshStandardMaterial color={cfg.skinColor} roughness={0.45} />
           </mesh>
 
-          {/* Saç Stili */}
-          <mesh position={[0, 1.67, -0.015]}>
+          <mesh position={[0, 1.67, -0.015]} castShadow>
             <sphereGeometry args={[0.123, 24, 18, 0, Math.PI * 2, 0, Math.PI * 0.58]} />
             <meshStandardMaterial color={cfg.hairColor} roughness={0.75} />
           </mesh>
           {actor.variant === 'female_dress' && (
-            /* Uzun Saç / Topuz Detayı */
-            <mesh position={[0, 1.58, -0.11]}>
+            <mesh position={[0, 1.58, -0.11]} castShadow>
               <capsuleGeometry args={[0.055, 0.14, 8, 16]} />
               <meshStandardMaterial color={cfg.hairColor} roughness={0.75} />
             </mesh>
           )}
 
-          {/* Gözler & Bakış Yönü (+Z) */}
           <mesh position={[-0.042, 1.65, 0.108]}>
             <sphereGeometry args={[0.016, 10, 10]} />
             <meshBasicMaterial color="#0f172a" />
@@ -412,12 +389,11 @@ function PhysicalRoomShell3D({ room }: { room: PhysicalRoomConfig }) {
   return (
     <group>
       {/* Fiziksel Oda Zemini */}
-      <mesh position={[0, -0.008, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, -0.008, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[w, l]} />
         <meshStandardMaterial color="#090d16" roughness={0.9} transparent opacity={0.75} side={THREE.DoubleSide} />
       </mesh>
 
-      {/* Fiziksel Oda Yarı Saydam Cam/Mimari Yan Yüzeyleri (Duvarların arkasında oda yüksekliğini belli eder) */}
       {/* Sol Fiziksel Duvar */}
       <mesh position={[-hw - 0.03, h / 2, 0]} rotation={[0, Math.PI / 2, 0]}>
         <planeGeometry args={[l, h]} />
@@ -434,13 +410,9 @@ function PhysicalRoomShell3D({ room }: { room: PhysicalRoomConfig }) {
         <meshBasicMaterial color="#1e293b" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
 
-      {/* Alt Zemin Çerçevesi */}
       <Line points={bottomLoop} color="#6366f1" lineWidth={2} />
-
-      {/* Üst Tavan Çerçevesi (Oda Tavan Yüksekliği) */}
       <Line points={topLoop} color="#818cf8" lineWidth={2.5} dashed dashSize={0.35} gapSize={0.18} />
 
-      {/* 4 Köşe Dikey Mimari Kolon Çizgisi */}
       {[
         [-hw, -hl],
         [hw, -hl],
@@ -458,7 +430,6 @@ function PhysicalRoomShell3D({ room }: { room: PhysicalRoomConfig }) {
         />
       ))}
 
-      {/* Oda Tavan Yüksekliği ve Fiziksel Ebat Etiketi */}
       <Text
         position={[0, h + 0.35, -hl]}
         fontSize={0.32}
@@ -476,7 +447,7 @@ function PhysicalRoomShell3D({ room }: { room: PhysicalRoomConfig }) {
 
 /**
  * Tek bir projektör cihazı + 3B Işık Konisi (Frustum) + Duvarda Aydınlanan Gerçek Görüntü Yüzeyi (Quad)
- * + Sahnedeki TÜM İzleyiciler İçin Gerçek Zamanlı Gölge (Shadow Occlusion) Simülasyonu!
+ * + Sahnedeki TÜM İzleyiciler İçin Gerçek Zamanlı Gölge (Duvarda ve Zeminde Shadow Occlusion) Simülasyonu!
  */
 function ProjectorFrustum3D({
   pos,
@@ -513,14 +484,21 @@ function ProjectorFrustum3D({
     beamGeo,
     corners,
     lookQuat,
-    litPlaneMatrix,
-    shadows,
+    litPos,
+    litQuat,
+    wallShadows,
+    floorShadows,
   } = useMemo(() => {
     const p = new THREE.Vector3(...pos);
     const c = new THREE.Vector3(...targetCenter);
     const u = new THREE.Vector3(...upVec).normalize();
     const r = new THREE.Vector3(...rightVec).normalize();
+
+    // Duvarın projektöre bakan gerçek normalini garantile
     const normal = new THREE.Vector3().crossVectors(r, u).normalize();
+    if (normal.dot(p.clone().sub(c)) < 0) {
+      normal.negate();
+    }
 
     const halfW = imgW / 2;
     const halfH = imgH / 2;
@@ -546,79 +524,140 @@ function ProjectorFrustum3D({
 
     // Projektör gövdesi yönelimi
     const mLook = new THREE.Matrix4().lookAt(p, c, u);
-    const q = new THREE.Quaternion().setFromRotationMatrix(mLook);
+    const qLook = new THREE.Quaternion().setFromRotationMatrix(mLook);
 
-    // Duvardaki aydınlanan yüzey (Quad) dönüşüm matrisi
-    const litCenter = c.clone().addScaledVector(normal, 0.018);
-    const mPlane = new THREE.Matrix4().makeBasis(r, u, normal).setPosition(litCenter);
+    // Duvardaki aydınlanan yüzey (Quad) konumu ve yönelimi (Reaktif position & quaternion)
+    const litCenterVec = c.clone().addScaledVector(normal, 0.02);
+    const mPlane = new THREE.Matrix4().makeBasis(r, u, normal);
+    const qPlane = new THREE.Quaternion().setFromRotationMatrix(mPlane);
 
-    // SAHNEDEKİ TÜM İNSANLAR İÇİN GÖLGE (SHADOW OCCLUSION) HESABI:
-    const shadowList: {
+    // SAHNEDEKİ TÜM İNSANLAR İÇİN DUVAR VE ZEMİN GÖLGESİ (SHADOW OCCLUSION) HESABI:
+    const wShadows: {
       actorId: string;
       actorName: string;
-      matrix: THREE.Matrix4;
+      pos: [number, number, number];
+      quat: THREE.Quaternion;
       shadowW: number;
       shadowH: number;
       rayStart: [number, number, number];
       rayEnd: [number, number, number];
     }[] = [];
 
+    const fShadows: {
+      actorId: string;
+      pos: [number, number, number];
+      rotY: number;
+      len: number;
+      width: number;
+    }[] = [];
+
+    const isFloorProjector = Math.abs(normal.y) > 0.7;
     const planeD = normal.dot(c);
 
     for (const actor of humans) {
       const cfg = HUMAN_VARIANT_CATALOG[actor.variant] || HUMAN_VARIANT_CATALOG.male_casual;
-      const hCenter = new THREE.Vector3(actor.x, cfg.heightM * 0.52, actor.z);
+      const hBase = new THREE.Vector3(actor.x, 0.02, actor.z);
+      const hCenter = new THREE.Vector3(actor.x, cfg.heightM * 0.5, actor.z);
       const hHead = new THREE.Vector3(actor.x, cfg.heightM, actor.z);
 
-      const dirCenter = hCenter.clone().sub(p);
-      const denom = normal.dot(dirCenter);
+      // 1) DUVAR PROJEKTÖRÜ İSE: İnsanın duvara ve zemine düşen gölgesi
+      if (!isFloorProjector) {
+        const dirCenter = hCenter.clone().sub(p);
+        const denom = normal.dot(dirCenter);
 
-      // Eğer ışın duvara doğru gidiyorsa
-      if (denom < -0.001) {
-        const tHit = (planeD - normal.dot(p)) / denom;
-        // tHit > 1.0 ise insan projektör ile duvar arasındadır
-        if (tHit > 1.01 && tHit < 10.0) {
-          const hitPt = p.clone().addScaledVector(dirCenter, tHit);
-          const rel = hitPt.clone().sub(c);
-          const localX = rel.dot(r);
-          const localY = rel.dot(u);
+        // Işın projektörden çıkıp insanın üzerinden duvara doğru gidiyor mu?
+        if (denom < -0.001) {
+          const tHit = (planeD - normal.dot(p)) / denom;
 
-          // Gölge bu projektörün duvardaki görüntü alanı içine düşüyor mu?
-          if (Math.abs(localX) <= halfW + 0.35 && localY >= -halfH - 0.8 && localY <= halfH + 0.8) {
-            const mag = Math.min(3.8, Math.max(1.02, tHit));
-            const sW = cfg.bodyWidthM * mag;
+          // tHit >= 0.98 ise insan projektör ile duvar arasındadır!
+          if (tHit >= 0.98 && tHit < 15.0) {
+            const hitPt = p.clone().addScaledVector(dirCenter, tHit);
+            const rel = hitPt.clone().sub(c);
+            const localX = rel.dot(r);
 
-            const dirHead = hHead.clone().sub(p);
-            const tHead = (planeD - normal.dot(p)) / normal.dot(dirHead);
-            const headHit = p.clone().addScaledVector(dirHead, tHead);
-            const headLocalY = Math.min(halfH, headHit.clone().sub(c).dot(u));
-            const bottomLocalY = -halfH;
+            // Yatayda bu projektörün duvardaki görüntü dilimi içine düşüyor mu?
+            if (Math.abs(localX) <= halfW + 0.45) {
+              const dirHead = hHead.clone().sub(p);
+              const denomHead = normal.dot(dirHead);
+              const tHead = Math.abs(denomHead) > 0.0001 ? (planeD - normal.dot(p)) / denomHead : tHit;
+              const headHit = p.clone().addScaledVector(dirHead, tHead);
+              const headLocalY = Math.min(halfH, headHit.clone().sub(c).dot(u));
 
-            const sH = Math.max(0.25, headLocalY - bottomLocalY);
-            if (sH > 0.25 && headLocalY > -halfH + 0.15) {
-              const shadowCenterY = (headLocalY + bottomLocalY) / 2;
-              const shadowWorldPos = c
-                .clone()
-                .addScaledVector(r, localX)
-                .addScaledVector(u, shadowCenterY)
-                .addScaledVector(normal, 0.032);
+              // Ayak izdüşümü (veya duvarın en altı)
+              const dirFoot = hBase.clone().sub(p);
+              const denomFoot = normal.dot(dirFoot);
+              const tFoot = Math.abs(denomFoot) > 0.0001 ? (planeD - normal.dot(p)) / denomFoot : tHit;
+              const footHit = p.clone().addScaledVector(dirFoot, tFoot);
+              const footLocalY = Math.max(-halfH, footHit.clone().sub(c).dot(u));
 
-              const sMat = new THREE.Matrix4().makeBasis(r, u, normal).setPosition(shadowWorldPos);
-              shadowList.push({
-                actorId: actor.id,
-                actorName: actor.name,
-                matrix: sMat,
-                shadowW: sW,
-                shadowH: sH,
-                rayStart: [hHead.x, hHead.y, hHead.z],
-                rayEnd: [
-                  c.x + r.x * localX + u.x * headLocalY,
-                  c.y + r.y * localX + u.y * headLocalY,
-                  c.z + r.z * localX + u.z * headLocalY,
-                ],
-              });
+              const sH = headLocalY - footLocalY;
+              if (sH > 0.18 && headLocalY > -halfH + 0.1) {
+                const mag = Math.min(4.0, Math.max(1.0, tHit));
+                const sW = cfg.bodyWidthM * mag;
+                const shadowCenterY = (headLocalY + footLocalY) / 2;
+
+                const shadowWorldPos = c
+                  .clone()
+                  .addScaledVector(r, localX)
+                  .addScaledVector(u, shadowCenterY)
+                  .addScaledVector(normal, 0.042);
+
+                wShadows.push({
+                  actorId: actor.id,
+                  actorName: actor.name,
+                  pos: [shadowWorldPos.x, shadowWorldPos.y, shadowWorldPos.z],
+                  quat: qPlane,
+                  shadowW: sW,
+                  shadowH: sH,
+                  rayStart: [hHead.x, hHead.y, hHead.z],
+                  rayEnd: [
+                    c.x + r.x * localX + u.x * headLocalY,
+                    c.y + r.y * localX + u.y * headLocalY,
+                    c.z + r.z * localX + u.z * headLocalY,
+                  ],
+                });
+              }
+
+              // Ayrıca projektör ışığından dolayı insanın ayaklarından duvara doğru ZEMİNDE uzanan gölge!
+              if (p.y > cfg.heightM + 0.05) {
+                const tFloor = p.y / (p.y - cfg.heightM);
+                const floorHeadX = p.x + (actor.x - p.x) * tFloor;
+                const floorHeadZ = p.z + (actor.z - p.z) * tFloor;
+                const dx = floorHeadX - actor.x;
+                const dz = floorHeadZ - actor.z;
+                const shadowLen = Math.min(6.0, Math.hypot(dx, dz));
+                if (shadowLen > 0.2) {
+                  const angleY = Math.atan2(dx, dz);
+                  fShadows.push({
+                    actorId: `${actor.id}-fl`,
+                    pos: [actor.x + dx * 0.45, 0.011, actor.z + dz * 0.45],
+                    rotY: angleY,
+                    len: shadowLen * 0.9,
+                    width: cfg.bodyWidthM * 1.15,
+                  });
+                }
+              }
             }
           }
+        }
+      } else {
+        // 2) TAVAN / ZEMİN PROJEKTÖRÜ İSE: Zeminde oluşan büyük insan gölgesi
+        const distXZ = Math.hypot(actor.x - c.x, actor.z - c.z);
+        if (distXZ <= Math.max(halfW, halfH) + 0.5 && p.y > cfg.heightM + 0.1) {
+          const tFloor = p.y / (p.y - cfg.heightM);
+          const floorHeadX = p.x + (actor.x - p.x) * tFloor;
+          const floorHeadZ = p.z + (actor.z - p.z) * tFloor;
+          const dx = floorHeadX - actor.x;
+          const dz = floorHeadZ - actor.z;
+          const shadowLen = Math.min(4.5, Math.max(0.55, Math.hypot(dx, dz)));
+          const angleY = Math.atan2(dx, dz);
+          fShadows.push({
+            actorId: `${actor.id}-ceil`,
+            pos: [actor.x + dx * 0.5, 0.025, actor.z + dz * 0.5],
+            rotY: angleY,
+            len: shadowLen,
+            width: cfg.bodyWidthM * 1.35,
+          });
         }
       }
     }
@@ -626,9 +665,11 @@ function ProjectorFrustum3D({
     return {
       beamGeo: g,
       corners: pts.map(v => [v.x, v.y, v.z] as [number, number, number]),
-      lookQuat: q,
-      litPlaneMatrix: mPlane,
-      shadows: shadowList,
+      lookQuat: qLook,
+      litPos: [litCenterVec.x, litCenterVec.y, litCenterVec.z] as [number, number, number],
+      litQuat: qPlane,
+      wallShadows: wShadows,
+      floorShadows: fShadows,
     };
   }, [pos, targetCenter, upVec, rightVec, imgW, imgH, humans]);
 
@@ -640,9 +681,9 @@ function ProjectorFrustum3D({
 
   return (
     <group>
-      {/* Projektör Cihaz Gövdesi + Tavan Askı Aparatı */}
+      {/* Projektör Cihaz Gövdesi */}
       <group position={pos} quaternion={lookQuat}>
-        <mesh>
+        <mesh castShadow>
           <boxGeometry args={[0.42, 0.16, 0.48]} />
           <meshStandardMaterial color="#1e293b" metalness={0.5} roughness={0.4} />
         </mesh>
@@ -653,7 +694,11 @@ function ProjectorFrustum3D({
         </mesh>
       </group>
 
-      {/* Projektör Yüksekliği İzdüşüm Çizgisi (Zeminden Projektöre) */}
+      {/* Projektörün Zemindeki İzdüşüm Gölgesi ve Yükseklik Çizgisi */}
+      <mesh position={[pos[0], 0.009, pos[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.26, 24]} />
+        <meshBasicMaterial color="#020617" transparent opacity={0.55} side={THREE.DoubleSide} />
+      </mesh>
       <Line
         points={[
           [pos[0], 0, pos[2]],
@@ -671,7 +716,7 @@ function ProjectorFrustum3D({
         <meshBasicMaterial
           color={color}
           transparent
-          opacity={0.12}
+          opacity={0.13}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -679,13 +724,13 @@ function ProjectorFrustum3D({
 
       {/* DUVARDA / YÜZEYDE PROJEKTÖRÜN AYDINLATTIĞI GERÇEK GÖRÜNTÜ DOLGUSU */}
       {showSurfaceFill && !isCurvedSurface && (
-        <group matrixAutoUpdate={false} matrix={litPlaneMatrix}>
+        <group position={litPos} quaternion={litQuat}>
           <mesh>
             <planeGeometry args={[imgW, imgH]} />
             <meshBasicMaterial
               color={color}
               transparent
-              opacity={0.34}
+              opacity={0.35}
               side={THREE.DoubleSide}
               depthWrite={false}
             />
@@ -713,18 +758,26 @@ function ProjectorFrustum3D({
         </group>
       )}
 
-      {/* EĞER İZLEYİCİLER IŞIĞIN ÖNÜNDEYSE DUVARDA OLUŞAN GÖLGELER */}
-      {shadows.map(sh => (
-        <group key={`sh-${sh.actorId}`}>
-          <group matrixAutoUpdate={false} matrix={sh.matrix}>
+      {/* 1. DUVARDA OLUŞAN GERÇEK ZAMANLI İNSAN GÖLGELERİ (Silüet + Kırmızı Uyarı + Gölge Işını) */}
+      {wallShadows.map(sh => (
+        <group key={`wsh-${sh.actorId}`}>
+          <group position={sh.pos} quaternion={sh.quat}>
+            {/* Gölge Gövde Silüeti */}
             <mesh position={[0, -sh.shadowH * 0.08, 0]}>
-              <planeGeometry args={[sh.shadowW, sh.shadowH * 0.82]} />
-              <meshBasicMaterial color="#020617" transparent opacity={0.88} side={THREE.DoubleSide} />
-            </mesh>
-            <mesh position={[0, sh.shadowH * 0.38, 0.002]}>
-              <circleGeometry args={[sh.shadowW * 0.32, 20]} />
+              <planeGeometry args={[sh.shadowW * 0.85, sh.shadowH * 0.82]} />
               <meshBasicMaterial color="#020617" transparent opacity={0.92} side={THREE.DoubleSide} />
             </mesh>
+            {/* Gölge Omuz Yuvarlatması */}
+            <mesh position={[0, sh.shadowH * 0.16, 0.001]}>
+              <circleGeometry args={[sh.shadowW * 0.44, 24]} />
+              <meshBasicMaterial color="#020617" transparent opacity={0.92} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Gölge Kafa Silüeti */}
+            <mesh position={[0, sh.shadowH * 0.38, 0.002]}>
+              <circleGeometry args={[Math.min(sh.shadowW * 0.28, 0.35), 24]} />
+              <meshBasicMaterial color="#020617" transparent opacity={0.95} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Kırmızı Gölge Uyarı Çerçevesi */}
             <Line
               points={[
                 [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
@@ -734,29 +787,40 @@ function ProjectorFrustum3D({
                 [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
               ]}
               color="#ef4444"
-              lineWidth={2}
+              lineWidth={2.2}
             />
             <Text
-              position={[0, 0, 0.01]}
-              fontSize={0.17}
+              position={[0, 0, 0.012]}
+              fontSize={0.18}
               color="#f87171"
               anchorX="center"
               anchorY="middle"
-              outlineWidth={0.02}
+              outlineWidth={0.022}
               outlineColor="#020617"
             >
-              {`⚠ GÖLGE (${sh.shadowH.toFixed(1)}m)`}
+              {`⚠ ${sh.actorName} GÖLGESİ (${sh.shadowH.toFixed(2)}m)`}
             </Text>
           </group>
 
+          {/* İnsanın Başından Duvara Giden Gölge Işını */}
           <Line
             points={[sh.rayStart, sh.rayEnd]}
             color="#ef4444"
-            lineWidth={1.8}
+            lineWidth={2}
             dashed
             dashSize={0.2}
-            gapSize={0.15}
+            gapSize={0.14}
           />
+        </group>
+      ))}
+
+      {/* 2. ZEMİNDE OLUŞAN UZUN PROJEKTÖR GÖLGELERİ */}
+      {floorShadows.map(fsh => (
+        <group key={`fsh-${fsh.actorId}`} position={fsh.pos} rotation={[0, fsh.rotY, 0]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[fsh.width, fsh.len]} />
+            <meshBasicMaterial color="#020617" transparent opacity={0.65} side={THREE.DoubleSide} />
+          </mesh>
         </group>
       ))}
 
@@ -824,17 +888,23 @@ export default function PlannerRoom3D({
   const [viewFilter, setViewFilter] = useState<'all' | 'selected'>('all');
   const [includeHudOnExport, setIncludeHudOnExport] = useState(true);
 
-  // Çoklu İnsan (İzleyici) Listesi & Seçili İnsan Modeli
-  const [humans, setHumans] = useState<HumanActor[]>([
-    {
-      id: 'h-1',
-      name: 'İzleyici 1',
-      variant: 'male_casual',
-      x: 0,
-      z: 0,
-      rotY: -Math.PI / 2,
-    },
-  ]);
+  // İlk İzleyiciyi Başlangıçta Sol Duvarın Önüne (Gölge/Bakış Mesafesine) Yerleştir!
+  const [humans, setHumans] = useState<HumanActor[]>(() => {
+    const firstWall = surfaces.find(s => s.type === 'wall');
+    const roomW = physicalRoom.enabled ? physicalRoom.widthM : 7.0;
+    const viewD = firstWall ? firstWall.viewDistM : 2.5;
+    const startX = +(-roomW / 2 + Math.min(roomW - 0.5, viewD)).toFixed(2);
+    return [
+      {
+        id: 'h-1',
+        name: 'İzleyici 1',
+        variant: 'male_casual',
+        x: startX,
+        z: 0,
+        rotY: -Math.PI / 2,
+      },
+    ];
+  });
   const [selectedHumanId, setSelectedHumanId] = useState<string>('h-1');
   const [draggingHumanId, setDraggingHumanId] = useState<string | null>(null);
   const [newVariant, setNewVariant] = useState<HumanVariant>('female_dress');
@@ -857,7 +927,6 @@ export default function PlannerRoom3D({
       s => s.geometry === 'cylinder_360' || s.geometry === 'sphere' || s.geometry === 'dome' || s.geometry === 'concave_arc'
     );
 
-    // Eğer fiziksel oda aktifse duvarların yerleşim genişliğini fiziksel odaya veya duvar genişliklerine göre belirle
     const roomLengthZ = physicalRoom.enabled
       ? physicalRoom.lengthM
       : walls[0]?.effectiveWidthM || floor?.effectiveWidthM || 20;
@@ -879,7 +948,7 @@ export default function PlannerRoom3D({
     };
   }, [surfaces, physicalRoom]);
 
-  // Seçili Yüzey İçin Doluluk (Coverage) & Gölge Analizi
+  // Seçili Yüzey İçin Doluluk (Coverage) & Canlı Gölge Analizi (İnsanların gerçek X, Z konumuna göre!)
   const coverageStats = useMemo(() => {
     if (!activeSurf) return null;
     const covPctW = Math.round((activeSurf.totalOpticalWidthM / Math.max(0.1, activeSurf.effectiveWidthM)) * 100);
@@ -893,17 +962,32 @@ export default function PlannerRoom3D({
       activeSurf.projMountHeightM && activeSurf.projMountHeightM > 0
         ? activeSurf.projMountHeightM
         : Math.max(2.2, activeSurf.effectiveHeightM - 0.15);
-    const humanH = selectedHuman ? HUMAN_VARIANT_CATALOG[selectedHuman.variant].heightM : 1.75;
+
+    // Seçili insanın seçili duvara olan gerçek mesafesini ve gölge yüksekliğini hesapla
+    const walls = surfaces.filter(s => s.type === 'wall');
+    const wIdx = walls.findIndex(w => w.id === activeSurf.id);
+    const hw = sceneData.roomWidthX / 2;
+    const hl = sceneData.roomLengthZ / 2;
+
     let hasShadowRisk = false;
     let shadowHeightOnWall = 0;
+    let currentDistToWall = activeSurf.viewDistM;
 
-    if (activeSurf.type === 'wall' && activeSurf.viewDistM < activeSurf.throwDistM) {
-      const distFromProjToHuman = activeSurf.throwDistM - activeSurf.viewDistM;
-      const tHit = activeSurf.throwDistM / Math.max(0.1, distFromProjToHuman);
-      const shadowTopY = projHeight + (humanH - projHeight) * tHit;
-      if (shadowTopY > 0.1) {
-        hasShadowRisk = true;
-        shadowHeightOnWall = +Math.min(activeSurf.effectiveHeightM, shadowTopY).toFixed(2);
+    if (selectedHuman && activeSurf.type === 'wall') {
+      const humanH = HUMAN_VARIANT_CATALOG[selectedHuman.variant].heightM;
+      if (wIdx === 0) currentDistToWall = Math.max(0.1, +(selectedHuman.x - -hw).toFixed(2));
+      else if (wIdx === 1) currentDistToWall = Math.max(0.1, +(selectedHuman.z - -hl).toFixed(2));
+      else if (wIdx === 2) currentDistToWall = Math.max(0.1, +(hw - selectedHuman.x).toFixed(2));
+      else if (wIdx >= 3) currentDistToWall = Math.max(0.1, +(hl - selectedHuman.z).toFixed(2));
+
+      if (currentDistToWall > 0.05 && currentDistToWall < activeSurf.throwDistM - 0.05) {
+        const distFromProjToHuman = activeSurf.throwDistM - currentDistToWall;
+        const tHit = activeSurf.throwDistM / Math.max(0.1, distFromProjToHuman);
+        const shadowTopY = projHeight + (humanH - projHeight) * tHit;
+        if (shadowTopY > 0.1) {
+          hasShadowRisk = true;
+          shadowHeightOnWall = +Math.min(activeSurf.effectiveHeightM, shadowTopY).toFixed(2);
+        }
       }
     }
 
@@ -913,25 +997,52 @@ export default function PlannerRoom3D({
       diffW,
       diffH,
       projHeight,
+      currentDistToWall,
       hasShadowRisk,
       shadowHeightOnWall,
     };
-  }, [activeSurf, selectedHuman]);
+  }, [activeSurf, selectedHuman, surfaces, sceneData]);
 
-  // Yeni İnsan (İzleyici) Ekle
+  // Yeni İnsan (İzleyici) Ekle (Doğrudan aktif duvarın önüne, gölge/bakış noktasına ekler)
   const addHumanActor = () => {
     const idx = humans.length + 1;
     const id = `h-${Date.now().toString().slice(-4)}`;
-    // Odanın ortasına hafif kaydırarak yerleştir (y=0)
-    const offsetX = ((idx % 3) - 1) * 1.2;
-    const offsetZ = ((Math.floor(idx / 3) % 3) - 1) * 1.4;
+    const walls = surfaces.filter(s => s.type === 'wall');
+    const wIdx = Math.max(0, walls.findIndex(w => w.id === activeSurf?.id));
+    const hw = sceneData.roomWidthX / 2;
+    const hl = sceneData.roomLengthZ / 2;
+    const viewD = activeSurf?.viewDistM || 2.2;
+    const spread = ((idx % 5) - 2) * 1.4;
+
+    let nx = 0;
+    let nz = spread;
+    let rotY = -Math.PI / 2;
+
+    if (wIdx === 0) {
+      nx = -hw + Math.min(sceneData.roomWidthX - 0.5, viewD);
+      nz = spread;
+      rotY = -Math.PI / 2;
+    } else if (wIdx === 1) {
+      nx = spread;
+      nz = -hl + Math.min(sceneData.roomLengthZ - 0.5, viewD);
+      rotY = Math.PI;
+    } else if (wIdx === 2) {
+      nx = hw - Math.min(sceneData.roomWidthX - 0.5, viewD);
+      nz = spread;
+      rotY = Math.PI / 2;
+    } else {
+      nx = spread;
+      nz = hl - Math.min(sceneData.roomLengthZ - 0.5, viewD);
+      rotY = 0;
+    }
+
     const newActor: HumanActor = {
       id,
       name: `İzleyici ${idx}`,
       variant: newVariant,
-      x: +offsetX.toFixed(2),
-      z: +offsetZ.toFixed(2),
-      rotY: 0,
+      x: +nx.toFixed(2),
+      z: +nz.toFixed(2),
+      rotY,
     };
     setHumans(prev => [...prev, newActor]);
     setSelectedHumanId(id);
@@ -952,32 +1063,34 @@ export default function PlannerRoom3D({
     );
   };
 
-  // Seçili İnsanı Seçili Duvarın İzleyici Mesafesine (viewDistM) Hizala
+  // Seçili İnsanı Seçili Duvarın Projektör Işığının Önüne (viewDistM) Hizala
   const snapSelectedHumanToWallViewDist = () => {
     if (!selectedHuman || !activeSurf) return;
     const walls = surfaces.filter(s => s.type === 'wall');
     const wIdx = walls.findIndex(w => w.id === activeSurf.id);
     const hw = sceneData.roomWidthX / 2;
     const hl = sceneData.roomLengthZ / 2;
+    // Gölgeyi net görmek için projektör mesafesinden daha yakın bir noktaya (viewDistM) koy
+    const targetDist = Math.min(activeSurf.viewDistM, Math.max(1.2, activeSurf.throwDistM * 0.55));
 
     let nx = 0;
     let nz = 0;
     let rotY = 0;
     if (wIdx === 0) {
-      nx = -hw + activeSurf.viewDistM;
+      nx = -hw + targetDist;
       nz = 0;
       rotY = -Math.PI / 2;
     } else if (wIdx === 1) {
       nx = 0;
-      nz = -hl + activeSurf.viewDistM;
+      nz = -hl + targetDist;
       rotY = Math.PI;
     } else if (wIdx === 2) {
-      nx = hw - activeSurf.viewDistM;
+      nx = hw - targetDist;
       nz = 0;
       rotY = Math.PI / 2;
     } else {
       nx = 0;
-      nz = hl - activeSurf.viewDistM;
+      nz = hl - targetDist;
       rotY = 0;
     }
 
@@ -1102,7 +1215,11 @@ export default function PlannerRoom3D({
       ctx.fillStyle = coverageStats.hasShadowRisk ? '#f87171' : '#facc15';
       ctx.font = `${fsSub}px monospace`;
       ctx.fillText(
-        `PJ Uzaklık: D=${activeSurf.throwDistM}m · PJ Yükseklik: H=${coverageStats.projHeight.toFixed(2)}m (1 PJ: ${activeSurf.singleProjWidthM}m×${activeSurf.singleProjHeightM}m)  |  Oda Tavan: ${physicalRoom.heightM}m`,
+        `PJ Uzaklık: D=${activeSurf.throwDistM}m · PJ Yükseklik: H=${coverageStats.projHeight.toFixed(2)}m  |  ${
+          coverageStats.hasShadowRisk
+            ? `⚠ DUVARDA İNSAN GÖLGESİ OLUŞUYOR (${coverageStats.shadowHeightOnWall}m)`
+            : '✓ Gölge Yok'
+        }`,
         24,
         y0 + 92
       );
@@ -1176,7 +1293,7 @@ export default function PlannerRoom3D({
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showBeams} onChange={e => setShowBeams(e.target.checked)} />
-            <span>Işık Konileri</span>
+            <span>Işık Konileri & Gölgeler</span>
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} />
@@ -1250,10 +1367,10 @@ export default function PlannerRoom3D({
 
               <button
                 onClick={snapSelectedHumanToWallViewDist}
-                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 font-semibold text-[10px]"
-                title="Seçili insanı aktif duvarın izleyici mesafesine (viewDistM) hizala"
+                className="px-1.5 py-0.5 rounded bg-sky-900/80 hover:bg-sky-800 text-sky-200 font-semibold text-[10px] border border-sky-700"
+                title="Seçili insanı aktif duvarın projektör ışığı önüne hizala (Gölge Testi)"
               >
-                🎯 Duvara Hizala ({activeSurf?.viewDistM}m)
+                🎯 Bu Duvarın Önüne Getir (Gölge Testi)
               </button>
 
               {humans.length > 1 && (
@@ -1271,7 +1388,7 @@ export default function PlannerRoom3D({
 
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-amber-300/90 hidden xl:inline">
-            💡 İpucu: İnsanları mouse ile tutup zeminde istediğiniz yere sürükleyebilirsiniz (zeminden aşağı inmez).
+            💡 İnsanı mouse ile projektör ışığının önüne sürüklediğinizde duvarda ve zeminde gölgesi oluşur!
           </span>
           <button
             onClick={addHumanActor}
@@ -1328,10 +1445,11 @@ export default function PlannerRoom3D({
           </div>
 
           <div>
-            <span className="text-slate-400 block text-[10px]">4. Oda Tavanı & Gölge Durumu:</span>
-            <b className={coverageStats.hasShadowRisk ? 'text-rose-400' : 'text-indigo-300'}>
-              Tavan: {physicalRoom.heightM}m (Duvar: {activeSurf.effectiveHeightM}m){' '}
-              {coverageStats.hasShadowRisk ? `| ⚠ ${coverageStats.shadowHeightOnWall}m Gölge!` : '| ✓ Gölge Yok'}
+            <span className="text-slate-400 block text-[10px]">4. Seçili İnsanın Duvara Göre Gölgesi:</span>
+            <b className={coverageStats.hasShadowRisk ? 'text-rose-400' : 'text-emerald-400'}>
+              {coverageStats.hasShadowRisk
+                ? `⚠ Duvarda ${coverageStats.shadowHeightOnWall}m Gölge! (Duvara ${coverageStats.currentDistToWall}m)`
+                : `✓ Gölge Yok (Duvara ${coverageStats.currentDistToWall}m, PJ D=${activeSurf.throwDistM}m)`}
             </b>
           </div>
         </div>
@@ -1346,6 +1464,7 @@ export default function PlannerRoom3D({
         onPointerLeave={handleStopDragHuman}
       >
         <Canvas
+          shadows
           camera={{ position: [18, 14, 22], fov: 48, near: 0.1, far: 500 }}
           gl={{ preserveDrawingBuffer: true, antialias: true }}
           dpr={[1, 2]}
@@ -1356,8 +1475,14 @@ export default function PlannerRoom3D({
           }}
         >
           <color attach="background" args={['#070b14']} />
-          <ambientLight intensity={0.8} />
-          <directionalLight position={[12, 22, 12]} intensity={0.95} />
+          <ambientLight intensity={0.75} />
+          <directionalLight
+            position={[8, 22, 10]}
+            intensity={1.0}
+            castShadow
+            shadow-mapSize-width={1024}
+            shadow-mapSize-height={1024}
+          />
           <OrbitControls
             ref={controlsRef}
             makeDefault
@@ -1403,7 +1528,7 @@ export default function PlannerRoom3D({
           )}
 
           <Suspense fallback={null}>
-            {/* FİZİKSEL ODA KABUĞU (Açılıp Kapatılabilir, Duvar Ölçüsünden Bağımsız) */}
+            {/* FİZİKSEL ODA KABUĞU */}
             <PhysicalRoomShell3D room={physicalRoom} />
 
             {sceneData.specialSurf ? (
@@ -1445,12 +1570,12 @@ export default function PlannerRoom3D({
           </Suspense>
         </Canvas>
 
-        {/* Sol Alt Renk, Doluluk ve Sürükleme Açıklaması */}
+        {/* Sol Alt Renk, Doluluk ve Gölge Açıklaması */}
         <div className="absolute bottom-2 left-2 bg-slate-950/90 border border-slate-800 px-2.5 py-1.5 rounded text-[10px] text-slate-300 pointer-events-none flex flex-wrap items-center gap-3">
           <span>🏛️ <b>Mor Çerçeve:</b> Fiziksel Oda Kabuğu</span>
           <span>🟥 <b>Kırmızı Alan:</b> Boş Kalan Duvar</span>
-          <span>🟦🟨 <b>Parlak Alan:</b> Projektör Görüntüsü</span>
-          <span>🚶 <b>İnsanlar:</b> Mouse ile Tutup Zeminde Sürükleyin</span>
+          <span>⬛🟥 <b>Siyah Silüet & Kesik Işın:</b> Projektör İnsan Gölgesi</span>
+          <span>🚶 <b>İnsanlar:</b> Mouse ile Projektör Önüne Sürükleyin</span>
         </div>
       </div>
     </div>
@@ -1604,7 +1729,7 @@ function RoomBoxScene({
                 onSelect(surf.id);
               }}
             >
-              <mesh>
+              <mesh receiveShadow>
                 <planeGeometry args={[surf.effectiveWidthM, surf.effectiveHeightM]} />
                 <meshStandardMaterial
                   color={isUnderfilledW ? '#450a0a' : '#0f172a'}
@@ -1725,6 +1850,7 @@ function RoomBoxScene({
           <mesh
             position={[0, 0.01, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
+            receiveShadow
             onClick={e => {
               e.stopPropagation();
               onSelect(floor.id);
@@ -1775,7 +1901,7 @@ function RoomBoxScene({
                     rightVec={[0, 0, 1]}
                     imgW={singleW}
                     imgH={singleH}
-                    humans={[]}
+                    humans={humans}
                     throwDist={floor.throwDistM}
                     color="#facc15"
                     label={`Zemin PJ ${c + 1}.${r + 1}`}
@@ -2078,6 +2204,7 @@ function SpecialGeometryScene({
           <mesh
             position={[0, 0.02, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
+            receiveShadow
             onClick={e => {
               e.stopPropagation();
               onSelect(floorSurf.id);
@@ -2122,7 +2249,7 @@ function SpecialGeometryScene({
                     rightVec={[0, 0, 1]}
                     imgW={singleW}
                     imgH={singleH}
-                    humans={[]}
+                    humans={humans}
                     throwDist={floorSurf.throwDistM}
                     color="#facc15"
                     label={`Zemin PJ ${cIdx + 1}.${rIdx + 1}`}
