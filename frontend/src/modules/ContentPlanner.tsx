@@ -45,10 +45,13 @@ export interface SurfaceItem {
   overlapMode: 'percent' | 'pixel';
   overlapX: number;     // Yatay overlap (% veya px)
   overlapY: number;     // Dikey overlap (% veya px)
-  // UZAKLIK VE LENS PARAMETRELERİ (Piksel Yoğunluğu için Kritik!)
+  // UZAKLIK, LENS VE PROJEKTÖR YÜKSEKLİK / KAYDIRMA PARAMETRELERİ
   throwDistM: number;   // Projektörün duvara/yüzeye atım uzaklığı (m)
   throwRatio: number;   // Projektör Lens Atım Oranı (Throw Ratio, örn: 0.80 : 1)
   viewDistM: number;    // İzleyicinin yüzeye bakış uzaklığı (m) -> İdeal mm/px'i belirler!
+  projMountHeightM?: number; // Projektörün yerden montaj yüksekliği (m) (örn: 4.1m)
+  projShiftXM?: number;      // Projektör dizisini ve görüntüyü yatay sağa/sola kaydırma (m) (- sol, + sağ)
+  projShiftYM?: number;      // Görüntü hedef merkezini dikey yukarı/aşağı kaydırma (m)
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -260,6 +263,13 @@ const INITIAL_SURFACES: SurfaceItem[] = [
   },
 ];
 
+export interface PhysicalRoomConfig {
+  enabled: boolean;
+  widthM: number;   // Fiziksel oda genişliği (X - m)
+  lengthM: number;  // Fiziksel oda uzunluğu/derinliği (Z - m)
+  heightM: number;  // Fiziksel oda tavan yüksekliği (Y - m) (Duvar yüksekliğinden bağımsız!)
+}
+
 export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [surfaces, setSurfaces] = useState<SurfaceItem[]>(INITIAL_SURFACES);
   const [selectedId, setSelectedId] = useState<string>('surf-1');
@@ -270,6 +280,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>({
+    enabled: true,
+    widthM: 8.5,
+    lengthM: 25.0,
+    heightM: 5.5,
+  });
 
   // ==========================================
   // HAZIR ODA & ÖZEL GEOMETRİ ŞABLONLARI
@@ -1240,6 +1256,73 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 );
               })}
             </div>
+
+            {/* 1.5 FİZİKSEL ODA KABUĞU ÖLÇÜLERİ (Duvar Projeksiyon Alanından Bağımsız Mimari Oda) */}
+            <div className="p-2.5 rounded bg-slate-950 border border-indigo-800/70 space-y-2 mt-2">
+              <div className="flex justify-between items-center">
+                <label className="flex items-center gap-1.5 cursor-pointer font-bold text-indigo-300 text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={physicalRoom.enabled}
+                    onChange={e => setPhysicalRoom(prev => ({ ...prev, enabled: e.target.checked }))}
+                  />
+                  <span>🏛️ Fiziksel Oda Kabuğunu Göster (Duvar Ölçüsünden Bağımsız)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const walls = calculation.surfaces.filter(s => s.type === 'wall');
+                    const floor = calculation.surfaces.find(s => s.type === 'floor');
+                    const l = walls[0]?.effectiveWidthM || floor?.effectiveWidthM || 23.3;
+                    const w = walls[1]?.effectiveWidthM || floor?.effectiveHeightM || 7.0;
+                    const h = Math.max(4.5, (walls[0]?.effectiveHeightM || 4.3) + 0.7);
+                    setPhysicalRoom(prev => ({ ...prev, widthM: w, lengthM: l, heightM: round(h, 2) }));
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-indigo-900/70 hover:bg-indigo-800 text-indigo-200 text-[9.5px] font-semibold border border-indigo-700"
+                  title="Oda genişlik ve derinliğini duvarlara eşitle, tavanı +0.7m yüksek yap"
+                >
+                  Duvarlara Uydur
+                </button>
+              </div>
+
+              {physicalRoom.enabled && (
+                <div className="grid grid-cols-3 gap-2 text-[10.5px]">
+                  <label>
+                    Oda Genişliği X (m)
+                    <input
+                      className="inp font-bold text-indigo-300"
+                      type="number"
+                      step="0.2"
+                      min="2"
+                      value={physicalRoom.widthM}
+                      onChange={e => setPhysicalRoom(prev => ({ ...prev, widthM: Math.max(2, +e.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    Oda Uzunluğu Z (m)
+                    <input
+                      className="inp font-bold text-indigo-300"
+                      type="number"
+                      step="0.2"
+                      min="2"
+                      value={physicalRoom.lengthM}
+                      onChange={e => setPhysicalRoom(prev => ({ ...prev, lengthM: Math.max(2, +e.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    Oda Tavan Yüksekliği (m)
+                    <input
+                      className="inp font-bold text-amber-300"
+                      type="number"
+                      step="0.1"
+                      min="2"
+                      value={physicalRoom.heightM}
+                      onChange={e => setPhysicalRoom(prev => ({ ...prev, heightM: Math.max(2, +e.target.value) }))}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* 2. SEÇİLİ YÜZEYİN GEOMETRİ, UZAKLIK, LENS VE PİKSEL YOĞUNLUĞU EDİTÖRÜ */}
@@ -1638,6 +1721,66 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </label>
                 </div>
 
+                {/* 3'lü Projektör Montaj Yüksekliği, Sağa-Sola ve Yukarı-Aşağı Kaydırma (Shift) */}
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-900">
+                  <label>
+                    PJ Montaj Yüksekliği (m)
+                    <input
+                      className="inp font-bold text-sky-300"
+                      type="number"
+                      step="0.1"
+                      min="0.3"
+                      max="25"
+                      value={activeSurface.projMountHeightM ?? round(Math.max(2.2, activeSurface.effectiveHeightM - 0.15), 2)}
+                      onChange={e => updateSurface(activeSurface.id, { projMountHeightM: Math.max(0.3, +e.target.value) })}
+                    />
+                  </label>
+                  <label>
+                    PJ Sağa/Sola Kaydır (m)
+                    <div className="flex items-center gap-1">
+                      <input
+                        className="inp font-bold text-amber-300"
+                        type="number"
+                        step="0.2"
+                        value={activeSurface.projShiftXM ?? 0}
+                        onChange={e => updateSurface(activeSurface.id, { projShiftXM: +e.target.value })}
+                      />
+                      {(activeSurface.projShiftXM ?? 0) !== 0 && (
+                        <button
+                          type="button"
+                          onClick={() => updateSurface(activeSurface.id, { projShiftXM: 0 })}
+                          className="px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                          title="Yatay kaydırmayı sıfırla (Merkezle)"
+                        >
+                          0
+                        </button>
+                      )}
+                    </div>
+                  </label>
+                  <label>
+                    Görüntü Dikey Offset (m)
+                    <div className="flex items-center gap-1">
+                      <input
+                        className="inp font-bold text-amber-300"
+                        type="number"
+                        step="0.1"
+                        value={activeSurface.projShiftYM ?? 0}
+                        onChange={e => updateSurface(activeSurface.id, { projShiftYM: +e.target.value })}
+                      />
+                      {(activeSurface.projShiftYM ?? 0) !== 0 && (
+                        <button
+                          type="button"
+                          onClick={() => updateSurface(activeSurface.id, { projShiftYM: 0 })}
+                          className="px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                          title="Dikey kaydırmayı sıfırla"
+                        >
+                          0
+                        </button>
+                      )}
+                    </div>
+                  </label>
+                </div>
+
                 {/* 3'lü Karşılaştırma: 1. Uzaklığa Göre Optik Piksel | 2. Duvar Piksel Boyutu | 3. İzleyici Mesafesine Göre İdeal Piksel */}
                 <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
                   <div className="p-1.5 rounded bg-amber-950/30 border border-amber-800/70">
@@ -2023,6 +2166,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     surfaces={calculation.surfaces}
                     selectedId={selectedId}
                     onSelect={id => setSelectedId(id)}
+                    physicalRoom={physicalRoom}
+                    onUpdatePhysicalRoom={patch => setPhysicalRoom(prev => ({ ...prev, ...patch }))}
                   />
                 </Suspense>
               </div>
