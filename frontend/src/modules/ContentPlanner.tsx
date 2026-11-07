@@ -602,28 +602,40 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const minViewingDistM = round(avgMmPerPx / 0.85, 2);
       const isQualityOkForViewer = avgMmPerPx <= idealMuseumMmPerPx * 1.15;
 
-      // Projektör Slice ve Overlap (Örtüşme) Çizgi Koordinatları ( Kullanıcının girdiği ovPxX / ovPxY değerine göre!)
+      // Projektör Slice ve Overlap (Örtüşme) Çizgi Koordinatları:
+      // ÇOK ÖNEMLİ: Projektörler duvarın (netW × netH) içine TAM ORTALANIR (Simetrik!).
+      // Örn: 2 projektör varsa kesişim bölgesi duvarın tam ortasına (netW / 2) denk gelir;
+      // 3 projektör varsa 1/3 ve 2/3 noktalarına simetrik oturur ve genişliği doğrudan ovPxX / ovPxY olur!
       const sliceStepX = Math.max(20, projW - ovPxX);
       const sliceStepY = Math.max(20, projH - ovPxY);
+      const totalSpanX = s.cols === 1 ? projW : (isClosedLoopX ? s.cols * sliceStepX : (s.cols - 1) * sliceStepX + projW);
+      const totalSpanY = s.rows === 1 ? projH : (s.rows - 1) * sliceStepY + projH;
+
+      // Duvar genişliğine (netW) ve yüksekliğine (netH) göre tam merkezleme ofseti:
+      const centerOffsetX = (netW - totalSpanX) / 2;
+      const centerOffsetY = (netH - totalSpanY) / 2;
+
       const projSlices: CalculatedSurface['projSlices'] = [];
       let idx = 1;
       for (let r = 0; r < s.rows; r++) {
         for (let c = 0; c < s.cols; c++) {
-          const startX = Math.round(c * sliceStepX);
+          const startX = Math.round(centerOffsetX + c * sliceStepX);
           const endX = startX + projW;
-          const startY = Math.round(r * sliceStepY);
+          const startY = Math.round(centerOffsetY + r * sliceStepY);
           const endY = startY + projH;
           projSlices.push({ index: idx++, col: c, row: r, startX, endX, startY, endY });
         }
       }
 
-      // İki projektör arasındaki kesişim / overlap bölgeleri (Sarı kesikli şeritler)
+      // İki projektör arasındaki kesişim / overlap bölgeleri (Duvara göre tam simetrik ve ortalanmış!)
       const overlapZonesX: CalculatedSurface['overlapZonesX'] = [];
       if (s.cols > 1) {
         const countX = isClosedLoopX ? s.cols : s.cols - 1;
         for (let c = 0; c < countX; c++) {
-          const ovStartX = Math.round((c + 1) * sliceStepX);
+          // c. projektör ile (c+1). projektörün kesişim merkezi, duvarı s.cols eşit parçaya bölen simetrik noktadır
+          const seamCenterX = ((c + 1) / s.cols) * netW;
           const ovW = Math.max(0, ovPxX);
+          const ovStartX = Math.round(seamCenterX - ovW / 2);
           const ovPct = round((ovPxX / Math.max(1, projW)) * 100, 1);
           overlapZonesX.push({ index: c + 1, startX: ovStartX, width: ovW, pct: ovPct });
         }
@@ -632,8 +644,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const overlapZonesY: CalculatedSurface['overlapZonesY'] = [];
       if (s.rows > 1) {
         for (let r = 0; r < s.rows - 1; r++) {
-          const ovStartY = Math.round((r + 1) * sliceStepY);
+          const seamCenterY = ((r + 1) / s.rows) * netH;
           const ovH = Math.max(0, ovPxY);
+          const ovStartY = Math.round(seamCenterY - ovH / 2);
           const ovPct = round((ovPxY / Math.max(1, projH)) * 100, 1);
           overlapZonesY.push({ index: r + 1, startY: ovStartY, height: ovH, pct: ovPct });
         }
@@ -903,21 +916,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         g.rect(s.posX, s.posY, s.drawW, s.drawH);
         g.clip();
 
-        // Her bir projektörün kendi sınır çerçevesi
-        s.projSlices.forEach(sl => {
-          const rx = s.rotate90 ? s.posX + sl.startY : s.posX + sl.startX;
-          const ry = s.rotate90 ? s.posY + sl.startX : s.posY + sl.startY;
-          const rw = s.rotate90 ? s.projH : s.projW;
-          const rh = s.rotate90 ? s.projW : s.projH;
-
-          g.strokeStyle = 'rgba(250, 204, 21, 0.55)';
-          g.lineWidth = 3;
-          g.setLineDash([14, 9]);
-          g.strokeRect(rx, ry, rw, rh);
-          g.setLineDash([]);
-        });
-
-        // Yatay Overlap (Örtüşme) Bölgeleri Vurgusu
+        // Yatay Overlap (Örtüşme) Bölgeleri: Tam simetrik merkezde iki kesikli sarı çizgi ve sarı şerit dolgusu
         s.overlapZonesX.forEach(oz => {
           if (oz.width <= 0) return;
           const ox = s.rotate90 ? s.posX : s.posX + oz.startX;
@@ -927,6 +926,42 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
           g.fillStyle = 'rgba(250, 204, 21, 0.16)';
           g.fillRect(ox, oy, ow, oh);
+
+          g.strokeStyle = 'rgba(250, 204, 21, 0.7)';
+          g.lineWidth = 3;
+          g.setLineDash([14, 9]);
+          if (s.rotate90) {
+            g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox + ow, oy); g.stroke();
+            g.beginPath(); g.moveTo(ox, oy + oh); g.lineTo(ox + ow, oy + oh); g.stroke();
+          } else {
+            g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox, oy + oh); g.stroke();
+            g.beginPath(); g.moveTo(ox + ow, oy); g.lineTo(ox + ow, oy + oh); g.stroke();
+          }
+          g.setLineDash([]);
+        });
+
+        // Dikey Overlap (Örtüşme) Bölgeleri
+        s.overlapZonesY.forEach(oz => {
+          if (oz.height <= 0) return;
+          const ox = s.rotate90 ? s.posX + oz.startY : s.posX;
+          const oy = s.rotate90 ? s.posY : s.posY + oz.startY;
+          const ow = s.rotate90 ? oz.height : s.drawW;
+          const oh = s.rotate90 ? s.drawH : oz.height;
+
+          g.fillStyle = 'rgba(250, 204, 21, 0.16)';
+          g.fillRect(ox, oy, ow, oh);
+
+          g.strokeStyle = 'rgba(250, 204, 21, 0.7)';
+          g.lineWidth = 3;
+          g.setLineDash([14, 9]);
+          if (s.rotate90) {
+            g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox, oy + oh); g.stroke();
+            g.beginPath(); g.moveTo(ox + ow, oy); g.lineTo(ox + ow, oy + oh); g.stroke();
+          } else {
+            g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox + ow, oy); g.stroke();
+            g.beginPath(); g.moveTo(ox, oy + oh); g.lineTo(ox + ow, oy + oh); g.stroke();
+          }
+          g.setLineDash([]);
         });
         g.restore();
       }
@@ -2143,49 +2178,51 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               </g>
                             )}
 
-                            {/* Projektör Sınır Çizgileri ve Overlap (Örtüşme) Şeritleri (Overlap Oranına Göre Dinamik!) */}
+                            {/* Projektör Overlap (Örtüşme) Çizgileri ve Şeritleri: Duvara Göre Tam Simetrik Ortalanmış! */}
                             {showSlices && s.totalProjectors > 1 && (
                               <g>
-                                {/* 1. Her Projektörün Kendi Çerçevesi (Kesikli Sarı Çizgi) */}
-                                {s.projSlices.map(sl => {
-                                  const rx = s.rotate90 ? sx + sl.startY : sx + sl.startX;
-                                  const ry = s.rotate90 ? sy + sl.startX : sy + sl.startY;
-                                  const rw = s.rotate90 ? s.projH : s.projW;
-                                  const rh = s.rotate90 ? s.projW : s.projH;
-                                  return (
-                                    <rect
-                                      key={`slice-${sl.index}`}
-                                      x={rx}
-                                      y={ry}
-                                      width={rw}
-                                      height={rh}
-                                      fill="none"
-                                      stroke="rgba(250, 204, 21, 0.55)"
-                                      strokeWidth={Math.max(3, baseFont * 0.08)}
-                                      strokeDasharray={`${baseFont * 0.32} ${baseFont * 0.2}`}
-                                    />
-                                  );
-                                })}
-
-                                {/* 2. İki Projektör Arasındaki Overlap (Örtüşme) Bölgesi Dolgusu + Piksel/% Etiketi */}
+                                {/* 1. Yatay Overlap Bölgeleri (İki Kesikli Sarı Sınır Çizgisi + Sarı Şerit Dolgusu + Piksel/% Etiketi) */}
                                 {s.overlapZonesX.map(oz => {
-                                  if (oz.width <= 0) return null;
                                   const ox = s.rotate90 ? sx : sx + oz.startX;
                                   const oy = s.rotate90 ? sy + oz.startX : sy;
-                                  const ow = s.rotate90 ? s.drawW : oz.width;
-                                  const oh = s.rotate90 ? oz.width : s.drawH;
+                                  const ow = s.rotate90 ? s.drawW : Math.max(2, oz.width);
+                                  const oh = s.rotate90 ? Math.max(2, oz.width) : s.drawH;
                                   const labelX = ox + ow / 2;
                                   const labelY = s.rotate90 ? oy + oh / 2 : sy + surfFont * 0.65;
 
                                   return (
                                     <g key={`ovx-${oz.index}`}>
-                                      <rect
-                                        x={ox}
-                                        y={oy}
-                                        width={ow}
-                                        height={oh}
-                                        fill="rgba(250, 204, 21, 0.16)"
+                                      {oz.width > 0 && (
+                                        <rect
+                                          x={ox}
+                                          y={oy}
+                                          width={ow}
+                                          height={oh}
+                                          fill="rgba(250, 204, 21, 0.16)"
+                                        />
+                                      )}
+                                      {/* Sol / Üst Kesikli Overlap Sınırı */}
+                                      <line
+                                        x1={ox}
+                                        y1={oy}
+                                        x2={s.rotate90 ? ox + ow : ox}
+                                        y2={s.rotate90 ? oy : oy + oh}
+                                        stroke="rgba(250, 204, 21, 0.75)"
+                                        strokeWidth={Math.max(3, baseFont * 0.08)}
+                                        strokeDasharray={`${baseFont * 0.32} ${baseFont * 0.2}`}
                                       />
+                                      {/* Sağ / Alt Kesikli Overlap Sınırı */}
+                                      {oz.width > 0 && (
+                                        <line
+                                          x1={s.rotate90 ? ox : ox + ow}
+                                          y1={s.rotate90 ? oy + oh : oy}
+                                          x2={ox + ow}
+                                          y2={oy + oh}
+                                          stroke="rgba(250, 204, 21, 0.75)"
+                                          strokeWidth={Math.max(3, baseFont * 0.08)}
+                                          strokeDasharray={`${baseFont * 0.32} ${baseFont * 0.2}`}
+                                        />
+                                      )}
                                       <text
                                         x={labelX}
                                         y={labelY}
@@ -2202,21 +2239,44 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                                   );
                                 })}
 
+                                {/* 2. Dikey Overlap Bölgeleri */}
                                 {s.overlapZonesY.map(oz => {
-                                  if (oz.height <= 0) return null;
                                   const ox = s.rotate90 ? sx + oz.startY : sx;
                                   const oy = s.rotate90 ? sy : sy + oz.startY;
-                                  const ow = s.rotate90 ? oz.height : s.drawW;
-                                  const oh = s.rotate90 ? s.drawH : oz.height;
+                                  const ow = s.rotate90 ? Math.max(2, oz.height) : s.drawW;
+                                  const oh = s.rotate90 ? s.drawH : Math.max(2, oz.height);
                                   return (
-                                    <rect
-                                      key={`ovy-${oz.index}`}
-                                      x={ox}
-                                      y={oy}
-                                      width={ow}
-                                      height={oh}
-                                      fill="rgba(250, 204, 21, 0.16)"
-                                    />
+                                    <g key={`ovy-${oz.index}`}>
+                                      {oz.height > 0 && (
+                                        <rect
+                                          x={ox}
+                                          y={oy}
+                                          width={ow}
+                                          height={oh}
+                                          fill="rgba(250, 204, 21, 0.16)"
+                                        />
+                                      )}
+                                      <line
+                                        x1={ox}
+                                        y1={oy}
+                                        x2={s.rotate90 ? ox : ox + ow}
+                                        y2={s.rotate90 ? oy + oh : oy}
+                                        stroke="rgba(250, 204, 21, 0.75)"
+                                        strokeWidth={Math.max(3, baseFont * 0.08)}
+                                        strokeDasharray={`${baseFont * 0.32} ${baseFont * 0.2}`}
+                                      />
+                                      {oz.height > 0 && (
+                                        <line
+                                          x1={s.rotate90 ? ox + ow : ox}
+                                          y1={s.rotate90 ? oy : oy + oh}
+                                          x2={ox + ow}
+                                          y2={oy + oh}
+                                          stroke="rgba(250, 204, 21, 0.75)"
+                                          strokeWidth={Math.max(3, baseFont * 0.08)}
+                                          strokeDasharray={`${baseFont * 0.32} ${baseFont * 0.2}`}
+                                        />
+                                      )}
+                                    </g>
                                   );
                                 })}
                               </g>
