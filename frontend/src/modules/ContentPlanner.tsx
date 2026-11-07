@@ -129,6 +129,8 @@ export interface CalculatedSurface extends SurfaceItem {
   totalProjectors: number;
   geometryFormulaText: string;
   projSlices: { index: number; col: number; row: number; startX: number; endX: number; startY: number; endY: number }[];
+  overlapZonesX: { index: number; startX: number; width: number; pct: number }[];
+  overlapZonesY: { index: number; startY: number; height: number; pct: number }[];
 }
 
 const SURFACE_COLORS = [
@@ -600,20 +602,40 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const minViewingDistM = round(avgMmPerPx / 0.85, 2);
       const isQualityOkForViewer = avgMmPerPx <= idealMuseumMmPerPx * 1.15;
 
-      // Projektör Slice Koordinatları
-      const sliceStepX = overlapCountX > 0
-        ? (isClosedLoopX ? netW / s.cols : (netW - projW) / Math.max(1, s.cols - 1))
-        : 0;
-      const sliceStepY = overlapCountY > 0 ? (netH - projH) / Math.max(1, s.rows - 1) : 0;
+      // Projektör Slice ve Overlap (Örtüşme) Çizgi Koordinatları ( Kullanıcının girdiği ovPxX / ovPxY değerine göre!)
+      const sliceStepX = Math.max(20, projW - ovPxX);
+      const sliceStepY = Math.max(20, projH - ovPxY);
       const projSlices: CalculatedSurface['projSlices'] = [];
       let idx = 1;
       for (let r = 0; r < s.rows; r++) {
         for (let c = 0; c < s.cols; c++) {
           const startX = Math.round(c * sliceStepX);
-          const endX = Math.min(netW, startX + projW);
+          const endX = startX + projW;
           const startY = Math.round(r * sliceStepY);
-          const endY = Math.min(netH, startY + projH);
+          const endY = startY + projH;
           projSlices.push({ index: idx++, col: c, row: r, startX, endX, startY, endY });
+        }
+      }
+
+      // İki projektör arasındaki kesişim / overlap bölgeleri (Sarı kesikli şeritler)
+      const overlapZonesX: CalculatedSurface['overlapZonesX'] = [];
+      if (s.cols > 1) {
+        const countX = isClosedLoopX ? s.cols : s.cols - 1;
+        for (let c = 0; c < countX; c++) {
+          const ovStartX = Math.round((c + 1) * sliceStepX);
+          const ovW = Math.max(0, ovPxX);
+          const ovPct = round((ovPxX / Math.max(1, projW)) * 100, 1);
+          overlapZonesX.push({ index: c + 1, startX: ovStartX, width: ovW, pct: ovPct });
+        }
+      }
+
+      const overlapZonesY: CalculatedSurface['overlapZonesY'] = [];
+      if (s.rows > 1) {
+        for (let r = 0; r < s.rows - 1; r++) {
+          const ovStartY = Math.round((r + 1) * sliceStepY);
+          const ovH = Math.max(0, ovPxY);
+          const ovPct = round((ovPxY / Math.max(1, projH)) * 100, 1);
+          overlapZonesY.push({ index: r + 1, startY: ovStartY, height: ovH, pct: ovPct });
         }
       }
 
@@ -675,6 +697,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         totalProjectors: s.cols * s.rows,
         geometryFormulaText,
         projSlices,
+        overlapZonesX,
+        overlapZonesY,
       };
     });
 
@@ -873,14 +897,38 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         }
       }
 
-      if (showSlices && !s.rotate90 && s.totalProjectors > 1) {
+      if (showSlices && s.totalProjectors > 1) {
+        g.save();
+        g.beginPath();
+        g.rect(s.posX, s.posY, s.drawW, s.drawH);
+        g.clip();
+
+        // Her bir projektörün kendi sınır çerçevesi
         s.projSlices.forEach(sl => {
-          g.strokeStyle = 'rgba(250, 204, 21, 0.45)';
+          const rx = s.rotate90 ? s.posX + sl.startY : s.posX + sl.startX;
+          const ry = s.rotate90 ? s.posY + sl.startX : s.posY + sl.startY;
+          const rw = s.rotate90 ? s.projH : s.projW;
+          const rh = s.rotate90 ? s.projW : s.projH;
+
+          g.strokeStyle = 'rgba(250, 204, 21, 0.55)';
           g.lineWidth = 3;
-          g.setLineDash([12, 8]);
-          g.strokeRect(s.posX + sl.startX, s.posY + sl.startY, s.projW, s.projH);
+          g.setLineDash([14, 9]);
+          g.strokeRect(rx, ry, rw, rh);
           g.setLineDash([]);
         });
+
+        // Yatay Overlap (Örtüşme) Bölgeleri Vurgusu
+        s.overlapZonesX.forEach(oz => {
+          if (oz.width <= 0) return;
+          const ox = s.rotate90 ? s.posX : s.posX + oz.startX;
+          const oy = s.rotate90 ? s.posY + oz.startX : s.posY;
+          const ow = s.rotate90 ? s.drawW : oz.width;
+          const oh = s.rotate90 ? oz.width : s.drawH;
+
+          g.fillStyle = 'rgba(250, 204, 21, 0.16)';
+          g.fillRect(ox, oy, ow, oh);
+        });
+        g.restore();
       }
 
       g.strokeStyle = s.color;
@@ -2095,20 +2143,84 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               </g>
                             )}
 
-                            {showSlices && !s.rotate90 && s.totalProjectors > 1 && s.projSlices.map(sl => (
-                              <g key={sl.index}>
-                                <rect
-                                  x={sx + sl.startX}
-                                  y={sy + sl.startY}
-                                  width={s.projW}
-                                  height={s.projH}
-                                  fill="none"
-                                  stroke="rgba(250, 204, 21, 0.4)"
-                                  strokeWidth={Math.max(3, baseFont * 0.08)}
-                                  strokeDasharray={`${baseFont * 0.3} ${baseFont * 0.2}`}
-                                />
+                            {/* Projektör Sınır Çizgileri ve Overlap (Örtüşme) Şeritleri (Overlap Oranına Göre Dinamik!) */}
+                            {showSlices && s.totalProjectors > 1 && (
+                              <g>
+                                {/* 1. Her Projektörün Kendi Çerçevesi (Kesikli Sarı Çizgi) */}
+                                {s.projSlices.map(sl => {
+                                  const rx = s.rotate90 ? sx + sl.startY : sx + sl.startX;
+                                  const ry = s.rotate90 ? sy + sl.startX : sy + sl.startY;
+                                  const rw = s.rotate90 ? s.projH : s.projW;
+                                  const rh = s.rotate90 ? s.projW : s.projH;
+                                  return (
+                                    <rect
+                                      key={`slice-${sl.index}`}
+                                      x={rx}
+                                      y={ry}
+                                      width={rw}
+                                      height={rh}
+                                      fill="none"
+                                      stroke="rgba(250, 204, 21, 0.55)"
+                                      strokeWidth={Math.max(3, baseFont * 0.08)}
+                                      strokeDasharray={`${baseFont * 0.32} ${baseFont * 0.2}`}
+                                    />
+                                  );
+                                })}
+
+                                {/* 2. İki Projektör Arasındaki Overlap (Örtüşme) Bölgesi Dolgusu + Piksel/% Etiketi */}
+                                {s.overlapZonesX.map(oz => {
+                                  if (oz.width <= 0) return null;
+                                  const ox = s.rotate90 ? sx : sx + oz.startX;
+                                  const oy = s.rotate90 ? sy + oz.startX : sy;
+                                  const ow = s.rotate90 ? s.drawW : oz.width;
+                                  const oh = s.rotate90 ? oz.width : s.drawH;
+                                  const labelX = ox + ow / 2;
+                                  const labelY = s.rotate90 ? oy + oh / 2 : sy + surfFont * 0.65;
+
+                                  return (
+                                    <g key={`ovx-${oz.index}`}>
+                                      <rect
+                                        x={ox}
+                                        y={oy}
+                                        width={ow}
+                                        height={oh}
+                                        fill="rgba(250, 204, 21, 0.16)"
+                                      />
+                                      <text
+                                        x={labelX}
+                                        y={labelY}
+                                        fill="#fde047"
+                                        fontSize={Math.max(12, surfFont * 0.42)}
+                                        fontFamily="monospace"
+                                        fontWeight="bold"
+                                        textAnchor="middle"
+                                        transform={s.rotate90 ? `rotate(-90 ${labelX} ${labelY})` : undefined}
+                                      >
+                                        {`Ov: ${oz.width}px (%${oz.pct})`}
+                                      </text>
+                                    </g>
+                                  );
+                                })}
+
+                                {s.overlapZonesY.map(oz => {
+                                  if (oz.height <= 0) return null;
+                                  const ox = s.rotate90 ? sx + oz.startY : sx;
+                                  const oy = s.rotate90 ? sy : sy + oz.startY;
+                                  const ow = s.rotate90 ? oz.height : s.drawW;
+                                  const oh = s.rotate90 ? s.drawH : oz.height;
+                                  return (
+                                    <rect
+                                      key={`ovy-${oz.index}`}
+                                      x={ox}
+                                      y={oy}
+                                      width={ow}
+                                      height={oh}
+                                      fill="rgba(250, 204, 21, 0.16)"
+                                    />
+                                  );
+                                })}
                               </g>
-                            ))}
+                            )}
 
                             {/* Merkez Bilgi Yazıları */}
                             <g transform={isVerticalBox ? `rotate(-90 ${cx} ${cy})` : undefined}>
