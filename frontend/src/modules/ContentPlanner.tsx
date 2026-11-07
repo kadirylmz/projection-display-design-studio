@@ -526,18 +526,21 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const projW = s.orient === 'landscape' ? baseW : baseH;
       const projH = s.orient === 'landscape' ? baseH : baseW;
 
+      // Dikeyde tek sıra projektör varsa (rows === 1) iki projektör arasında overlap olmaz,
+      // bu nedenle projNetH doğrudan tek projektörün yüksekliğidir (1200 px).
+      // Sadece rows > 1 ise dikey overlap düşülür.
       const overlapCountX = isClosedLoopX ? (s.cols > 1 ? s.cols : 0) : Math.max(0, s.cols - 1);
       const overlapCountY = Math.max(0, s.rows - 1);
-
-      // 1 projektör olsa bile kullanıcının manuel girdiği overlap/kırpma (px) değerini her zaman hesapla
       const ovPxX = s.overlapMode === 'percent' ? pctToPx(s.overlapX, projW) : Math.round(s.overlapX);
       const ovPxY = s.overlapMode === 'percent' ? pctToPx(s.overlapY, projH) : Math.round(s.overlapY);
 
       const totalRawW = s.cols * projW;
       const totalRawH = s.rows * projH;
-      // N > 1 ise (N-1)*ovPxX, N = 1 ise (eğer kullanıcı 1 projektörde manuel overlap/pay girdiyse) 1*ovPxX uygulanır
+
+      // Yatayda 1 projektör varsa ve kullanıcı manuel kırpma/pay istediyse 1*ovPxX, aksi halde (N-1)*ovPxX
       const effectiveOvCountX = s.cols === 1 ? (s.overlapX > 0 ? 1 : 0) : overlapCountX;
-      const effectiveOvCountY = s.rows === 1 ? (s.overlapY > 0 ? 1 : 0) : overlapCountY;
+      // Dikeyde sadece sıra sayısı > 1 ise overlap uygulanır
+      const effectiveOvCountY = overlapCountY;
       const totalOvW = effectiveOvCountX * ovPxX;
       const totalOvH = effectiveOvCountY * ovPxY;
 
