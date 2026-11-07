@@ -1,7 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, lazy, Suspense } from 'react';
 import { pctToPx } from '../engine/multiproj';
 import { LengthUnit, round } from '../engine/units';
 import { download } from '../util';
+
+const PlannerRoom3D = lazy(() => import('./PlannerRoom3D'));
 
 interface PresetRes { label: string; w: number; h: number }
 const RESOLUTIONS: PresetRes[] = [
@@ -265,6 +267,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
 
   // ==========================================
   // HAZIR ODA & ÖZEL GEOMETRİ ŞABLONLARI
@@ -1737,41 +1740,71 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
         {/* SAĞ PANEL: BİRLEŞİK PIXEL MAP ÇİZİMİ VE KARŞILAŞTIRMALI ORAN/YOĞUNLUK TABLOSU */}
         <div className="space-y-3 min-w-0 flex flex-col overflow-auto">
-          {/* ÇİZİM KONTROL ÇUBUĞU */}
+          {/* ÇİZİM KONTROL ÇUBUĞU (2B PIXEL MAP vs 3B ODA SİMÜLASYONU GEÇİŞİ) */}
           <div className="p-2.5 rounded bg-slate-900 border border-slate-800 flex flex-wrap justify-between items-center gap-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 font-semibold">Çizim Yerleşimi:</span>
-              <button
-                onClick={() => setLayoutMode('cross')}
-                className={`px-2.5 py-1 rounded font-semibold ${layoutMode === 'cross' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                Kutu Açılımı (Cross Unwrap)
-              </button>
-              <button
-                onClick={() => setLayoutMode('strip')}
-                className={`px-2.5 py-1 rounded font-semibold ${layoutMode === 'strip' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                Yan Yana Şerit (Panorama / Silindir)
-              </button>
-              <button
-                onClick={() => setLayoutMode('stacked')}
-                className={`px-2.5 py-1 rounded font-semibold ${layoutMode === 'stacked' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                Alt Alta Dizilim
-              </button>
-              <button
-                onClick={() => setLayoutMode('custom')}
-                className={`px-2.5 py-1 rounded font-semibold ${layoutMode === 'custom' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
-              >
-                Özel Koordinat (X,Y)
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* 2B / 3B Görünüm Seçici */}
+              <div className="flex rounded overflow-hidden border border-amber-600/80 bg-slate-950 p-0.5">
+                <button
+                  onClick={() => setViewMode('2d')}
+                  className={`px-2.5 py-1 rounded font-bold transition ${
+                    viewMode === '2d'
+                      ? 'bg-sky-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  📐 2B Pixel Map Açılım Şeması
+                </button>
+                <button
+                  onClick={() => setViewMode('3d')}
+                  className={`px-2.5 py-1 rounded font-bold transition ${
+                    viewMode === '3d'
+                      ? 'bg-amber-600 text-white shadow'
+                      : 'text-amber-300 hover:text-white'
+                  }`}
+                >
+                  🎥 3B Oda & Projeksiyon Simülasyonu
+                </button>
+              </div>
+
+              {viewMode === '2d' && (
+                <div className="flex items-center gap-1">
+                  <span className="text-slate-400 font-semibold ml-1">Yerleşim:</span>
+                  <button
+                    onClick={() => setLayoutMode('cross')}
+                    className={`px-2 py-1 rounded font-semibold ${layoutMode === 'cross' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    Kutu Açılımı
+                  </button>
+                  <button
+                    onClick={() => setLayoutMode('strip')}
+                    className={`px-2 py-1 rounded font-semibold ${layoutMode === 'strip' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    Yan Yana Şerit
+                  </button>
+                  <button
+                    onClick={() => setLayoutMode('stacked')}
+                    className={`px-2 py-1 rounded font-semibold ${layoutMode === 'stacked' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    Alt Alta
+                  </button>
+                  <button
+                    onClick={() => setLayoutMode('custom')}
+                    className={`px-2 py-1 rounded font-semibold ${layoutMode === 'custom' ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    Özel (X,Y)
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1 cursor-pointer text-slate-300 text-[11px]">
-                <input type="checkbox" checked={showSlices} onChange={e => setShowSlices(e.target.checked)} />
-                <span>Projektör Sınırları</span>
-              </label>
+              {viewMode === '2d' && (
+                <label className="flex items-center gap-1 cursor-pointer text-slate-300 text-[11px]">
+                  <input type="checkbox" checked={showSlices} onChange={e => setShowSlices(e.target.checked)} />
+                  <span>Projektör Sınırları</span>
+                </label>
+              )}
               <button
                 onClick={downloadPixelMapPng}
                 className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded shadow"
@@ -1787,54 +1820,60 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
-          {/* CANLI İNTERAKTİF PIXEL MAP VEKTÖR ÇİZİM ALANI */}
+          {/* CANLI İNTERAKTİF 2B PIXEL MAP ÇİZİMİ VEYA 3B ODA PROJEKSİYON SİMÜLASYONU */}
           <div
-            className={`border border-slate-700 rounded bg-slate-950 p-3 flex flex-col items-center justify-center ${
+            className={`border border-slate-700 rounded bg-slate-950 p-3 flex flex-col ${
               isExpandedView
                 ? 'fixed inset-3 z-50 shadow-2xl border-sky-500'
-                : 'flex-1 min-h-[540px] relative'
+                : 'flex-1 min-h-[560px] relative'
             }`}
           >
             <div className="w-full flex flex-wrap justify-between items-center gap-2 text-[11px] text-slate-300 mb-2 border-b border-slate-800 pb-2">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-sky-400">
-                  Canlı Pixel Map, Açınım & Piksel Yoğunluğu Şeması
+                  {viewMode === '2d'
+                    ? 'Canlı Pixel Map, Açınım & Piksel Yoğunluğu Şeması'
+                    : 'Canlı 3B Oda, Projektör Yerleşimi & Optik Atım (Frustum) Simülasyonu'}
                 </span>
                 <span className="font-mono text-slate-400">
-                  ({calculation.totalCanvasW} × {calculation.totalCanvasH} px · {calculation.megapixels} MP)
+                  ({calculation.totalCanvasW} × {calculation.totalCanvasH} px · {calculation.megapixels} MP · {calculation.totalProjectors} Projektör)
                 </span>
               </div>
 
               <div className="flex items-center gap-1.5 bg-slate-900 px-2 py-1 rounded border border-slate-700">
-                <span className="text-slate-400 text-[10px]">Görünüm Boyutu:</span>
-                <button
-                  onClick={() => setZoomPct(z => Math.max(40, z - 20))}
-                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold"
-                >
-                  −
-                </button>
-                <input
-                  type="range"
-                  min="40"
-                  max="300"
-                  step="10"
-                  value={zoomPct}
-                  onChange={e => setZoomPct(+e.target.value)}
-                  className="w-24 accent-sky-500 cursor-pointer"
-                />
-                <button
-                  onClick={() => setZoomPct(z => Math.min(300, z + 20))}
-                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold"
-                >
-                  +
-                </button>
-                <span className="font-mono text-sky-300 font-bold w-10 text-center">%{zoomPct}</span>
-                <button
-                  onClick={() => setZoomPct(100)}
-                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
-                >
-                  Sıfırla
-                </button>
+                {viewMode === '2d' && (
+                  <>
+                    <span className="text-slate-400 text-[10px]">Yakınlaştır (Zoom):</span>
+                    <button
+                      onClick={() => setZoomPct(z => Math.max(40, z - 20))}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="range"
+                      min="40"
+                      max="300"
+                      step="10"
+                      value={zoomPct}
+                      onChange={e => setZoomPct(+e.target.value)}
+                      className="w-24 accent-sky-500 cursor-pointer"
+                    />
+                    <button
+                      onClick={() => setZoomPct(z => Math.min(300, z + 20))}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold"
+                    >
+                      +
+                    </button>
+                    <span className="font-mono text-sky-300 font-bold w-11 text-center">%{zoomPct}</span>
+                    <button
+                      onClick={() => setZoomPct(100)}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+                    >
+                      Sığdır (%100)
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => setIsExpandedView(v => !v)}
                   className={`px-2.5 py-0.5 rounded font-bold text-[10px] ${
@@ -1843,40 +1882,55 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                       : 'bg-sky-700 hover:bg-sky-600 text-white'
                   }`}
                 >
-                  {isExpandedView ? '✕ Tam Ekrandan Çık' : '⛶ Çizimi Tam Ekran Yap'}
+                  {isExpandedView ? '✕ Tam Ekrandan Çık' : '⛶ Tam Ekran Yap'}
                 </button>
               </div>
             </div>
 
-            <div
-              className="w-full flex-1 flex items-center justify-center overflow-auto p-2 bg-slate-950/90 rounded"
-              style={{ maxHeight: isExpandedView ? 'calc(100vh - 95px)' : '620px' }}
-              onWheel={e => {
-                if (e.ctrlKey || e.metaKey) {
-                  e.preventDefault();
-                  setZoomPct(z => Math.min(300, Math.max(40, z + (e.deltaY < 0 ? 15 : -15))));
-                }
-              }}
-            >
-              {(() => {
-                const padLeft = 110;
-                const padTop = 90;
-                const padRight = 110;
-                const padBottom = 90;
-                const vbW = calculation.totalCanvasW + padLeft + padRight;
-                const vbH = calculation.totalCanvasH + padTop + padBottom;
-                const baseFont = Math.max(32, Math.round(Math.max(calculation.totalCanvasW, calculation.totalCanvasH) / 44));
+            {viewMode === '3d' ? (
+              <div className="w-full flex-1 flex flex-col" style={{ minHeight: isExpandedView ? 'calc(100vh - 95px)' : '500px' }}>
+                <Suspense fallback={<div className="p-8 text-center text-slate-400">3B Oda ve Projeksiyon Simülasyonu Yükleniyor...</div>}>
+                  <PlannerRoom3D
+                    surfaces={calculation.surfaces}
+                    selectedId={selectedId}
+                    onSelect={id => setSelectedId(id)}
+                  />
+                </Suspense>
+              </div>
+            ) : (
+              /* ÖNEMLİ DÜZELTME: Zoom yapıldığında üst ve sol kısımların kesilmemesi için items-center justify-center yerine m-auto kullanıldı */
+              <div
+                className="w-full flex-1 flex overflow-auto p-3 bg-slate-950/90 rounded border border-slate-900"
+                style={{ maxHeight: isExpandedView ? 'calc(100vh - 95px)' : '620px' }}
+                onWheel={e => {
+                  if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    setZoomPct(z => Math.min(300, Math.max(40, z + (e.deltaY < 0 ? 15 : -15))));
+                  }
+                }}
+              >
+                {(() => {
+                  const padLeft = 110;
+                  const padTop = 90;
+                  const padRight = 110;
+                  const padBottom = 90;
+                  const vbW = calculation.totalCanvasW + padLeft + padRight;
+                  const vbH = calculation.totalCanvasH + padTop + padBottom;
+                  const baseFont = Math.max(32, Math.round(Math.max(calculation.totalCanvasW, calculation.totalCanvasH) / 44));
+                  const aspect = vbW / Math.max(1, vbH);
+                  const baseHeightPx = isExpandedView ? 760 : 500;
+                  const baseWidthPx = Math.min(isExpandedView ? 1500 : 940, Math.round(baseHeightPx * aspect));
+                  const scaledWidthPx = Math.round((baseWidthPx * zoomPct) / 100);
+                  const scaledHeightPx = Math.round((scaledWidthPx / aspect));
 
-                return (
-                  <svg
-                    viewBox={`0 0 ${vbW} ${vbH}`}
-                    style={{
-                      width: `${zoomPct}%`,
-                      height: 'auto',
-                      maxHeight: zoomPct === 100 ? (isExpandedView ? '84vh' : '560px') : 'none',
-                    }}
-                    className="select-none drop-shadow transition-all duration-100"
-                  >
+                  return (
+                    <div className="m-auto shrink-0" style={{ width: `${scaledWidthPx}px`, height: `${scaledHeightPx}px` }}>
+                      <svg
+                        viewBox={`0 0 ${vbW} ${vbH}`}
+                        width={scaledWidthPx}
+                        height={scaledHeightPx}
+                        className="select-none drop-shadow block"
+                      >
                     <defs>
                       {calculation.surfaces.map(s => (
                         <clipPath key={`clip-${s.id}`} id={`clip-${s.id}`}>
@@ -2098,10 +2152,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         </g>
                       );
                     })}
-                  </svg>
-                );
-              })()}
-            </div>
+                      </svg>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* ALT TABLO: YÜZEY GEOMETRİSİ, UZAKLIK, PİKSEL YOĞUNLUĞU VE PIXEL MAP TABLOSU */}
