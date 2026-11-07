@@ -1,7 +1,8 @@
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Text, Line } from '@react-three/drei';
 import * as THREE from 'three';
+import { download } from '../util';
 import type { CalculatedSurface } from './ContentPlanner';
 
 interface PlannerRoom3DProps {
@@ -167,6 +168,12 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
   const [showLabels, setShowLabels] = useState(true);
   const [showHuman, setShowHuman] = useState(true);
   const [viewFilter, setViewFilter] = useState<'all' | 'selected'>('all');
+  const [includeHudOnExport, setIncludeHudOnExport] = useState(true);
+
+  const glRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<any>(null);
 
   const activeSurf = surfaces.find(s => s.id === selectedId) || surfaces[0];
 
@@ -197,12 +204,114 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
     };
   }, [surfaces]);
 
+  // Hazır Kamera Bakış Açılarına Geçiş
+  const setCameraPreset = (preset: 'iso' | 'top' | 'front' | 'left' | 'right' | 'inside') => {
+    const cam = cameraRef.current;
+    const ctrl = controlsRef.current;
+    if (!cam || !ctrl) return;
+
+    const maxDim = Math.max(sceneData.roomLengthZ, sceneData.roomWidthX, 12);
+    if (preset === 'iso') {
+      cam.position.set(maxDim * 0.85, maxDim * 0.65, maxDim * 0.95);
+      ctrl.target.set(0, sceneData.roomHeightY * 0.4, 0);
+    } else if (preset === 'top') {
+      cam.position.set(0, maxDim * 1.45, 0.01);
+      ctrl.target.set(0, 0, 0);
+    } else if (preset === 'front') {
+      cam.position.set(0, sceneData.roomHeightY * 0.8, maxDim * 1.15);
+      ctrl.target.set(0, sceneData.roomHeightY * 0.5, 0);
+    } else if (preset === 'left') {
+      cam.position.set(-maxDim * 1.15, sceneData.roomHeightY * 0.8, 0);
+      ctrl.target.set(0, sceneData.roomHeightY * 0.5, 0);
+    } else if (preset === 'right') {
+      cam.position.set(maxDim * 1.15, sceneData.roomHeightY * 0.8, 0);
+      ctrl.target.set(0, sceneData.roomHeightY * 0.5, 0);
+    } else if (preset === 'inside') {
+      cam.position.set(0, 1.7, sceneData.roomLengthZ * 0.25);
+      ctrl.target.set(0, 2.0, -sceneData.roomLengthZ * 0.4);
+    }
+    cam.updateProjectionMatrix();
+    ctrl.update();
+  };
+
+  // Mevcut 3B Bakış Açısını Yüksek Çözünürlüklü PNG Olarak İndir
+  const exportCurrent3DViewPng = () => {
+    const gl = glRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!gl || !scene || !camera) return;
+
+    // Güncel kareyi zorla render et
+    gl.render(scene, camera);
+    const srcCanvas = gl.domElement;
+
+    const outCanvas = document.createElement('canvas');
+    const bannerH = includeHudOnExport ? 110 : 0;
+    outCanvas.width = srcCanvas.width;
+    outCanvas.height = srcCanvas.height + bannerH;
+
+    const ctx = outCanvas.getContext('2d')!;
+    ctx.fillStyle = '#070b14';
+    ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+
+    // 3B WebGL görüntüsünü çiz
+    ctx.drawImage(srcCanvas, 0, 0);
+
+    // Alt Teknik Bilgi Anteti (HUD)
+    if (includeHudOnExport && activeSurf) {
+      const y0 = srcCanvas.height;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, y0, outCanvas.width, bannerH);
+
+      ctx.strokeStyle = '#0ea5e9';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, y0);
+      ctx.lineTo(outCanvas.width, y0);
+      ctx.stroke();
+
+      const fsTitle = Math.max(15, Math.round(outCanvas.width / 72));
+      const fsSub = Math.max(12, Math.round(outCanvas.width / 92));
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = `bold ${fsTitle}px sans-serif`;
+      ctx.fillText(
+        `3B ODA & PROJEKSİYON ATIM SİMÜLASYONU — ${activeSurf.name.toUpperCase()} (${activeSurf.effectiveWidthM}m × ${activeSurf.effectiveHeightM}m)`,
+        24,
+        y0 + 32
+      );
+
+      ctx.fillStyle = '#4ade80';
+      ctx.font = `bold ${fsSub}px monospace`;
+      ctx.fillText(
+        `İçerik Pixel Map: ${activeSurf.netW} × ${activeSurf.netH} px (Oran ${activeSurf.aspectContent}:1)  |  Duvar Piksel Boyutu: ${activeSurf.avgMmPerPx} mm/px (${activeSurf.pxPerMeterW} px/m · ${activeSurf.ppi} PPI)`,
+        24,
+        y0 + 62
+      );
+
+      ctx.fillStyle = '#facc15';
+      ctx.font = `${fsSub}px monospace`;
+      ctx.fillText(
+        `PJ Uzaklık: D = ${activeSurf.throwDistM}m  |  Lens TR = ${activeSurf.throwRatio}:1  |  1 PJ Açılımı: ${activeSurf.singleProjWidthM}m × ${activeSurf.singleProjHeightM}m (${activeSurf.distMmPerPx} mm/px)  |  Dizilim: ${activeSurf.cols}×${activeSurf.rows} PJ  |  İzleyici: ${activeSurf.viewDistM}m (İdeal ≤${activeSurf.idealMuseumMmPerPx}mm)`,
+        24,
+        y0 + 90
+      );
+    }
+
+    outCanvas.toBlob(blob => {
+      if (blob) {
+        const safeName = (activeSurf?.name || 'oda').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        download(`3d-simulasyon-${safeName}-${Date.now().toString().slice(-4)}.png`, blob);
+      }
+    }, 'image/png');
+  };
+
   return (
     <div className="flex flex-col h-full w-full space-y-2">
-      {/* ÜST 3B SİMÜLASYON KONTROL VE ÖZET BARI */}
+      {/* ÜST 3B SİMÜLASYON KONTROL, KAMERA AÇILARI VE PNG ÇIKIŞ BARI */}
       <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-900/90 p-2 rounded border border-slate-800 text-[11px]">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-bold text-amber-400">🎥 3B Oda & Projeksiyon Atım Simülasyonu:</span>
+          <span className="font-bold text-amber-400">🎥 3B Projeksiyon Simülasyonu:</span>
           <div className="flex rounded overflow-hidden border border-slate-700 bg-slate-950 p-0.5">
             <button
               onClick={() => setViewFilter('all')}
@@ -221,21 +330,54 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
               Sadece Seçili Yüzey ({activeSurf?.name})
             </button>
           </div>
+
+          {/* Hazır Kamera Bakış Açıları */}
+          <div className="flex items-center gap-1 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+            <span className="text-slate-400 text-[10px]">Bakış Açısı:</span>
+            <button onClick={() => setCameraPreset('iso')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px]">
+              Perspektif
+            </button>
+            <button onClick={() => setCameraPreset('top')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px]">
+              Üstten (Plan)
+            </button>
+            <button onClick={() => setCameraPreset('front')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px]">
+              Ön
+            </button>
+            <button onClick={() => setCameraPreset('left')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px]">
+              Sol
+            </button>
+            <button onClick={() => setCameraPreset('right')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px]">
+              Sağ
+            </button>
+            <button onClick={() => setCameraPreset('inside')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[10px]">
+              İzleyici Gözü
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showBeams} onChange={e => setShowBeams(e.target.checked)} />
-            <span>Işık Konileri (Frustum)</span>
+            <span>Işık Konileri</span>
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} />
-            <span>Mesafe & Açılım Ölçüleri (m)</span>
+            <span>Ölçü Etiketleri</span>
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showHuman} onChange={e => setShowHuman(e.target.checked)} />
-            <span>İzleyici Konumu ({activeSurf?.viewDistM}m)</span>
+            <span>İzleyici ({activeSurf?.viewDistM}m)</span>
           </label>
+          <label className="flex items-center gap-1 cursor-pointer text-sky-300" title="İndirilen 3B PNG altına teknik özet barı ekler">
+            <input type="checkbox" checked={includeHudOnExport} onChange={e => setIncludeHudOnExport(e.target.checked)} />
+            <span>PNG Teknik Antet</span>
+          </label>
+          <button
+            onClick={exportCurrent3DViewPng}
+            className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow flex items-center gap-1"
+          >
+            <span>📸 Bu 3B Bakış Açısını PNG İndir</span>
+          </button>
         </div>
       </div>
 
@@ -263,13 +405,22 @@ export default function PlannerRoom3D({ surfaces, selectedId, onSelect }: Planne
         </div>
       )}
 
-      {/* 3B WEBGL SAHNESİ */}
+      {/* 3B WEBGL SAHNESİ (preserveDrawingBuffer: true ile anlık PNG yakalama aktif) */}
       <div className="flex-1 min-h-[480px] w-full rounded border border-slate-800 bg-slate-950 relative overflow-hidden">
-        <Canvas camera={{ position: [0, 14, 22], fov: 48, near: 0.1, far: 500 }}>
+        <Canvas
+          camera={{ position: [18, 14, 22], fov: 48, near: 0.1, far: 500 }}
+          gl={{ preserveDrawingBuffer: true, antialias: true }}
+          dpr={[1, 2]}
+          onCreated={({ gl, scene, camera }) => {
+            glRef.current = gl;
+            sceneRef.current = scene;
+            cameraRef.current = camera as THREE.PerspectiveCamera;
+          }}
+        >
           <color attach="background" args={['#070b14']} />
           <ambientLight intensity={0.75} />
           <directionalLight position={[12, 20, 10]} intensity={0.9} />
-          <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
+          <OrbitControls ref={controlsRef} makeDefault enableDamping dampingFactor={0.08} />
 
           <Grid
             args={[60, 60]}
