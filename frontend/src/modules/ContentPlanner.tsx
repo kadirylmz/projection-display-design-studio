@@ -43,6 +43,10 @@ export interface SurfaceItem {
   overlapMode: 'percent' | 'pixel';
   overlapX: number;     // Yatay overlap (% veya px)
   overlapY: number;     // Dikey overlap (% veya px)
+  // UZAKLIK VE LENS PARAMETRELERİ (Piksel Yoğunluğu için Kritik!)
+  throwDistM: number;   // Projektörün duvara/yüzeye atım uzaklığı (m)
+  throwRatio: number;   // Projektör Lens Atım Oranı (Throw Ratio, örn: 0.80 : 1)
+  viewDistM: number;    // İzleyicinin yüzeye bakış uzaklığı (m) -> İdeal mm/px'i belirler!
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -65,7 +69,7 @@ export interface CalculatedSurface extends SurfaceItem {
   aspectProjector: number;   // Toplam Projeksiyon Oranı (projNetW / projNetH)
   aspectContent: number;     // Aktif İçerik Oranı (netW / netH)
 
-  // 1) Orana Göre İçerik Çözünürlüğü (Seçilen Projektörün Dikey Çözünürlüğünden Oranlı)
+  // 1) Orana Göre İçerik Çözünürlüğü
   aspectW: number;
   aspectH: number;
 
@@ -93,7 +97,7 @@ export interface CalculatedSurface extends SurfaceItem {
   posX: number;
   posY: number;
 
-  // DETAYLI PİKSEL YOĞUNLUĞU VE BOYUTU HESAPLARI (İçerik & Optik Donanım)
+  // A) YÜZEYDEKİ MEVCUT PİKSEL YOĞUNLUĞU (Yüzeye Tam Oturduğunda)
   mmPerPxW: number;          // Yatay 1 piksel kaç mm: (effectiveWidthM * 1000) / netW
   mmPerPxH: number;          // Dikey 1 piksel kaç mm: (effectiveHeightM * 1000) / netH
   avgMmPerPx: number;        // Ortalama piksel boyutu (mm/px)
@@ -103,11 +107,22 @@ export interface CalculatedSurface extends SurfaceItem {
   ppi: number;               // İnç başına piksel yoğunluğu (PPI = 25.4 / avgMmPerPx)
   pxPerM2: number;           // 1 m² alana düşen toplam piksel yoğunluğu (px/m²)
 
-  // Projektörün Kendi Optik Piksel Boyutu (Projektör sayısı değişince anında değişir)
-  optMmPerPxW: number;       // (effectiveWidthM * 1000) / projNetW
-  optMmPerPxH: number;       // (effectiveHeightM * 1000) / projNetH
-  optPpi: number;            // Optik PPI
-  optPxPerMeterW: number;    // Optik px/m
+  // B) PROJEKTÖR UZAKLIĞI (throwDistM) VE LENS (throwRatio) BAZLI GERÇEK OPTİK HESAP
+  singleProjWidthM: number;  // Tek projektörün bu uzaklıktan açtığı görüntü genişliği: D / TR (m)
+  singleProjHeightM: number; // Tek projektörün bu uzaklıktan açtığı görüntü yüksekliği (m)
+  totalOpticalWidthM: number;// N projektörün overlap sonrası bu uzaklıktan kapladığı toplam en (m)
+  distMmPerPx: number;       // Uzaklığa göre 1 pikselin gerçek optik boyutu: (singleProjWidthM * 1000) / projW
+  distPpi: number;           // Uzaklığa göre gerçek optik PPI
+  distPxPerMeter: number;    // Uzaklığa göre gerçek optik px/m
+  requiredThrowDistM: number;// Duvar yüksekliğini tam doldurmak için gereken ideal projektör uzaklığı (m)
+  recommendedColsForDist: number; // Girilen uzaklıktan bu duvar genişliğini doldurmak için gereken projektör adedi
+
+  // C) İZLEYİCİ BAKIŞ UZAKLIĞINA (viewDistM) GÖRE İDEAL PİKSEL BOYUTU (İnsan Gözü Acuity)
+  idealRetinaMmPerPx: number;// 1 arcmin kusursuz keskinlik sınırı (mm/px)
+  idealMuseumMmPerPx: number;// İzleme mesafesine göre ideal müze/immersive piksel boyutu (mm/px)
+  idealMuseumPpi: number;    // İzleme mesafesine göre ideal PPI
+  minViewingDistM: number;   // Mevcut piksel boyutunda piksellerin seçilmeyeceği minimum bakış mesafesi (m)
+  isQualityOkForViewer: boolean; // Mevcut piksel boyutu izleyici mesafesi için uygun mu?
 
   totalProjectors: number;
   geometryFormulaText: string;
@@ -152,6 +167,9 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     overlapMode: 'percent',
     overlapX: 20.4,
     overlapY: 10,
+    throwDistM: 5.50,
+    throwRatio: 0.80,
+    viewDistM: 3.50,
     color: SURFACE_COLORS[0],
     canvasX: 0,
     canvasY: 0,
@@ -175,6 +193,9 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     overlapMode: 'percent',
     overlapX: 15,
     overlapY: 10,
+    throwDistM: 5.50,
+    throwRatio: 0.80,
+    viewDistM: 3.50,
     color: SURFACE_COLORS[1],
     canvasX: 0,
     canvasY: 0,
@@ -198,6 +219,9 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     overlapMode: 'percent',
     overlapX: 20.4,
     overlapY: 10,
+    throwDistM: 5.50,
+    throwRatio: 0.80,
+    viewDistM: 3.50,
     color: SURFACE_COLORS[2],
     canvasX: 0,
     canvasY: 0,
@@ -221,6 +245,9 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     overlapMode: 'percent',
     overlapX: 20.4,
     overlapY: 18.6,
+    throwDistM: 4.30,
+    throwRatio: 0.65,
+    viewDistM: 1.80,
     color: SURFACE_COLORS[3],
     canvasX: 0,
     canvasY: 0,
@@ -254,7 +281,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           id: 'surf-5', name: '4. Duvar (Arka Kısa)', type: 'wall', geometry: 'flat',
           widthM: 7.00, heightM: 4.30, radiusM: 5, angleDeg: 90,
           resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 1,
-          overlapMode: 'percent', overlapX: 15, overlapY: 10, color: SURFACE_COLORS[4], canvasX: 0, canvasY: 0, rotate90: false,
+          overlapMode: 'percent', overlapX: 15, overlapY: 10,
+          throwDistM: 5.50, throwRatio: 0.80, viewDistM: 3.50,
+          color: SURFACE_COLORS[4], canvasX: 0, canvasY: 0, rotate90: false,
         },
         INITIAL_SURFACES[3],
       ];
@@ -267,7 +296,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           id: 'surf-1', name: 'İçbükey Kavisli Sahne (135°)', type: 'wall', geometry: 'concave_arc',
           widthM: 18.85, heightM: 4.00, radiusM: 8.0, angleDeg: 135,
           resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 4, rows: 1,
-          overlapMode: 'percent', overlapX: 15, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
+          overlapMode: 'percent', overlapX: 15, overlapY: 10,
+          throwDistM: 6.40, throwRatio: 1.00, viewDistM: 4.00,
+          color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
         },
       ];
       setSurfaces(s);
@@ -279,13 +310,17 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           id: 'surf-1', name: '360° Silindir Duvar (Çap 10m)', type: 'wall', geometry: 'cylinder_360',
           widthM: 31.42, heightM: 4.00, radiusM: 5.0, angleDeg: 360,
           resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 6, rows: 1,
-          overlapMode: 'percent', overlapX: 18, overlapY: 10, color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
+          overlapMode: 'percent', overlapX: 18, overlapY: 10,
+          throwDistM: 5.00, throwRatio: 0.80, viewDistM: 3.50,
+          color: SURFACE_COLORS[0], canvasX: 0, canvasY: 0, rotate90: false,
         },
         {
           id: 'surf-2', name: 'Yuvarlak Zemin (Çap 10m)', type: 'floor', geometry: 'circle_floor',
           widthM: 10.0, heightM: 10.0, radiusM: 5.0, angleDeg: 360,
           resIdx: 0, customW: 1920, customH: 1200, orient: 'landscape', cols: 2, rows: 3,
-          overlapMode: 'percent', overlapX: 15, overlapY: 15, color: SURFACE_COLORS[3], canvasX: 0, canvasY: 0, rotate90: false,
+          overlapMode: 'percent', overlapX: 15, overlapY: 15,
+          throwDistM: 4.00, throwRatio: 0.65, viewDistM: 1.80,
+          color: SURFACE_COLORS[3], canvasX: 0, canvasY: 0, rotate90: false,
           syncFloorWithWalls: true,
         },
       ];
@@ -298,7 +333,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           id: 'surf-1', name: 'Kubbe / Planetarium (Çap 12m)', type: 'ceiling', geometry: 'dome',
           widthM: 18.85, heightM: 18.85, radiusM: 6.0, angleDeg: 180,
           resIdx: 2, customW: 3840, customH: 2160, orient: 'landscape', cols: 2, rows: 2,
-          overlapMode: 'percent', overlapX: 15, overlapY: 15, color: SURFACE_COLORS[5], canvasX: 0, canvasY: 0, rotate90: false,
+          overlapMode: 'percent', overlapX: 15, overlapY: 15,
+          throwDistM: 6.00, throwRatio: 0.60, viewDistM: 6.00,
+          color: SURFACE_COLORS[5], canvasX: 0, canvasY: 0, rotate90: false,
         },
       ];
       setSurfaces(s);
@@ -310,7 +347,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           id: 'surf-1', name: 'Tam Küre 360°×180° (Çap 8m)', type: 'wall', geometry: 'sphere',
           widthM: 25.13, heightM: 12.57, radiusM: 4.0, angleDeg: 360,
           resIdx: 2, customW: 3840, customH: 2160, orient: 'landscape', cols: 4, rows: 2,
-          overlapMode: 'percent', overlapX: 15, overlapY: 15, color: SURFACE_COLORS[4], canvasX: 0, canvasY: 0, rotate90: false,
+          overlapMode: 'percent', overlapX: 15, overlapY: 15,
+          throwDistM: 4.00, throwRatio: 0.60, viewDistM: 4.00,
+          color: SURFACE_COLORS[4], canvasX: 0, canvasY: 0, rotate90: false,
         },
       ];
       setSurfaces(s);
@@ -351,6 +390,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       overlapMode: 'percent',
       overlapX: 15,
       overlapY: 15,
+      throwDistM: type === 'floor' ? 4.30 : 5.00,
+      throwRatio: type === 'floor' ? 0.65 : 0.80,
+      viewDistM: type === 'floor' ? 1.80 : 3.50,
       color: SURFACE_COLORS[surfaces.length % SURFACE_COLORS.length],
       canvasX: 0,
       canvasY: 0,
@@ -385,11 +427,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   };
 
   // ==========================================
-  // DİNAMİK GEOMETRİK AÇINIM, PİKSEL YOĞUNLUĞU VE PIXEL MAP MOTORU
+  // DİNAMİK GEOMETRİK AÇINIM, UZAKLIK BAZLI OPTİK PİKSEL YOĞUNLUĞU VE PIXEL MAP MOTORU
   // ==========================================
   const calculation = useMemo(() => {
-    // Önce 1. duvarın (ana referans duvarın) kendi seçili projektöründen çıkan dikey piksel/metre yoğunluğunu bulalım
-    // Böylece zemin "Duvarlarla Eşitle" modundaysa duvarla birebir aynı piksel yoğunluğunu (mm/px) kullanır!
     const firstWall = surfaces.find(s => s.type === 'wall') || surfaces[0];
     const fwPreset = RESOLUTIONS[firstWall.resIdx];
     const fwBaseW = firstWall.resIdx === RESOLUTIONS.length - 1 ? firstWall.customW : fwPreset.w;
@@ -483,8 +523,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const projNetW = Math.max(100, totalRawW - totalOvW);
       const projNetH = Math.max(100, totalRawH - totalOvH);
 
-      // 3. ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ (Her yüzey kendi projektörünün dikey çözünürlüğünden veya zemin-duvar eşitlemesinden hesaplanır!)
-      // Böylece projektör modelini (1920x1200 -> 1920x1080 veya 4K) değiştirdiğin anda hem çözünürlük hem mm/px anında değişir!
+      // 3. ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ
       const surfacePxPerMeter =
         s.type === 'floor' && s.syncFloorWithWalls
           ? wallRefPxPerMeter
@@ -496,7 +535,6 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           : projNetH;
       const aspectW = Math.max(100, Math.round(effectiveWidthM * surfacePxPerMeter));
 
-      // Seçili Hesaplama Metoduna göre aktif İçerik Çözünürlüğü (netW x netH)
       const netW = calcMethod === 'aspect_ref' ? aspectW : projNetW;
       const netH = calcMethod === 'aspect_ref' ? aspectH : projNetH;
 
@@ -513,8 +551,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const drawW = s.rotate90 ? netH : netW;
       const drawH = s.rotate90 ? netW : netH;
 
-      // 4. PİKSEL YOĞUNLUĞU VE PİKSEL BOYUTU HESAPLAMALARI (Formülleriyle)
-      // A) Aktif İçerik Piksel Boyutu & Yoğunluğu:
+      // 4. A) YÜZEY BAZLI PİKSEL YOĞUNLUĞU (Görüntü Yüzeye Tam Oturduğunda)
       const mmPerPxW = round((effectiveWidthM * 1000) / netW, 2);
       const mmPerPxH = round((effectiveHeightM * 1000) / netH, 2);
       const avgMmPerPx = round((mmPerPxW + mmPerPxH) / 2, 2);
@@ -524,11 +561,40 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const ppi = round(25.4 / avgMmPerPx, 1);
       const pxPerM2 = Math.round((netW * netH) / Math.max(0.1, areaM2));
 
-      // B) Projektörün Doğrudan Optik Piksel Boyutu (Projektör sayısı değiştiğinde optik yoğunluğu gösterir):
-      const optMmPerPxW = round((effectiveWidthM * 1000) / projNetW, 2);
-      const optMmPerPxH = round((effectiveHeightM * 1000) / projNetH, 2);
-      const optPpi = round(25.4 / ((optMmPerPxW + optMmPerPxH) / 2), 1);
-      const optPxPerMeterW = round(projNetW / effectiveWidthM, 1);
+      // 4. B) PROJEKTÖR UZAKLIĞI (throwDistM) VE LENS (throwRatio) BAZLI GERÇEK OPTİK PİKSEL YOĞUNLUĞU!
+      // Tek projektörün duvara olan uzaklığından (D) ve Lens oranından (TR) açtığı gerçek görüntü eni: W_opt = D / TR
+      const safeTR = Math.max(0.15, s.throwRatio);
+      const safeThrowDist = Math.max(0.5, s.throwDistM);
+      const singleProjWidthM = round(safeThrowDist / safeTR, 2);
+      const singleProjHeightM = round(singleProjWidthM * (projH / projW), 2);
+
+      // Bu uzaklıktan projektörün duvara düşürdüğü 1 pikselin GERÇEK OPTİK BOYUTU (mm/px):
+      const distMmPerPx = round((singleProjWidthM * 1000) / projW, 2);
+      const distPpi = round(25.4 / distMmPerPx, 1);
+      const distPxPerMeter = round(projW / singleProjWidthM, 1);
+
+      // N adet projektörün bu uzaklıktan toplam kapladığı optik genişlik (m):
+      const totalOpticalWidthM = round(singleProjWidthM * (projNetW / projW), 2);
+
+      // Duvar yüksekliğini (effectiveHeightM) tam doldurmak için projektörün konulması gereken İDEAL UZAKLIK (m):
+      const neededSingleProjHeightM = effectiveHeightM / (projNetH / projH);
+      const neededSingleProjWidthM = neededSingleProjHeightM * (projW / projH);
+      const requiredThrowDistM = round(neededSingleProjWidthM * safeTR, 2);
+
+      // Girilen uzaklıktan bu duvar genişliğini (%15 overlap ile) doldurmak için gereken projektör sayısı:
+      const effectiveStepM = singleProjWidthM * 0.85;
+      const recommendedColsForDist = Math.max(1, Math.ceil(effectiveWidthM / Math.max(0.2, effectiveStepM)));
+
+      // 4. C) İZLEYİCİ BAKIŞ UZAKLIĞINA (viewDistM) GÖRE İDEAL PİKSEL BOYUTU (Acuity)
+      // İnsan gözü 1 arcmin (0.0002909 rad) çözünürlüğe sahiptir.
+      // Kusursuz Retina Sınırı (1.2 arcmin) ve İdeal Müze/İmmersive Standart (2.5 arcmin):
+      const safeViewDist = Math.max(0.3, s.viewDistM);
+      const idealRetinaMmPerPx = round(safeViewDist * 0.35, 2);
+      const idealMuseumMmPerPx = round(safeViewDist * 0.85, 2);
+      const idealMuseumPpi = round(25.4 / idealMuseumMmPerPx, 1);
+      // Mevcut piksel boyutunda (avgMmPerPx) piksellerin göze batmayacağı minimum izleme uzaklığı (m):
+      const minViewingDistM = round(avgMmPerPx / 0.85, 2);
+      const isQualityOkForViewer = avgMmPerPx <= idealMuseumMmPerPx * 1.15;
 
       // Projektör Slice Koordinatları
       const sliceStepX = overlapCountX > 0
@@ -589,10 +655,19 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         pxPerCm,
         ppi,
         pxPerM2,
-        optMmPerPxW,
-        optMmPerPxH,
-        optPpi,
-        optPxPerMeterW,
+        singleProjWidthM,
+        singleProjHeightM,
+        totalOpticalWidthM,
+        distMmPerPx,
+        distPpi,
+        distPxPerMeter,
+        requiredThrowDistM,
+        recommendedColsForDist,
+        idealRetinaMmPerPx,
+        idealMuseumMmPerPx,
+        idealMuseumPpi,
+        minViewingDistM,
+        isQualityOkForViewer,
         totalProjectors: s.cols * s.rows,
         geometryFormulaText,
         projSlices,
@@ -839,7 +914,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       g.fillStyle = '#38bdf8';
       g.font = `bold ${Math.round(fs * 0.75)}px monospace`;
       g.fillText(
-        `Piksel: ${s.mmPerPxW}×${s.mmPerPxH} mm/px | Yoğunluk: ${s.pxPerMeterW} px/m (${s.ppi} PPI)`,
+        `Piksel: ${s.avgMmPerPx} mm/px (İdeal ≤${s.idealMuseumMmPerPx}mm @${s.viewDistM}m) | ${s.pxPerMeterW} px/m (${s.ppi} PPI)`,
         0,
         fs * 0.85,
         maxTextSpan
@@ -848,7 +923,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       g.fillStyle = '#cbd5e1';
       g.font = `${Math.round(fs * 0.68)}px monospace`;
       g.fillText(
-        `Açınım: ${s.effectiveWidthM}m × ${s.effectiveHeightM}m (${s.areaM2}m²) | ${s.cols}×${s.rows} PJ`,
+        `Açınım: ${s.effectiveWidthM}m × ${s.effectiveHeightM}m | PJ Uzaklık: ${s.throwDistM}m (Lens ${s.throwRatio}:1 → ${s.distMmPerPx} mm/px)`,
         0,
         fs * 1.65,
         maxTextSpan
@@ -874,26 +949,26 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       `Toplam Projektör Sayısı          : ${calculation.totalProjectors} Adet`,
       `Piksel Boyutu Aralığı            : ${calculation.minMm} - ${calculation.maxMm} mm/px`,
       '-------------------------------------------------------------------',
-      'YÜZEY BAZLI GEOMETRİ, ORAN, PİKSEL YOĞUNLUĞU & PIXEL MAP DETAYLARI:',
+      'YÜZEY BAZLI GEOMETRİ, UZAKLIK, PİKSEL YOĞUNLUĞU & PIXEL MAP DETAYLARI:',
     ];
 
     calculation.surfaces.forEach((s, idx) => {
       lines.push(
         `\n${idx + 1}. ${s.name.toUpperCase()} [${GEOMETRY_LABELS[s.geometry]}]:`,
-        `   - Geometrik Açınım          : ${s.geometryFormulaText}`,
-        `   - Yüzey Fiziksel Oranı      : ${s.aspectPhysical}:1 (${s.effectiveWidthM}m / ${s.effectiveHeightM}m)`,
-        `   - İçerik Pixel Map          : ${s.netW} × ${s.netH} px (Oran: ${s.aspectContent}:1)`,
-        `   - 1 Piksel Fiziksel Boyutu  : Yatay ${s.mmPerPxW} mm × Dikey ${s.mmPerPxH} mm (Ort: ${s.avgMmPerPx} mm/px)`,
-        `   - Piksel Yoğunluğu          : ${s.pxPerMeterW} px/m (${s.pxPerCm} px/cm) | ${s.ppi} PPI | ${s.pxPerM2.toLocaleString()} px/m²`,
-        `   - Projektör Optik Yoğunluk  : ${s.optMmPerPxW} mm/px (${s.optPxPerMeterW} px/m · ${s.optPpi} PPI)`,
-        `   - Projektör Dizilimi        : ${s.cols}×${s.rows} Adet (${s.projW}×${s.projH} px, ${s.overlapCountX} Yatay Overlap)`,
-        `   - Gereken Overlap           : Toplam ${s.impliedTotalOvW} px (Projektör arası ~${s.impliedOvPxX} px / %${s.impliedOvPctX})`
+        `   - Geometrik Açınım            : ${s.geometryFormulaText}`,
+        `   - Yüzey Fiziksel Oranı        : ${s.aspectPhysical}:1 (${s.effectiveWidthM}m / ${s.effectiveHeightM}m)`,
+        `   - İçerik Pixel Map            : ${s.netW} × ${s.netH} px (Oran: ${s.aspectContent}:1)`,
+        `   - Yüzey Piksel Boyutu         : ${s.avgMmPerPx} mm/px (${s.pxPerMeterW} px/m · ${s.ppi} PPI · ${s.pxPerM2.toLocaleString()} px/m²)`,
+        `   - Projektör Uzaklığı & Lens   : Atım Mesafesi = ${s.throwDistM}m, Lens TR = ${s.throwRatio}:1`,
+        `   - Uzaklığa Göre Optik Piksel  : Tek PJ Eni = ${s.singleProjWidthM}m → ${s.distMmPerPx} mm/px (${s.distPpi} PPI)`,
+        `   - İzleyici Bakış Uzaklığı     : ${s.viewDistM}m → İdeal Piksel Boyutu ≤ ${s.idealMuseumMmPerPx} mm/px (${s.isQualityOkForViewer ? 'UYGUN' : 'PİKSELLENME RİSKİ'})`,
+        `   - Projektör Dizilimi          : ${s.cols}×${s.rows} Adet (${s.projW}×${s.projH} px, Gereken Overlap: ~${s.impliedOvPxX} px / %${s.impliedOvPctX})`
       );
     });
 
     lines.push('===================================================================');
     navigator.clipboard.writeText(lines.join('\n'));
-    alert('Tüm yüzeylerin Geometri, Piksel Yoğunluğu ve Pixel Map teknik raporu panoya kopyalandı!');
+    alert('Tüm yüzeylerin Geometri, Uzaklık, Piksel Yoğunluğu ve Pixel Map teknik raporu panoya kopyalandı!');
   };
 
   return (
@@ -947,8 +1022,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       </div>
 
       {/* ANA ÇALIŞMA ALANI */}
-      <div className="grid lg:grid-cols-[480px_1fr] gap-3 flex-1 overflow-auto">
-        {/* SOL PANEL: YÜZEY EKLEME LİSTESİ + SEÇİLİ YÜZEY GEOMETRİ, ORAN & YOĞUNLUK EDİTÖRÜ */}
+      <div className="grid lg:grid-cols-[490px_1fr] gap-3 flex-1 overflow-auto">
+        {/* SOL PANEL: YÜZEY EKLEME LİSTESİ + SEÇİLİ YÜZEY GEOMETRİ, UZAKLIK, ORAN & YOĞUNLUK EDİTÖRÜ */}
         <div className="space-y-3 flex flex-col overflow-auto pr-1" style={{ maxHeight: '83vh' }}>
           {/* 1. FARKLI GEOMETRİLERDE YÜZEY EKLEME BUTONLARI */}
           <div className="p-3 rounded bg-slate-900 border border-slate-700 space-y-2">
@@ -998,7 +1073,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
 
             {/* Eklenen Yüzeyler Listesi */}
-            <div className="space-y-1.5 max-h-[165px] overflow-auto pr-0.5 pt-1">
+            <div className="space-y-1.5 max-h-[155px] overflow-auto pr-0.5 pt-1">
               {calculation.surfaces.map((s, idx) => {
                 const isSelected = s.id === activeSurface.id;
                 return (
@@ -1023,7 +1098,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         <div className="text-[10px] text-slate-400 font-mono">
                           {s.effectiveWidthM}×{s.effectiveHeightM}m →{' '}
                           <b className="text-emerald-400">{s.netW}×{s.netH} px</b> |{' '}
-                          <span className="text-sky-300">{s.avgMmPerPx} mm/px ({s.pxPerMeterW} px/m)</span>
+                          <span className="text-sky-300">{s.avgMmPerPx} mm/px ({s.ppi} PPI)</span>
                         </div>
                       </div>
                     </div>
@@ -1057,7 +1132,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
-          {/* 2. SEÇİLİ YÜZEYİN GEOMETRİ, ÖLÇÜ, ORAN VE PİKSEL YOĞUNLUĞU EDİTÖRÜ */}
+          {/* 2. SEÇİLİ YÜZEYİN GEOMETRİ, UZAKLIK, LENS VE PİKSEL YOĞUNLUĞU EDİTÖRÜ */}
           {activeSurface && (
             <div className="p-3 rounded bg-slate-900 border border-sky-800/80 space-y-3">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
@@ -1388,60 +1463,116 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 )}
               </div>
 
-              {/* C) PİKSEL YOĞUNLUĞU VE BOYUTU HESAPLAMA KARTI (Nereden Geldiği ve Formülüyle) */}
-              <div className="p-2.5 rounded bg-slate-950 border border-sky-700/70 space-y-2">
+              {/* C) UZAKLIK (MESAFE), LENS VE İZLEYİCİ BAKIŞ MESAFESİ GİRİŞİ VE PİKSEL YOĞUNLUĞU KARTI */}
+              <div className="p-2.5 rounded bg-slate-950 border border-sky-700/80 space-y-2.5">
                 <div className="flex justify-between items-center border-b border-slate-800 pb-1">
                   <span className="font-bold text-sky-400 text-[11px] uppercase tracking-wider">
-                    Piksel Boyutu (mm/px) & Yoğunluk Hesabı
+                    Uzaklık (Mesafe) & Piksel Yoğunluğu Hesabı
                   </span>
-                  <span className="text-[10px] text-emerald-400 font-mono">
-                    İdeal: 2.0 - 3.5 mm/px
-                  </span>
+                  <button
+                    onClick={() => updateSurface(activeSurface.id, { throwDistM: activeSurface.requiredThrowDistM })}
+                    className="px-2 py-0.5 rounded bg-sky-800 hover:bg-sky-700 text-white text-[10px] font-semibold"
+                    title="Projektör atım mesafesini duvar yüksekliğini tam dolduracak optik mesafeye eşitle"
+                  >
+                    Uzaklığı Duvara Eşitle ({activeSurface.requiredThrowDistM}m)
+                  </button>
                 </div>
 
-                {/* 4'lü Yoğunluk Göstergesi */}
-                <div className="grid grid-cols-4 gap-1.5 text-center font-mono">
-                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                    <span className="text-[9.5px] text-slate-400 block">1 Piksel Boyutu</span>
-                    <b className="text-xs text-sky-300">{activeSurface.avgMmPerPx} mm</b>
-                    <span className="text-[9px] text-slate-500 block">
-                      ({activeSurface.mmPerPxW}×{activeSurface.mmPerPxH})
+                {/* 3'lü Uzaklık ve Lens Girişi */}
+                <div className="grid grid-cols-3 gap-2">
+                  <label>
+                    Projektör Uzaklığı D (m)
+                    <input
+                      className="inp font-bold text-amber-300"
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      value={activeSurface.throwDistM}
+                      onChange={e => updateSurface(activeSurface.id, { throwDistM: Math.max(0.5, +e.target.value) })}
+                    />
+                  </label>
+                  <label>
+                    Lens Throw Ratio (TR)
+                    <input
+                      className="inp font-bold text-amber-300"
+                      type="number"
+                      step="0.05"
+                      min="0.2"
+                      value={activeSurface.throwRatio}
+                      onChange={e => updateSurface(activeSurface.id, { throwRatio: Math.max(0.15, +e.target.value) })}
+                    />
+                  </label>
+                  <label>
+                    İzleyici Bakış Uzaklığı (m)
+                    <input
+                      className="inp font-bold text-emerald-300"
+                      type="number"
+                      step="0.2"
+                      min="0.3"
+                      value={activeSurface.viewDistM}
+                      onChange={e => updateSurface(activeSurface.id, { viewDistM: Math.max(0.3, +e.target.value) })}
+                    />
+                  </label>
+                </div>
+
+                {/* 3'lü Karşılaştırma: 1. Uzaklığa Göre Optik Piksel | 2. Duvar Piksel Boyutu | 3. İzleyici Mesafesine Göre İdeal Piksel */}
+                <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
+                  <div className="p-1.5 rounded bg-amber-950/30 border border-amber-800/70">
+                    <span className="text-[9.5px] text-amber-300 block">
+                      1. {activeSurface.throwDistM}m Uzaklıktan Optik
+                    </span>
+                    <b className="text-xs text-amber-400">{activeSurface.distMmPerPx} mm/px</b>
+                    <span className="text-[9px] text-slate-400 block">
+                      ({activeSurface.distPpi} PPI · Tek PJ: {activeSurface.singleProjWidthM}m)
                     </span>
                   </div>
-                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                    <span className="text-[9.5px] text-slate-400 block">Metrede Piksel</span>
-                    <b className="text-xs text-emerald-400">{activeSurface.pxPerMeterW} px/m</b>
-                    <span className="text-[9px] text-slate-500 block">
-                      ({activeSurface.pxPerCm} px/cm)
+
+                  <div className="p-1.5 rounded bg-sky-950/30 border border-sky-800/70">
+                    <span className="text-[9.5px] text-sky-300 block">
+                      2. Duvar İçerik Piksel
+                    </span>
+                    <b className="text-xs text-sky-300">{activeSurface.avgMmPerPx} mm/px</b>
+                    <span className="text-[9px] text-slate-400 block">
+                      ({activeSurface.pxPerMeterW} px/m · {activeSurface.ppi} PPI)
                     </span>
                   </div>
-                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                    <span className="text-[9.5px] text-slate-400 block">İnçte Piksel (PPI)</span>
-                    <b className="text-xs text-amber-300">{activeSurface.ppi} PPI</b>
-                    <span className="text-[9px] text-slate-500 block">
-                      (25.4 ÷ {activeSurface.avgMmPerPx})
+
+                  <div className={`p-1.5 rounded border ${
+                    activeSurface.isQualityOkForViewer
+                      ? 'bg-emerald-950/30 border-emerald-700/70'
+                      : 'bg-rose-950/40 border-rose-700/80'
+                  }`}>
+                    <span className="text-[9.5px] text-emerald-300 block">
+                      3. {activeSurface.viewDistM}m Bakış İçin İdeal
                     </span>
-                  </div>
-                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                    <span className="text-[9.5px] text-slate-400 block">m² Yoğunluğu</span>
-                    <b className="text-xs text-purple-300">{activeSurface.pxPerM2.toLocaleString()}</b>
-                    <span className="text-[9px] text-slate-500 block">px / m²</span>
+                    <b className={`text-xs ${activeSurface.isQualityOkForViewer ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      ≤ {activeSurface.idealMuseumMmPerPx} mm/px
+                    </b>
+                    <span className="text-[9px] text-slate-400 block">
+                      (Retina: {activeSurface.idealRetinaMmPerPx}mm · Min: {activeSurface.minViewingDistM}m)
+                    </span>
                   </div>
                 </div>
 
-                {/* Hesaplama Formülü Açıklaması */}
-                <div className="text-[10px] text-slate-300 bg-slate-900/90 p-2 rounded border border-slate-800 font-mono space-y-0.5">
+                {/* Uzaklık ve Yoğunluk Mühendislik Açıklaması */}
+                <div className="text-[10px] text-slate-300 bg-slate-900/90 p-2 rounded border border-slate-800 font-mono space-y-1 leading-relaxed">
                   <div>
-                    • <b>Yatay 1 Piksel:</b> {(activeSurface.effectiveWidthM * 1000).toLocaleString()} mm ÷ {activeSurface.netW} px ={' '}
-                    <b className="text-sky-300">{activeSurface.mmPerPxW} mm/px</b> ({activeSurface.pxPerMeterW} px/m)
+                    • <b>Projektör Uzaklık Hesabı:</b> {activeSurface.throwDistM}m uzaklık ÷ {activeSurface.throwRatio} lens ={' '}
+                    tek projektör <b>{activeSurface.singleProjWidthM}m × {activeSurface.singleProjHeightM}m</b> görüntü açar →{' '}
+                    ({(activeSurface.singleProjWidthM * 1000).toLocaleString()}mm ÷ {activeSurface.projW}px ={' '}
+                    <b className="text-amber-300">{activeSurface.distMmPerPx} mm/px</b>).
                   </div>
                   <div>
-                    • <b>Dikey 1 Piksel:</b> {(activeSurface.effectiveHeightM * 1000).toLocaleString()} mm ÷ {activeSurface.netH} px ={' '}
-                    <b className="text-sky-300">{activeSurface.mmPerPxH} mm/px</b> ({activeSurface.pxPerMeterH} px/m)
+                    • <b>{activeSurface.effectiveHeightM}m yüksekliği tam doldurmak için</b> projektör{' '}
+                    <b className="text-sky-300">{activeSurface.requiredThrowDistM} m</b> uzağa konulmalı;{' '}
+                    {activeSurface.throwDistM}m mesafeden {activeSurface.effectiveWidthM}m genişliği kapatmak için{' '}
+                    <b className="text-amber-300">en az {activeSurface.recommendedColsForDist} projektör</b> gerekir.
                   </div>
-                  <div className="text-amber-300 pt-0.5">
-                    • <b>Projektör Optik Yoğunluğu ({activeSurface.cols}×{activeSurface.rows} PJ = {activeSurface.projNetW}×{activeSurface.projNetH} px):</b>{' '}
-                    <b>{activeSurface.optMmPerPxW} mm/px</b> ({activeSurface.optPxPerMeterW} px/m · {activeSurface.optPpi} PPI)
+                  <div className={activeSurface.isQualityOkForViewer ? 'text-emerald-400' : 'text-rose-400'}>
+                    • <b>İzleyici Göz Analizi ({activeSurface.viewDistM}m):</b>{' '}
+                    {activeSurface.isQualityOkForViewer
+                      ? `✓ Mevcut ${activeSurface.avgMmPerPx} mm/px boyutu, ${activeSurface.viewDistM}m izleme mesafesi için net ve uygundur.`
+                      : `⚠ Mevcut ${activeSurface.avgMmPerPx} mm/px boyutu, ${activeSurface.viewDistM}m mesafeden pikselli görünebilir (En az ${activeSurface.minViewingDistM}m uzaktan bakılmalı veya 4K / daha fazla projektör seçilmeli).`}
                   </div>
                 </div>
               </div>
@@ -1915,7 +2046,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               </g>
                             ))}
 
-                            {/* Merkez Bilgi Yazıları (4 Satır: Yüzey Adı, Çözünürlük, Piksel Yoğunluğu, Fiziksel Açınım) */}
+                            {/* Merkez Bilgi Yazıları */}
                             <g transform={isVerticalBox ? `rotate(-90 ${cx} ${cy})` : undefined}>
                               <text
                                 x={cx}
@@ -1944,12 +2075,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                                 x={cx}
                                 y={cy + surfFont * 0.8}
                                 fill="#38bdf8"
-                                fontSize={surfFont * 0.72}
+                                fontSize={surfFont * 0.7}
                                 fontWeight="bold"
                                 fontFamily="monospace"
                                 textAnchor="middle"
                               >
-                                Piksel: {s.avgMmPerPx} mm/px · Yoğunluk: {s.pxPerMeterW} px/m ({s.ppi} PPI)
+                                Piksel: {s.avgMmPerPx} mm/px (İdeal ≤{s.idealMuseumMmPerPx}mm) · Optik @{s.throwDistM}m: {s.distMmPerPx} mm/px
                               </text>
 
                               <text
@@ -1973,25 +2104,24 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
-          {/* ALT TABLO: YÜZEY GEOMETRİSİ, ORANLARI, PİKSEL YOĞUNLUĞU VE PIXEL MAP TABLOSU */}
+          {/* ALT TABLO: YÜZEY GEOMETRİSİ, UZAKLIK, PİKSEL YOĞUNLUĞU VE PIXEL MAP TABLOSU */}
           <div className="p-2.5 rounded bg-slate-900 border border-slate-800 overflow-auto">
             <div className="font-bold text-slate-200 mb-1.5 flex justify-between items-center">
-              <span>Yüzey Geometrileri, Açınım Oranları, Piksel Yoğunluğu ve İçerik Çözünürlüğü Tablosu</span>
+              <span>Yüzey Geometrileri, Projektör Uzaklığı, Piksel Yoğunluğu ve İçerik Çözünürlüğü Tablosu</span>
               <span className="text-[10px] text-emerald-400 font-mono">
-                Projektör veya ölçü değiştiğinde piksel boyutu (mm/px) ve yoğunluğu (px/m, PPI) anında güncellenir
+                Projektör atım mesafesi (D), Lens (TR) ve İzleyici uzaklığına göre optik piksel boyutu (mm/px)
               </span>
             </div>
             <table className="w-full text-left border-collapse text-[11px]">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400">
                   <th className="py-1.5 pr-2">Yüzey Adı</th>
-                  <th className="py-1.5 pr-2">Açınım Ölçüsü</th>
-                  <th className="py-1.5 pr-2">Oran</th>
+                  <th className="py-1.5 pr-2">Açınım</th>
                   <th className="py-1.5 pr-2 text-emerald-400">İçerik Pixel Map</th>
-                  <th className="py-1.5 pr-2 text-sky-400">1 Piksel Boyutu</th>
-                  <th className="py-1.5 pr-2 text-amber-300">Piksel Yoğunluğu</th>
-                  <th className="py-1.5 pr-2">Projektör (Optik)</th>
-                  <th className="py-1.5">Gereken Overlap</th>
+                  <th className="py-1.5 pr-2 text-amber-300">PJ Uzaklık & Lens</th>
+                  <th className="py-1.5 pr-2 text-amber-400">Optik Piksel (@Uzaklık)</th>
+                  <th className="py-1.5 pr-2 text-sky-400">Duvar Piksel Boyutu</th>
+                  <th className="py-1.5">İzleyici Mesafesi & İdeal</th>
                 </tr>
               </thead>
               <tbody>
@@ -2008,28 +2138,24 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                       {s.name}
                     </td>
                     <td className="py-1.5 pr-2 font-mono text-slate-300">
-                      {s.effectiveWidthM}m × {s.effectiveHeightM}m
-                    </td>
-                    <td className="py-1.5 pr-2 font-mono font-bold text-amber-300">
-                      {s.aspectPhysical}:1
+                      {s.effectiveWidthM}×{s.effectiveHeightM}m ({s.aspectPhysical}:1)
                     </td>
                     <td className="py-1.5 pr-2 font-mono font-bold text-emerald-400">
                       {s.netW} × {s.netH} px
                     </td>
-                    <td className="py-1.5 pr-2 font-mono font-bold text-sky-300">
-                      {s.avgMmPerPx} mm/px{' '}
-                      <span className="text-[10px] text-slate-500 font-normal">
-                        ({s.mmPerPxW}×{s.mmPerPxH})
-                      </span>
-                    </td>
                     <td className="py-1.5 pr-2 font-mono text-amber-300">
-                      {s.pxPerMeterW} px/m · {s.ppi} PPI
+                      {s.throwDistM}m / TR {s.throwRatio}:1
                     </td>
-                    <td className="py-1.5 pr-2 font-mono text-slate-300">
-                      {s.cols}×{s.rows} PJ ({s.optMmPerPxW} mm/px)
+                    <td className="py-1.5 pr-2 font-mono font-bold text-amber-400">
+                      {s.distMmPerPx} mm/px ({s.distPpi} PPI)
                     </td>
-                    <td className="py-1.5 font-mono text-amber-400">
-                      {s.overlapCountX > 0 ? `${s.impliedOvPxX} px (%${s.impliedOvPctX})` : 'Yok'}
+                    <td className="py-1.5 pr-2 font-mono font-bold text-sky-300">
+                      {s.avgMmPerPx} mm/px ({s.pxPerMeterW} px/m)
+                    </td>
+                    <td className="py-1.5 font-mono">
+                      <span className={s.isQualityOkForViewer ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                        @{s.viewDistM}m → İdeal ≤{s.idealMuseumMmPerPx}mm {s.isQualityOkForViewer ? '✓' : '⚠'}
+                      </span>
                     </td>
                   </tr>
                 ))}
