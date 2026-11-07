@@ -1167,19 +1167,77 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         />
                       </label>
                     </div>
-                    <div className="text-[10.5px] bg-slate-900 p-2 rounded border border-emerald-900/50 font-mono text-emerald-300">
-                      • <b>360° Çevre Açınımı (π × D):</b> {activeSurface.effectiveWidthM} m × {activeSurface.effectiveHeightM} m
-                      <br />
-                      • <b>360° Kapalı Döngü:</b> Başlangıç ve bitiş birleştiği için {activeSurface.cols} projektörde <b>{activeSurface.cols} adet overlap</b> hesaba katılır!
+                    <div className="grid grid-cols-3 gap-1.5 text-[10.5px] bg-slate-900 p-2 rounded border border-emerald-900/50 font-mono">
+                      <div>
+                        <span className="text-slate-400 block">360° Tam Çevre Açınımı:</span>
+                        <b className="text-emerald-400 text-xs">{activeSurface.effectiveWidthM} m</b>
+                        <span className="text-[9.5px] text-slate-500 block">(2·π·R = π·D)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Mekan İç Çapı (D):</span>
+                        <b className="text-sky-300 text-xs">{activeSurface.chordWidthM} m</b>
+                        <span className="text-[9.5px] text-slate-500 block">(Yarıçap: {activeSurface.radiusM}m)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Toplam Yüzey Alanı:</span>
+                        <b className="text-amber-300 text-xs">{round(activeSurface.effectiveWidthM * activeSurface.effectiveHeightM, 1)} m²</b>
+                        <span className="text-[9.5px] text-slate-500 block">({activeSurface.cols} PJ Döngü)</span>
+                      </div>
                     </div>
                   </div>
                 )}
 
-                {(activeSurface.geometry === 'dome' || activeSurface.geometry === 'sphere' || activeSurface.geometry === 'circle_floor') && (
+                {activeSurface.geometry === 'sphere' && (
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
                       <label>
-                        Yarıçap R (m)
+                        Küre Yarıçapı R (m)
+                        <input
+                          className="inp font-bold text-pink-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.radiusM}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Küre Çapı D (m)
+                        <input
+                          className="inp font-bold text-pink-300"
+                          type="number"
+                          step="0.2"
+                          min="1"
+                          value={round(activeSurface.radiusM * 2, 2)}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value / 2) })}
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 text-[10.5px] bg-slate-900 p-2 rounded border border-pink-900/50 font-mono">
+                      <div>
+                        <span className="text-slate-400 block">360° Ekvator Açınımı:</span>
+                        <b className="text-emerald-400 text-xs">{activeSurface.effectiveWidthM} m</b>
+                        <span className="text-[9.5px] text-slate-500 block">(2·π·R Yatay)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">180° Kutup Yay Boyu:</span>
+                        <b className="text-sky-300 text-xs">{activeSurface.effectiveHeightM} m</b>
+                        <span className="text-[9.5px] text-slate-500 block">(π·R Dikey)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Küre Yüzey Alanı:</span>
+                        <b className="text-amber-300 text-xs">{round(4 * Math.PI * activeSurface.radiusM * activeSurface.radiusM, 1)} m²</b>
+                        <span className="text-[9.5px] text-slate-500 block">(4·π·R² · Oran 2:1)</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeSurface.geometry === 'dome' && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label>
+                        Kubbe Yarıçapı R (m)
                         <input
                           className="inp font-bold text-purple-300"
                           type="number"
@@ -1190,7 +1248,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         />
                       </label>
                       <label>
-                        Toplam Çap D (m)
+                        Kubbe Taban Çapı D (m)
                         <input
                           className="inp font-bold text-purple-300"
                           type="number"
@@ -1201,8 +1259,65 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         />
                       </label>
                     </div>
-                    <div className="text-[10.5px] bg-slate-900 p-2 rounded border border-purple-900/50 font-mono text-purple-200">
-                      {activeSurface.geometryFormulaText}
+                    <div className="grid grid-cols-3 gap-1.5 text-[10.5px] bg-slate-900 p-2 rounded border border-purple-900/50 font-mono">
+                      <div>
+                        <span className="text-slate-400 block">180° Kubbe Yay Açınımı:</span>
+                        <b className="text-emerald-400 text-xs">{activeSurface.effectiveWidthM} m</b>
+                        <span className="text-[9.5px] text-slate-500 block">(π·R Ufuktan Ufka)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Taban Çevresi (360°):</span>
+                        <b className="text-sky-300 text-xs">{round(2 * Math.PI * activeSurface.radiusM, 2)} m</b>
+                        <span className="text-[9.5px] text-slate-500 block">(Zenit Yükseklik: {activeSurface.radiusM}m)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Kubbe Yüzey Alanı:</span>
+                        <b className="text-amber-300 text-xs">{round(2 * Math.PI * activeSurface.radiusM * activeSurface.radiusM, 1)} m²</b>
+                        <span className="text-[9.5px] text-slate-500 block">(2·π·R² · 1:1 Fisheye)</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeSurface.geometry === 'circle_floor' && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label>
+                        Zemin Yarıçapı R (m)
+                        <input
+                          className="inp font-bold text-teal-300"
+                          type="number"
+                          step="0.1"
+                          min="0.5"
+                          value={activeSurface.radiusM}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value) })}
+                        />
+                      </label>
+                      <label>
+                        Zemin Çapı D (m)
+                        <input
+                          className="inp font-bold text-teal-300"
+                          type="number"
+                          step="0.2"
+                          min="1"
+                          value={round(activeSurface.radiusM * 2, 2)}
+                          onChange={e => updateSurface(activeSurface.id, { radiusM: Math.max(0.5, +e.target.value / 2) })}
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 text-[10.5px] bg-slate-900 p-2 rounded border border-teal-900/50 font-mono">
+                      <div>
+                        <span className="text-slate-400 block">Kare Açınım Kutusu:</span>
+                        <b className="text-emerald-400 text-xs">{activeSurface.effectiveWidthM}×{activeSurface.effectiveHeightM} m</b>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Daire Çevresi:</span>
+                        <b className="text-sky-300 text-xs">{round(2 * Math.PI * activeSurface.radiusM, 2)} m</b>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Dairesel Zemin Alanı:</span>
+                        <b className="text-amber-300 text-xs">{round(Math.PI * activeSurface.radiusM * activeSurface.radiusM, 1)} m²</b>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1519,6 +1634,71 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               />
                               <line x1={cx - circleR} y1={cy} x2={cx + circleR} y2={cy} stroke="rgba(255,255,255,0.2)" strokeWidth={Math.max(2, baseFont * 0.06)} />
                               <line x1={cx} y1={cy - circleR} x2={cx} y2={cy + circleR} stroke="rgba(255,255,255,0.2)" strokeWidth={Math.max(2, baseFont * 0.06)} />
+                            </g>
+                          )}
+
+                          {/* 360° Silindir, Kavisli Duvar ve Tam Küre İçin Derece / Açınım Cetveli */}
+                          {(s.geometry === 'cylinder_360' || s.geometry === 'sphere' || s.geometry === 'concave_arc') && !s.rotate90 && (
+                            <g>
+                              {/* Yatay Açınım Derece Bölümleri (0° - 90° - 180° - 270° - 360°) */}
+                              {[0, 0.25, 0.5, 0.75, 1].map((ratio, rIdx) => {
+                                const lx = sx + s.drawW * ratio;
+                                const degLabel = Math.round(
+                                  (s.geometry === 'concave_arc' ? s.angleDeg : 360) * ratio
+                                );
+                                return (
+                                  <g key={rIdx}>
+                                    <line
+                                      x1={lx}
+                                      y1={sy}
+                                      x2={lx}
+                                      y2={sy + s.drawH}
+                                      stroke="rgba(56, 189, 248, 0.3)"
+                                      strokeWidth={Math.max(2, baseFont * 0.06)}
+                                      strokeDasharray={`${baseFont * 0.25} ${baseFont * 0.2}`}
+                                    />
+                                    <text
+                                      x={lx + (ratio === 1 ? -surfFont * 0.4 : ratio === 0 ? surfFont * 0.4 : 0)}
+                                      y={sy + surfFont * 0.75}
+                                      fill="#38bdf8"
+                                      fontSize={surfFont * 0.52}
+                                      fontFamily="monospace"
+                                      fontWeight="bold"
+                                      textAnchor={ratio === 1 ? 'end' : ratio === 0 ? 'start' : 'middle'}
+                                    >
+                                      {degLabel}° ({round(s.effectiveWidthM * ratio, 1)}m)
+                                    </text>
+                                  </g>
+                                );
+                              })}
+
+                              {/* Küre (Sphere) ise Dikey Enlem Çizgileri (+90° Kuzey, 0° Ekvator, -90° Güney) */}
+                              {s.geometry === 'sphere' && [0.25, 0.5, 0.75].map((yRatio, yIdx) => {
+                                const ly = sy + s.drawH * yRatio;
+                                const latLabel = yRatio === 0.5 ? '0° Ekvator' : yRatio === 0.25 ? '+45° K' : '-45° G';
+                                return (
+                                  <g key={yIdx}>
+                                    <line
+                                      x1={sx}
+                                      y1={ly}
+                                      x2={sx + s.drawW}
+                                      y2={ly}
+                                      stroke={yRatio === 0.5 ? 'rgba(244, 63, 94, 0.5)' : 'rgba(255, 255, 255, 0.18)'}
+                                      strokeWidth={yRatio === 0.5 ? Math.max(4, baseFont * 0.1) : Math.max(2, baseFont * 0.05)}
+                                      strokeDasharray={yRatio === 0.5 ? undefined : `${baseFont * 0.25} ${baseFont * 0.2}`}
+                                    />
+                                    <text
+                                      x={sx + surfFont * 0.4}
+                                      y={ly - surfFont * 0.2}
+                                      fill="#fda4af"
+                                      fontSize={surfFont * 0.48}
+                                      fontFamily="monospace"
+                                    >
+                                      {latLabel}
+                                    </text>
+                                  </g>
+                                );
+                              })}
                             </g>
                           )}
 
