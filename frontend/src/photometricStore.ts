@@ -1,0 +1,269 @@
+import { create } from 'zustand';
+import { Projector3DConfig, Surface3DConfig, SurfaceGeometryType } from './engine/photometrics';
+import { SurfaceItem } from './modules/ContentPlanner';
+
+export interface PhotometricStoreState {
+  // Seçili Proje Yüzeyi
+  selectedSurfaceId: string; // 'custom' veya 'surf-1', 'surf-2', vb.
+  
+  // Yüzey Parametreleri
+  screenW: number;
+  screenH: number;
+  geometry: SurfaceGeometryType;
+  curveRadius: number;
+  curveAngle: number;
+  inclineAngle: number;
+  screenGain: number;
+  surfaceReflectance: number;
+  ambientLux: number;
+
+  // Grid Çözünürlüğü
+  gridRes: '15x10' | '30x20' | '50x30' | '80x45';
+
+  // Projektörler Listesi
+  projectors: Projector3DConfig[];
+  selectedProjId: string;
+  defaultProjectorLumens: number;
+
+  // Simülasyon Görünüm Ayarları
+  blendOverlap: boolean;
+  showHotDarkSpots: boolean;
+  showIsoContours: boolean;
+  activeTab: 'heatmap' | 'ansi9' | 'overlap' | 'scenarios' | 'guide';
+  advancedMode: boolean;
+
+  // Eylemler
+  setScreenW: (w: number) => void;
+  setScreenH: (h: number) => void;
+  setGeometry: (g: SurfaceGeometryType) => void;
+  setCurveRadius: (r: number) => void;
+  setCurveAngle: (a: number) => void;
+  setInclineAngle: (a: number) => void;
+  setScreenGain: (g: number) => void;
+  setSurfaceReflectance: (r: number) => void;
+  setAmbientLux: (lux: number) => void;
+  setGridRes: (res: '15x10' | '30x20' | '50x30' | '80x45') => void;
+  setProjectors: (projs: Projector3DConfig[] | ((prev: Projector3DConfig[]) => Projector3DConfig[])) => void;
+  setSelectedProjId: (id: string) => void;
+  setDefaultProjectorLumens: (lm: number) => void;
+  setBlendOverlap: (b: boolean) => void;
+  setShowHotDarkSpots: (b: boolean) => void;
+  setShowIsoContours: (b: boolean) => void;
+  setActiveTab: (tab: 'heatmap' | 'ansi9' | 'overlap' | 'scenarios' | 'guide') => void;
+  setAdvancedMode: (b: boolean) => void;
+  
+  // Projeden Yüzey ve Projektör Bilgilerini Aktarma Fonksiyonu
+  importFromPlannerSurface: (surface: SurfaceItem, lumensOverride?: number) => void;
+  updateSelectedProjector: (patch: Partial<Projector3DConfig>) => void;
+  addProjector: () => void;
+  removeProjector: (id: string) => void;
+}
+
+const DEFAULT_PROJECTORS: Projector3DConfig[] = [
+  {
+    id: 'proj-1',
+    name: 'Projektör 1 (Sol/Ana)',
+    model: '12K ANSI Laser',
+    ansiLumens: 10000,
+    efficiency: 0.90,
+    pos: [2.5, 2.0, 4.5],
+    target: [2.5, 2.0, 0],
+    yawDeg: 0,
+    pitchDeg: 0,
+    rollDeg: 0,
+    throwRatio: 0.8,
+    zoom: 1.0,
+    lensModel: 'Ultra Short / Standart Lens',
+    cornerUniformity: 0.85,
+    photometricSource: 'ansi_cosine',
+    enabled: true,
+    color: '#38bdf8'
+  },
+  {
+    id: 'proj-2',
+    name: 'Projektör 2 (Sağ/Overlap)',
+    model: '12K ANSI Laser',
+    ansiLumens: 10000,
+    efficiency: 0.90,
+    pos: [5.5, 2.0, 4.5],
+    target: [5.5, 2.0, 0],
+    yawDeg: 0,
+    pitchDeg: 0,
+    rollDeg: 0,
+    throwRatio: 0.8,
+    zoom: 1.0,
+    lensModel: 'Ultra Short / Standart Lens',
+    cornerUniformity: 0.85,
+    photometricSource: 'ansi_cosine',
+    enabled: true,
+    color: '#a855f7'
+  }
+];
+
+export const usePhotometricStore = create<PhotometricStoreState>((set, get) => ({
+  selectedSurfaceId: 'custom',
+  screenW: 8.0,
+  screenH: 4.0,
+  geometry: 'flat',
+  curveRadius: 6.0,
+  curveAngle: 90,
+  inclineAngle: 0,
+  screenGain: 1.0,
+  surfaceReflectance: 0.85,
+  ambientLux: 20, // Müze standardı
+  gridRes: '30x20',
+  projectors: DEFAULT_PROJECTORS,
+  selectedProjId: 'proj-1',
+  defaultProjectorLumens: 10000,
+  blendOverlap: true,
+  showHotDarkSpots: true,
+  showIsoContours: false,
+  activeTab: 'heatmap',
+  advancedMode: true,
+
+  setScreenW: (screenW) => set({ screenW }),
+  setScreenH: (screenH) => set({ screenH }),
+  setGeometry: (geometry) => set({ geometry }),
+  setCurveRadius: (curveRadius) => set({ curveRadius }),
+  setCurveAngle: (curveAngle) => set({ curveAngle }),
+  setInclineAngle: (inclineAngle) => set({ inclineAngle }),
+  setScreenGain: (screenGain) => set({ screenGain }),
+  setSurfaceReflectance: (surfaceReflectance) => set({ surfaceReflectance }),
+  setAmbientLux: (ambientLux) => set({ ambientLux }),
+  setGridRes: (gridRes) => set({ gridRes }),
+  setProjectors: (projs) => set((state) => ({
+    projectors: typeof projs === 'function' ? projs(state.projectors) : projs
+  })),
+  setSelectedProjId: (selectedProjId) => set({ selectedProjId }),
+  setDefaultProjectorLumens: (defaultProjectorLumens) => set({ defaultProjectorLumens }),
+  setBlendOverlap: (blendOverlap) => set({ blendOverlap }),
+  setShowHotDarkSpots: (showHotDarkSpots) => set({ showHotDarkSpots }),
+  setShowIsoContours: (showIsoContours) => set({ showIsoContours }),
+  setActiveTab: (activeTab) => set({ activeTab }),
+  setAdvancedMode: (advancedMode) => set({ advancedMode }),
+
+  importFromPlannerSurface: (surface: SurfaceItem, lumensOverride?: number) => {
+    const lm = lumensOverride || get().defaultProjectorLumens || 10000;
+    const wM = surface.widthM || 8.0;
+    const hM = surface.heightM || 4.0;
+    const cols = Math.max(1, surface.cols || 1);
+    const rows = Math.max(1, surface.rows || 1);
+    const throwDist = surface.throwDistM || 4.5;
+    const throwRatio = surface.throwRatio || 0.8;
+
+    // Yüzey tipi eşleme
+    let geom: SurfaceGeometryType = 'flat';
+    if (surface.type === 'floor') {
+      geom = 'floor';
+    } else if (surface.type === 'ceiling') {
+      geom = 'ceiling';
+    } else if (surface.geometry === 'concave_arc' || surface.geometry === 'cylinder_360' || surface.geometry === 'dome' || surface.geometry === 'sphere') {
+      geom = 'curved';
+    }
+
+    // Projektör dizilimini oluştur
+    const newProjectors: Projector3DConfig[] = [];
+    const colors = ['#38bdf8', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6'];
+
+    // Overlap oranına göre adım hesabı
+    const ovRatioX = surface.overlapX ? surface.overlapX / 100 : 0.15;
+    const ovRatioY = surface.overlapY ? surface.overlapY / 100 : 0.10;
+
+    const singleW = wM / Math.max(1, (cols - (cols - 1) * ovRatioX));
+    const stepW = cols > 1 ? singleW * (1 - ovRatioX) : singleW;
+    const singleH = hM / Math.max(1, (rows - (rows - 1) * ovRatioY));
+    const stepH = rows > 1 ? singleH * (1 - ovRatioY) : singleH;
+
+    let projCounter = 1;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const id = `proj-surf-${surface.id}-${projCounter}`;
+        const name = `${surface.name} - PJ ${projCounter} (${c + 1}.${r + 1})`;
+        
+        // Merkez koordinatları
+        const posX = +(c * stepW + singleW / 2).toFixed(2);
+        const posY = +(r * stepH + singleH / 2).toFixed(2);
+        const posZ = +throwDist.toFixed(2);
+
+        newProjectors.push({
+          id,
+          name,
+          model: 'Proje Projektörü',
+          ansiLumens: lm,
+          efficiency: 0.90,
+          pos: [posX, posY, posZ],
+          target: [posX, posY, 0],
+          yawDeg: 0,
+          pitchDeg: 0,
+          rollDeg: 0,
+          throwRatio: throwRatio,
+          zoom: 1.0,
+          lensModel: `Lens TR ${throwRatio}:1`,
+          cornerUniformity: 0.85,
+          photometricSource: 'ansi_cosine',
+          enabled: true,
+          color: colors[(projCounter - 1) % colors.length]
+        });
+        projCounter++;
+      }
+    }
+
+    set({
+      selectedSurfaceId: surface.id,
+      screenW: wM,
+      screenH: hM,
+      geometry: geom,
+      curveRadius: surface.radiusM || 6.0,
+      curveAngle: surface.angleDeg || 90,
+      projectors: newProjectors,
+      selectedProjId: newProjectors[0]?.id || 'proj-1'
+    });
+  },
+
+  updateSelectedProjector: (patch: Partial<Projector3DConfig>) => {
+    set((state) => ({
+      projectors: state.projectors.map((p) =>
+        p.id === state.selectedProjId ? { ...p, ...patch } : p
+      )
+    }));
+  },
+
+  addProjector: () => {
+    const state = get();
+    const newIdx = state.projectors.length + 1;
+    const newId = `proj-${Date.now()}`;
+    const colors = ['#38bdf8', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#06b6d4'];
+    const newProj: Projector3DConfig = {
+      id: newId,
+      name: `Projektör ${newIdx}`,
+      model: '12K ANSI Laser',
+      ansiLumens: state.defaultProjectorLumens || 10000,
+      efficiency: 0.90,
+      pos: [+(newIdx * 1.5).toFixed(2), +(state.screenH / 2).toFixed(2), 4.5],
+      target: [+(newIdx * 1.5).toFixed(2), +(state.screenH / 2).toFixed(2), 0],
+      yawDeg: 0,
+      pitchDeg: 0,
+      rollDeg: 0,
+      throwRatio: 0.8,
+      zoom: 1.0,
+      cornerUniformity: 0.85,
+      photometricSource: 'ansi_cosine',
+      enabled: true,
+      color: colors[newIdx % colors.length]
+    };
+    set({
+      projectors: [...state.projectors, newProj],
+      selectedProjId: newId
+    });
+  },
+
+  removeProjector: (id: string) => {
+    const state = get();
+    if (state.projectors.length <= 1) return;
+    const filtered = state.projectors.filter((p) => p.id !== id);
+    set({
+      projectors: filtered,
+      selectedProjId: state.selectedProjId === id ? filtered[0].id : state.selectedProjId
+    });
+  }
+}));

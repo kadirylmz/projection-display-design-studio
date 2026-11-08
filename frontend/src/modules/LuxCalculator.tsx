@@ -7,9 +7,10 @@ import {
   Projector3DConfig,
   Surface3DConfig,
   PhotometricSimulationResult,
-  SurfaceGeometryType,
-  IESData
+  SurfaceGeometryType
 } from '../engine/photometrics';
+import { usePlannerStore } from '../plannerStore';
+import { usePhotometricStore } from '../photometricStore';
 
 interface ScenarioComparisonItem {
   name: string;
@@ -25,70 +26,60 @@ interface ScenarioComparisonItem {
 }
 
 export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
-  // Görünüm Modu ve Sekmeler
-  const [activeTab, setActiveTab] = useState<'heatmap' | 'ansi9' | 'overlap' | 'scenarios' | '3d'>('heatmap');
-  const [advancedMode, setAdvancedMode] = useState<boolean>(true);
+  // Proje Store (İçerik Planlama Yüzeyleri)
+  const plannerSurfaces = usePlannerStore(state => state.surfaces);
 
-  // Yüzey Parametreleri
-  const [screenW, setScreenW] = useState<number>(6); // metre cinsinden default
-  const [screenH, setScreenH] = useState<number>(3.375); // 16:9 oran
-  const [geometry, setGeometry] = useState<SurfaceGeometryType>('flat');
-  const [curveRadius, setCurveRadius] = useState<number>(8);
-  const [curveAngle, setCurveAngle] = useState<number>(60);
-  const [inclineAngle, setInclineAngle] = useState<number>(0);
-  const [screenGain, setScreenGain] = useState<number>(1.0);
-  const [surfaceReflectance, setSurfaceReflectance] = useState<number>(0.85);
-  const [ambientLux, setAmbientLux] = useState<number>(20); // 20 lx müze ortamı default
+  // Kalıcı Fotometrik Zustand Store
+  const {
+    selectedSurfaceId,
+    screenW,
+    screenH,
+    geometry,
+    curveRadius,
+    curveAngle,
+    inclineAngle,
+    screenGain,
+    surfaceReflectance,
+    ambientLux,
+    gridRes,
+    projectors,
+    selectedProjId,
+    blendOverlap,
+    showHotDarkSpots,
+    showIsoContours,
+    activeTab,
+    advancedMode,
+    defaultProjectorLumens,
+    setScreenW,
+    setScreenH,
+    setGeometry,
+    setCurveRadius,
+    setCurveAngle,
+    setInclineAngle,
+    setScreenGain,
+    setSurfaceReflectance,
+    setAmbientLux,
+    setGridRes,
+    setProjectors,
+    setSelectedProjId,
+    setDefaultProjectorLumens,
+    setBlendOverlap,
+    setShowHotDarkSpots,
+    setShowIsoContours,
+    setActiveTab,
+    setAdvancedMode,
+    importFromPlannerSurface,
+    updateSelectedProjector,
+    addProjector,
+    removeProjector
+  } = usePhotometricStore();
 
-  // Grid Çözünürlüğü
-  const [gridRes, setGridRes] = useState<'15x10' | '30x20' | '50x30' | '80x45'>('30x20');
-
-  // Projektörler Listesi
-  const [projectors, setProjectors] = useState<Projector3DConfig[]>([
-    {
-      id: 'proj-1',
-      name: 'Projektör 1 (Sol/Ana)',
-      model: 'Barco / Panasonic 12K',
-      ansiLumens: 12000,
-      efficiency: 0.90,
-      pos: [1.8, 1.7, 4.2],
-      target: [2.0, 1.7, 0],
-      yawDeg: 0,
-      pitchDeg: 0,
-      rollDeg: 0,
-      throwRatio: 1.4,
-      zoom: 1.0,
-      lensModel: 'Standart Zoom Lens 1.2-1.8:1',
-      cornerUniformity: 0.85,
-      photometricSource: 'ansi_cosine',
-      enabled: true,
-      color: '#38bdf8'
-    },
-    {
-      id: 'proj-2',
-      name: 'Projektör 2 (Sağ/Overlap)',
-      model: 'Barco / Panasonic 12K',
-      ansiLumens: 12000,
-      efficiency: 0.90,
-      pos: [4.2, 1.7, 4.2],
-      target: [4.0, 1.7, 0],
-      yawDeg: 0,
-      pitchDeg: 0,
-      rollDeg: 0,
-      throwRatio: 1.4,
-      zoom: 1.0,
-      lensModel: 'Standart Zoom Lens 1.2-1.8:1',
-      cornerUniformity: 0.85,
-      photometricSource: 'ansi_cosine',
-      enabled: true,
-      color: '#a855f7'
+  // İlk açılışta projede tanımlı yüzey varsa otomatik senkronize et (eğer custom bırakılmışsa ve hiç projektör seçilmemişse)
+  useEffect(() => {
+    if (selectedSurfaceId === 'custom' && plannerSurfaces.length > 0 && projectors.length <= 2) {
+      importFromPlannerSurface(plannerSurfaces[0], defaultProjectorLumens);
     }
-  ]);
-
-  const [selectedProjId, setSelectedProjId] = useState<string>('proj-1');
-  const [blendOverlap, setBlendOverlap] = useState<boolean>(true);
-  const [showHotDarkSpots, setShowHotDarkSpots] = useState<boolean>(true);
-  const [showIsoContours, setShowIsoContours] = useState<boolean>(false);
+  }, [plannerSurfaces, selectedSurfaceId, importFromPlannerSurface, defaultProjectorLumens, projectors.length]);
 
   // Hover Durumu (Isı Haritası Tooltip)
   const [hoveredCell, setHoveredCell] = useState<{
@@ -141,7 +132,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       rows,
       blendOverlap
     );
-  }, [projectors, surfaceConfig, cols, rows, blendOverlap]);
+  }, [surfaceConfig, projectors, cols, rows, blendOverlap]);
 
   // Canvas Çizimi (Heatmap)
   useEffect(() => {
@@ -180,7 +171,6 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       const numSteps = 5;
       for (let s = 1; s < numSteps; s++) {
         const threshold = min + (s / numSteps) * (max - min);
-        // Basit dikey/yatay seviye eşik çizgileri belirteci
         ctx.fillStyle = 'rgba(255,255,255,0.7)';
         ctx.font = '9px monospace';
         ctx.fillText(`${Math.round(threshold)} lx`, 8, (s / numSteps) * h);
@@ -259,13 +249,10 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         if (!cell) continue;
 
         if (cell.overlapCount > 1) {
-          // Örtüşme Bölgesi: Canlı Mor/Pembe
           ctx.fillStyle = 'rgba(217, 70, 239, 0.75)';
         } else if (cell.overlapCount === 1) {
-          // Tek Projektör: Mavi / Camgöbeği
           ctx.fillStyle = 'rgba(14, 165, 233, 0.45)';
         } else {
-          // Işık Düşmeyen Bölge: Koyu Gri
           ctx.fillStyle = '#0f172a';
         }
         ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
@@ -328,62 +315,22 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     reader.readAsText(file);
   };
 
-  // Yeni Projektör Ekleme
-  const handleAddProjector = () => {
-    const newIdx = projectors.length + 1;
-    const newProj: Projector3DConfig = {
-      id: `proj-${Date.now()}`,
-      name: `Projektör ${newIdx}`,
-      model: '12K ANSI Laser',
-      ansiLumens: 12000,
-      efficiency: 0.90,
-      pos: [round(newIdx * 1.5, 2), 1.7, 4.2],
-      target: [round(newIdx * 1.5, 2), 1.7, 0],
-      yawDeg: 0,
-      pitchDeg: 0,
-      rollDeg: 0,
-      throwRatio: 1.4,
-      zoom: 1.0,
-      cornerUniformity: 0.85,
-      photometricSource: 'ansi_cosine',
-      enabled: true,
-      color: ['#38bdf8', '#a855f7', '#10b981', '#f59e0b', '#ec4899'][newIdx % 5]
-    };
-    setProjectors(prev => [...prev, newProj]);
-    setSelectedProjId(newProj.id);
-  };
-
-  // Projektör Kaldırma
-  const handleRemoveProjector = (id: string) => {
-    if (projectors.length <= 1) return;
-    setProjectors(prev => prev.filter(p => p.id !== id));
-    if (selectedProjId === id) {
-      setSelectedProjId(projectors[0].id);
-    }
-  };
-
   // Seçili Projektör
   const currentProj = projectors.find(p => p.id === selectedProjId) || projectors[0];
 
-  const updateSelectedProj = (patch: Partial<Projector3DConfig>) => {
-    setProjectors(prev => prev.map(p => p.id === selectedProjId ? { ...p, ...patch } : p));
-  };
-
-  // Senaryo Karşılaştırma Listesi (Örnek Parametreler)
+  // Senaryo Karşılaştırma Listesi
   const comparisonScenarios: ScenarioComparisonItem[] = useMemo(() => {
     const list = [
-      { name: 'Giriş Seviyesi (7.000 lm)', lumens: 7000, dist: 3.8 },
-      { name: 'Mevcut Kurulum (12.000 lm)', lumens: currentProj?.ansiLumens || 12000, dist: 4.2 },
-      { name: 'Yüksek Işık / Gün Işığı (16.000 lm)', lumens: 16000, dist: 4.5 },
-      { name: 'Büyük Mekan / Mapping (20.000 lm)', lumens: 20000, dist: 5.2 }
+      { name: 'Giriş / Ekonomik (7.000 lm)', lumens: 7000, dist: 3.8 },
+      { name: 'Mevcut Kurulum (' + (currentProj?.ansiLumens || 10000).toLocaleString('tr-TR') + ' lm)', lumens: currentProj?.ansiLumens || 10000, dist: currentProj?.pos[2] || 4.5 },
+      { name: 'Yüksek Işık (16.000 lm)', lumens: 16000, dist: 4.8 },
+      { name: 'Büyük Mekan / Mapping (20.000 lm)', lumens: 20000, dist: 5.5 }
     ];
 
     const wM = toMeters(screenW, unit);
     const hM = toMeters(screenH, unit);
-    const area = Math.max(0.01, wM * hM);
 
     return list.map(item => {
-      // Simülasyon modeliyle yaklaşık senaryo karşılaştırması
       const testProj: Projector3DConfig[] = [{
         ...currentProj,
         ansiLumens: item.lumens,
@@ -433,16 +380,45 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     a.click();
   };
 
+  // Açıklayıcı Değerlendirme Etiketleri
+  const getLuxEvaluation = (avgLux: number) => {
+    if (avgLux < 200) return { text: '⚠ Düşük Işık (Karanlık Ortam Şart)', color: 'text-amber-400 bg-amber-950/40 border-amber-800' };
+    if (avgLux < 500) return { text: '✓ Müze & Sergi İdeal (300-500 Lux)', color: 'text-emerald-400 bg-emerald-950/40 border-emerald-800' };
+    if (avgLux < 800) return { text: '✓ Canlı ve Parlak Görsel', color: 'text-sky-400 bg-sky-950/40 border-sky-800' };
+    return { text: '🌟 Gün Işığı / Yüksek Aydınlık Standardı', color: 'text-purple-400 bg-purple-950/40 border-purple-800' };
+  };
+
+  const getUniformityEvaluation = (u0: number) => {
+    if (u0 >= 0.75) return { text: '✓ Mükemmel Homojenlik (Köşeler Eşit)', color: 'text-emerald-400' };
+    if (u0 >= 0.60) return { text: '✓ Kabul Edilebilir Standart', color: 'text-sky-400' };
+    return { text: '⚠ Köşelerde Kararma (Vignette) Riski', color: 'text-amber-400' };
+  };
+
+  const getContrastEvaluation = (acr: number) => {
+    if (acr < 10) return { text: '❌ Soluk / Yıkanmış (Ortam Fazla Aydınlık)', color: 'text-red-400' };
+    if (acr < 20) return { text: '⚠ Temel Okunabilirlik Sınırı', color: 'text-amber-400' };
+    if (acr < 50) return { text: '✓ Müze & Deneyim İçin İdeal', color: 'text-emerald-400' };
+    return { text: '🌟 Sinematik Yüksek Kontrast', color: 'text-purple-400' };
+  };
+
+  const luxEval = getLuxEvaluation(simResult.avgLux);
+  const uniEval = getUniformityEvaluation(simResult.uniformityU0);
+  const acrEval = getContrastEvaluation(simResult.ambientContrastRatio);
+
   return (
-    <div className="flex flex-col lg:grid lg:grid-cols-[380px_1fr] gap-4 h-full text-slate-100 p-2 sm:p-4 overflow-hidden">
+    <div className="flex flex-col lg:grid lg:grid-cols-[400px_1fr] gap-4 h-full text-slate-100 p-2 sm:p-4 overflow-hidden">
+      
       {/* SOL PANEL: KONTROLLER VE PARAMETRELER */}
-      <div className="flex flex-col gap-3 bg-slate-900 border border-slate-800 rounded-xl p-4 overflow-y-auto max-h-[85vh] lg:max-h-full text-xs sm:text-sm">
+      <div className="flex flex-col gap-3 bg-slate-900 border border-slate-800 rounded-xl p-4 overflow-y-auto max-h-[85vh] lg:max-h-full text-xs sm:text-sm shadow-xl">
         
         {/* Başlık ve Mod Seçimi */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-2">
           <div>
-            <h2 className="font-bold text-base text-sky-400">Photometric Studio</h2>
-            <p className="text-[11px] text-slate-400">Point-by-Point Lux Simulation</p>
+            <h2 className="font-bold text-base text-sky-400 flex items-center gap-2">
+              <span>Fotometrik Simülasyon</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800">Kalıcı Hafıza</span>
+            </h2>
+            <p className="text-[11px] text-slate-400">Noktadan Noktaya Gerçek Lux & Nits Analizi</p>
           </div>
           <label className="flex items-center gap-1.5 text-xs bg-slate-800 px-2 py-1 rounded cursor-pointer border border-slate-700">
             <input
@@ -451,16 +427,73 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               onChange={e => setAdvancedMode(e.target.checked)}
               className="rounded text-sky-500"
             />
-            <span className="font-medium text-slate-300">Gelişmiş Mod</span>
+            <span className="font-medium text-slate-300">Gelişmiş</span>
           </label>
+        </div>
+
+        {/* 🌟 PROJE İLE OTOMATİK SENKRONİZASYON (KULLANICININ ZATEN GİRDİĞİ YÜZEY VE PROJEKTÖRLER) */}
+        <div className="space-y-2 bg-gradient-to-r from-sky-950/40 via-slate-950 to-slate-950 p-3 rounded-lg border border-sky-900/60 shadow">
+          <div className="flex items-center justify-between">
+            <label className="font-bold text-sky-300 text-xs flex items-center gap-1.5">
+              <span>🎯 Projedeki Yüzeyden Aktar</span>
+            </label>
+            <span className="text-[10px] text-slate-400">
+              {plannerSurfaces.length} Yüzey Mevcut
+            </span>
+          </div>
+
+          <p className="text-[11px] text-slate-300 leading-tight">
+            İçerik Planlama'da tasarladığınız duvar/zeminleri tek tıkla buraya aktarabilirsiniz; projektörler ve koordinatlar otomatik yüklenir.
+          </p>
+
+          <div className="flex gap-2 items-center pt-1">
+            <select
+              className="flex-1 bg-slate-900 border border-sky-700/60 rounded px-2 py-1.5 text-xs text-sky-200 font-medium outline-none focus:border-sky-400"
+              value={selectedSurfaceId}
+              onChange={e => {
+                const sid = e.target.value;
+                if (sid === 'custom') {
+                  usePhotometricStore.setState({ selectedSurfaceId: 'custom' });
+                } else {
+                  const found = plannerSurfaces.find(s => s.id === sid);
+                  if (found) {
+                    importFromPlannerSurface(found, defaultProjectorLumens);
+                  }
+                }
+              }}
+            >
+              {plannerSurfaces.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.name} — {s.widthM}m × {s.heightM}m ({s.cols * s.rows} Projektör)
+                </option>
+              ))}
+              <option value="custom">✏ Özel / Manuel Geometri</option>
+            </select>
+
+            {selectedSurfaceId !== 'custom' && (
+              <button
+                type="button"
+                onClick={() => {
+                  const found = plannerSurfaces.find(s => s.id === selectedSurfaceId);
+                  if (found) importFromPlannerSurface(found, defaultProjectorLumens);
+                }}
+                className="px-2 py-1.5 bg-sky-900/80 hover:bg-sky-800 text-sky-200 rounded text-xs border border-sky-700/70"
+                title="Projeden Tekrar Yükle"
+              >
+                🔄
+              </button>
+            )}
+          </div>
         </div>
 
         {/* PROJEKSİYON YÜZEYİ GEOMETRİSİ */}
         <div className="space-y-2 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
-          <h3 className="font-semibold text-slate-200 flex items-center justify-between text-xs tracking-wider uppercase">
-            <span>1. Yüzey Geometrisi</span>
-            <span className="text-[10px] text-sky-400 lowercase">{geometry}</span>
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-slate-200 text-xs tracking-wider uppercase">1. Yüzey Geometrisi</h3>
+            <span className="text-[10px] text-slate-400">
+              Alan: <b className="text-sky-300 font-mono">{round(screenW * screenH, 2)} m²</b>
+            </span>
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -488,7 +521,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
 
           <div>
-            <label className="text-[11px] text-slate-400">Yüzey Tipi & Geometri</label>
+            <label className="text-[11px] text-slate-400">Yüzey Şekli</label>
             <select
               className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs outline-none"
               value={geometry}
@@ -527,24 +560,10 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
             </div>
           )}
 
-          {geometry === 'inclined' && (
-            <div>
-              <label className="text-[10px] text-slate-400">Eğim Açısı (° - 0: Düşey, 45: Yarı Eğim)</label>
-              <input
-                type="number"
-                step="5"
-                min="0"
-                max="90"
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
-                value={inclineAngle}
-                onChange={e => setInclineAngle(+e.target.value)}
-              />
-            </div>
-          )}
-
+          {/* Screen Gain & Yansıtma */}
           <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
             <div>
-              <label className="text-[11px] text-slate-400" title="Screen Gain yüzeye gelen Lux'ü değiştirmez, yansıyan Nits parlaklığını çarpar.">
+              <label className="text-[11px] text-slate-400" title="Screen Gain gelen Lux'ü değiştirmez; yansıyan Nits parlaklığını artırır.">
                 Screen Gain: <span className="text-sky-300 font-bold">{screenGain}x</span>
               </label>
               <input
@@ -580,34 +599,25 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
 
           <div className="grid grid-cols-4 gap-1 text-[10px]">
-            <button
-              type="button"
-              onClick={() => setAmbientLux(5)}
-              className={`p-1 rounded text-center border ${ambientLux === 5 ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
-            >
-              5 lx<br/><span className="text-[9px] opacity-75">Karanlık</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setAmbientLux(20)}
-              className={`p-1 rounded text-center border ${ambientLux === 20 ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
-            >
-              20 lx<br/><span className="text-[9px] opacity-75">Müze</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setAmbientLux(100)}
-              className={`p-1 rounded text-center border ${ambientLux === 100 ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
-            >
-              100 lx<br/><span className="text-[9px] opacity-75">Galeri</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setAmbientLux(300)}
-              className={`p-1 rounded text-center border ${ambientLux === 300 ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold' : 'bg-slate-900 border-slate-800 text-slate-400'}`}
-            >
-              300 lx<br/><span className="text-[9px] opacity-75">Ofis</span>
-            </button>
+            {[
+              { val: 5, label: 'Karanlık', desc: '5 lx' },
+              { val: 20, label: 'Müze', desc: '20 lx' },
+              { val: 100, label: 'Galeri', desc: '100 lx' },
+              { val: 300, label: 'Ofis', desc: '300 lx' },
+            ].map(item => (
+              <button
+                key={item.val}
+                type="button"
+                onClick={() => setAmbientLux(item.val)}
+                className={`p-1 rounded text-center border transition ${
+                  ambientLux === item.val
+                    ? 'bg-amber-950/60 border-amber-500 text-amber-300 font-bold shadow'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {item.desc}<br/><span className="text-[9px] opacity-75">{item.label}</span>
+              </button>
+            ))}
           </div>
 
           <input
@@ -624,10 +634,12 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         {/* ÇOKLU PROJEKTÖR YÖNETİMİ */}
         <div className="space-y-2 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-slate-200 text-xs tracking-wider uppercase">3. Projektörler ({projectors.length})</h3>
+            <h3 className="font-semibold text-slate-200 text-xs tracking-wider uppercase">
+              3. Projektörler ({projectors.length})
+            </h3>
             <button
               type="button"
-              onClick={handleAddProjector}
+              onClick={addProjector}
               className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-medium"
             >
               + Projektör Ekle
@@ -635,19 +647,19 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
 
           {/* Projektör Sekmeleri */}
-          <div className="flex gap-1 overflow-x-auto pb-1">
+          <div className="flex gap-1 overflow-x-auto pb-1 max-w-full">
             {projectors.map((p, idx) => (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => setSelectedProjId(p.id)}
-                className={`flex-1 min-w-[70px] text-xs py-1 px-2 rounded border truncate text-center ${
+                className={`min-w-[64px] text-xs py-1 px-2 rounded border truncate text-center transition ${
                   p.id === selectedProjId
-                    ? 'border-sky-500 bg-sky-950/50 text-sky-200 font-semibold'
+                    ? 'border-sky-500 bg-sky-950/50 text-sky-200 font-semibold shadow'
                     : 'border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
                 }`}
               >
-                P{idx + 1} {p.enabled ? '' : '(Kapalı)'}
+                PJ {idx + 1} {!p.enabled ? '(Kapalı)' : ''}
               </button>
             ))}
           </div>
@@ -660,21 +672,21 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                   type="text"
                   className="bg-slate-900 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-200 font-medium w-2/3"
                   value={currentProj.name}
-                  onChange={e => updateSelectedProj({ name: e.target.value })}
+                  onChange={e => updateSelectedProjector({ name: e.target.value })}
                 />
                 <div className="flex items-center gap-2">
                   <label className="text-[11px] text-slate-400 flex items-center gap-1 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={currentProj.enabled}
-                      onChange={e => updateSelectedProj({ enabled: e.target.checked })}
+                      onChange={e => updateSelectedProjector({ enabled: e.target.checked })}
                     />
                     Aktif
                   </label>
                   {projectors.length > 1 && (
                     <button
                       type="button"
-                      onClick={() => handleRemoveProjector(currentProj.id)}
+                      onClick={() => removeProjector(currentProj.id)}
                       className="text-red-400 hover:text-red-300 text-xs font-bold px-1"
                       title="Projektörü Sil"
                     >
@@ -684,20 +696,35 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
               </div>
 
+              {/* ANSI Lümen ve Toplu Güncelleme */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[11px] text-slate-400">ANSI Lümen (lm)</label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-[11px] text-slate-400">ANSI Lümen (lm)</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetLm = currentProj.ansiLumens;
+                        setDefaultProjectorLumens(targetLm);
+                        setProjectors(prev => prev.map(p => ({ ...p, ansiLumens: targetLm })));
+                      }}
+                      className="text-[9px] text-sky-400 hover:underline"
+                      title="Tüm projektörlere bu lümen değerini uygula"
+                    >
+                      Tümüne Uygula
+                    </button>
+                  </div>
                   <input
                     type="number"
                     step="500"
                     min="100"
                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-sky-400 font-mono font-bold"
                     value={currentProj.ansiLumens}
-                    onChange={e => updateSelectedProj({ ansiLumens: Math.max(1, +e.target.value) })}
+                    onChange={e => updateSelectedProjector({ ansiLumens: Math.max(1, +e.target.value) })}
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-400" title="Optik verim ve kalibrasyon katsayısı (0.1 - 1.0)">
+                  <label className="text-[11px] text-slate-400" title="Lens geçirgenliği, optik toz ve kalibrasyon katsayısı">
                     Optik Verim (η): <span className="font-bold text-slate-200">{round(currentProj.efficiency, 2)}</span>
                   </label>
                   <input
@@ -707,7 +734,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     max="1.0"
                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
                     value={currentProj.efficiency}
-                    onChange={e => updateSelectedProj({ efficiency: Math.max(0.1, Math.min(1.0, +e.target.value)) })}
+                    onChange={e => updateSelectedProjector({ efficiency: Math.max(0.1, Math.min(1.0, +e.target.value)) })}
                   />
                 </div>
               </div>
@@ -723,7 +750,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                       step="0.1"
                       className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono"
                       value={currentProj.pos[0]}
-                      onChange={e => updateSelectedProj({ pos: [+e.target.value, currentProj.pos[1], currentProj.pos[2]] })}
+                      onChange={e => updateSelectedProjector({ pos: [+e.target.value, currentProj.pos[1], currentProj.pos[2]] })}
                     />
                   </div>
                   <div>
@@ -733,17 +760,17 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                       step="0.1"
                       className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono"
                       value={currentProj.pos[1]}
-                      onChange={e => updateSelectedProj({ pos: [currentProj.pos[0], +e.target.value, currentProj.pos[2]] })}
+                      onChange={e => updateSelectedProjector({ pos: [currentProj.pos[0], +e.target.value, currentProj.pos[2]] })}
                     />
                   </div>
                   <div>
-                    <label className="text-[9px] text-slate-500">Z (Mesafe)</label>
+                    <label className="text-[9px] text-slate-500">Z (Mesafe D)</label>
                     <input
                       type="number"
                       step="0.1"
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono"
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-amber-300 font-bold"
                       value={currentProj.pos[2]}
-                      onChange={e => updateSelectedProj({ pos: [currentProj.pos[0], currentProj.pos[1], Math.max(0.1, +e.target.value)] })}
+                      onChange={e => updateSelectedProjector({ pos: [currentProj.pos[0], currentProj.pos[1], Math.max(0.1, +e.target.value)] })}
                     />
                   </div>
                 </div>
@@ -755,11 +782,11 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                   <label className="text-[10px] text-slate-400">Throw Ratio (Atım)</label>
                   <input
                     type="number"
-                    step="0.1"
+                    step="0.05"
                     min="0.2"
                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
                     value={currentProj.throwRatio}
-                    onChange={e => updateSelectedProj({ throwRatio: Math.max(0.1, +e.target.value) })}
+                    onChange={e => updateSelectedProjector({ throwRatio: Math.max(0.1, +e.target.value) })}
                   />
                 </div>
                 <div>
@@ -771,22 +798,22 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     max="1.0"
                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs"
                     value={currentProj.cornerUniformity}
-                    onChange={e => updateSelectedProj({ cornerUniformity: Math.max(0.4, Math.min(1.0, +e.target.value)) })}
+                    onChange={e => updateSelectedProjector({ cornerUniformity: Math.max(0.4, Math.min(1.0, +e.target.value)) })}
                   />
                 </div>
               </div>
 
-              {/* IES / LDT Dosyası Yükleme */}
+              {/* IES Dosyası Yükleme */}
               <div className="pt-2 border-t border-slate-800">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] text-slate-300 font-medium">Fotometrik Veri Kaynağı</span>
+                  <span className="text-[11px] text-slate-300 font-medium">Fotometrik Veri</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${currentProj.photometricSource === 'ies' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-slate-800 text-slate-400'}`}>
                     {currentProj.photometricSource === 'ies' ? 'Doğrulanmış IES' : 'ANSI Kosinüs (Tahmini)'}
                   </span>
                 </div>
                 <div className="flex gap-2 items-center">
                   <label className="flex-1 cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-300 text-center py-1 px-2 rounded border border-slate-700 text-xs">
-                    📁 .IES Dosyası Seç
+                    📁 IES / LDT Dosyası Yükle
                     <input
                       type="file"
                       accept=".ies,.ldt"
@@ -800,7 +827,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                   {currentProj.photometricSource === 'ies' && (
                     <button
                       type="button"
-                      onClick={() => updateSelectedProj({ photometricSource: 'ansi_cosine', iesData: undefined })}
+                      onClick={() => updateSelectedProjector({ photometricSource: 'ansi_cosine', iesData: undefined })}
                       className="text-xs text-slate-400 hover:text-red-400"
                     >
                       Kaldır
@@ -812,7 +839,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           )}
         </div>
 
-        {/* HESAPLAMA AYARLARI */}
+        {/* GRID ÇÖZÜNÜRLÜĞÜ */}
         <div className="flex items-center justify-between bg-slate-950/60 p-2 rounded-lg border border-slate-800 text-xs">
           <label className="text-slate-400">Grid Çözünürlüğü:</label>
           <div className="flex gap-1">
@@ -821,7 +848,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                 key={res}
                 type="button"
                 onClick={() => setGridRes(res)}
-                className={`px-2 py-0.5 rounded text-[11px] ${gridRes === res ? 'bg-sky-600 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}
+                className={`px-2 py-0.5 rounded text-[11px] transition ${gridRes === res ? 'bg-sky-600 text-white font-bold' : 'bg-slate-800 text-slate-400'}`}
               >
                 {res}
               </button>
@@ -831,10 +858,10 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
 
       </div>
 
-      {/* SAĞ PANEL: SİMÜLASYON GÖRSELİ, SEKME İÇERİKLERİ VE ANALİZ TABLOLARI */}
+      {/* SAĞ PANEL: SİMÜLASYON GÖRSELİ, ANALİZ KARTLARI VE KULLANICI REHBERİ */}
       <div className="flex flex-col gap-3 min-w-0 overflow-y-auto">
 
-        {/* Üst Sekmeler */}
+        {/* Üst Sekmeler ve Dışa Aktarım */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-2 flex-wrap gap-2">
           <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
             <button
@@ -849,14 +876,14 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               onClick={() => setActiveTab('ansi9')}
               className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === 'ansi9' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
             >
-              ANSI 9-Nokta Analizi
+              ANSI 9-Nokta Testi
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('overlap')}
               className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === 'overlap' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
             >
-              Çoklu Örtüşme & Blend
+              Örtüşme (Overlap) & Blend
             </button>
             <button
               type="button"
@@ -865,9 +892,15 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
             >
               Senaryo Karşılaştırma
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('guide')}
+              className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === 'guide' ? 'bg-amber-600 text-white shadow' : 'text-amber-400 hover:text-amber-200'}`}
+            >
+              📖 Nasıl Yorumlanır?
+            </button>
           </div>
 
-          {/* Dışa Aktar Düğmeleri */}
           <div className="flex gap-2">
             <button
               type="button"
@@ -881,17 +914,17 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               onClick={exportCSV}
               className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs border border-slate-700"
             >
-              CSV Veri Aktar
+              CSV İndir
             </button>
           </div>
         </div>
 
-        {/* ANA GÖRSELLEŞTİRME ALANI (HEATMAP / ANSI9 / OVERLAP) */}
+        {/* 🌟 ANA GÖRSELLEŞTİRME: 2D ISI HARİTASI */}
         {activeTab === 'heatmap' && (
           <div className="space-y-3">
             {/* Isı Haritası Tuvali */}
             <div className="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center">
-              <div className="relative w-full max-w-[840px] aspect-[16/9] flex items-center justify-center bg-black/40 rounded-lg overflow-hidden">
+              <div className="relative w-full max-w-[840px] aspect-[16/9] flex items-center justify-center bg-black/50 rounded-lg overflow-hidden border border-slate-800/80">
                 <canvas
                   ref={heatmapCanvasRef}
                   width={640}
@@ -903,30 +936,30 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
 
                 {/* Hover Tooltip Bilgi Kartı */}
                 {hoveredCell && (
-                  <div className="absolute top-3 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 text-slate-100 p-2.5 rounded shadow-lg text-xs pointer-events-none space-y-1">
+                  <div className="absolute top-3 left-3 bg-slate-900/95 backdrop-blur-md border border-slate-700 text-slate-100 p-2.5 rounded-lg shadow-2xl text-xs pointer-events-none space-y-1">
                     <div className="font-semibold text-sky-400 flex items-center justify-between gap-4">
                       <span>Nokta: X: {round(hoveredCell.xM, 2)}m, Y: {round(hoveredCell.yM, 2)}m</span>
-                      <span className="text-[10px] bg-sky-950 px-1 rounded text-sky-300">
+                      <span className="text-[10px] bg-sky-950 px-1.5 py-0.5 rounded text-sky-300 border border-sky-800">
                         {hoveredCell.overlapCount > 1 ? `${hoveredCell.overlapCount} Projektör (Overlap)` : 'Tek Işık'}
                       </span>
                     </div>
                     <div className="text-sm font-mono font-bold text-emerald-400">
-                      {round(hoveredCell.lux, 1)} Lux
+                      {round(hoveredCell.lux, 1)} Lux (Aydınlık)
                     </div>
                     <div className="text-[11px] text-slate-300">
-                      Yansıyan Parlaklık: <span className="font-semibold text-amber-300">{round(hoveredCell.nits, 1)} cd/m²</span> ({round(hoveredCell.nits * 0.2919, 1)} fL)
+                      Gözlenen Parlaklık: <span className="font-semibold text-amber-300">{round(hoveredCell.nits, 1)} cd/m² (Nit)</span> ({round(hoveredCell.nits * 0.2919, 1)} fL)
                     </div>
                     {hoveredCell.perProjLux.length > 1 && (
                       <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-800">
-                        Projektörler: {hoveredCell.perProjLux.map((lx, i) => `P${i + 1}: ${round(lx, 0)} lx`).join(' + ')}
+                        Katkı: {hoveredCell.perProjLux.map((lx, i) => `PJ${i + 1}: ${round(lx, 0)} lx`).join(' + ')}
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Renk Skalası Lejantı (Gradient Bar) */}
+                {/* Renk Skalası Lejantı */}
                 <div className="absolute bottom-3 right-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded shadow text-xs flex flex-col gap-1 items-center">
-                  <span className="text-[10px] text-slate-400 font-mono">Lux Skalası</span>
+                  <span className="text-[10px] text-slate-300 font-mono">Işık Yoğunluğu Skalası</span>
                   <div className="w-48 h-3 rounded bg-gradient-to-r from-[#00008b] via-[#00ffff] via-[#00ff00] via-[#ffff00] via-[#ff8c00] to-[#ff0000]" />
                   <div className="w-full flex justify-between text-[10px] font-mono text-slate-300">
                     <span>{Math.round(simResult.minLux)} lx</span>
@@ -936,7 +969,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
               </div>
 
-              {/* Ekran Altı Kontrolleri */}
+              {/* Alt Kontroller */}
               <div className="w-full flex items-center justify-between text-xs text-slate-400 pt-2 px-2">
                 <div className="flex items-center gap-4">
                   <label className="flex items-center gap-1.5 cursor-pointer">
@@ -946,7 +979,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                       onChange={e => setShowHotDarkSpots(e.target.checked)}
                       className="rounded text-sky-500"
                     />
-                    Hotspot & Min Göster
+                    Tepe Noktaları Göster (HOT & MIN)
                   </label>
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
@@ -955,67 +988,105 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                       onChange={e => setShowIsoContours(e.target.checked)}
                       className="rounded text-sky-500"
                     />
-                    Eş-Lux Çizgileri (Iso-Lux)
+                    Eş-Lux Çizgileri
                   </label>
                 </div>
-                <div className="text-[11px] text-slate-500">
-                  {simResult.isEstimatedModel ? '⚠ Yaklaşık model (Kosinüs/Datasheet)' : '✓ IES Ölçüm Modeli'}
+                <div className="text-[11px] text-slate-400">
+                  {simResult.isEstimatedModel ? '⚠ Yaklaşık Datasheet/Kosinüs Modeli' : '✓ Doğrulanmış IES Modeli'}
                 </div>
               </div>
             </div>
 
-            {/* FOTOMETRİK ÖZET METRİK KARTLARI */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-                <div className="text-[11px] text-slate-400">Ortalama Aydınlık (E_avg)</div>
-                <div className="text-xl font-bold font-mono text-sky-400 mt-0.5">
-                  {Math.round(simResult.avgLux)} <span className="text-xs font-normal text-slate-400">Lux</span>
+            {/* 🌟 AÇIKLAYICI METRİK KARTLARI (NE ANLAMA GELDİĞİ VE MÜHENDİSLİK YORUMU) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5">
+              
+              {/* ORTALAMA LUX */}
+              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400 font-medium">Ortalama Aydınlık (Lux)</span>
+                    <span className="text-[10px] text-slate-500 font-mono">E_avg</span>
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-sky-400 mt-1">
+                    {Math.round(simResult.avgLux)} <span className="text-xs font-normal text-slate-400">Lux (lm/m²)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Min: <b className="text-sky-300">{Math.round(simResult.minLux)}</b> / Max: <b className="text-amber-300">{Math.round(simResult.maxLux)}</b> lx
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1">
-                  Min: {Math.round(simResult.minLux)} lx / Max: {Math.round(simResult.maxLux)} lx
-                </div>
-              </div>
-
-              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-                <div className="text-[11px] text-slate-400">Düzgünlük (Uniformity U0)</div>
-                <div className="text-xl font-bold font-mono text-emerald-400 mt-0.5">
-                  %{round(simResult.uniformityU0 * 100, 1)}
-                </div>
-                <div className="text-[10px] text-slate-500 mt-1">
-                  U0 = Emin/Eavg | U1 (Min/Max): %{round(simResult.uniformityU1 * 100, 1)}
-                </div>
-              </div>
-
-              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-                <div className="text-[11px] text-slate-400">Yansıyan Parlaklık (Luminance)</div>
-                <div className="text-xl font-bold font-mono text-amber-400 mt-0.5">
-                  {Math.round(simResult.avgLuminanceNits)} <span className="text-xs font-normal text-slate-400">cd/m²</span>
-                </div>
-                <div className="text-[10px] text-slate-500 mt-1">
-                  {round(simResult.avgLuminanceFL, 1)} Foot-Lambert (Gain {screenGain}x)
+                <div className={`mt-2 p-1.5 rounded text-[10.5px] border font-medium ${luxEval.color}`}>
+                  {luxEval.text}
                 </div>
               </div>
 
-              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800">
-                <div className="text-[11px] text-slate-400">Ortam Kontrastı (ACR)</div>
-                <div className="text-xl font-bold font-mono text-purple-400 mt-0.5">
-                  {round(simResult.ambientContrastRatio, 1)}:1
+              {/* DÜZGÜNLÜK (HOMOJENLİK) */}
+              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400 font-medium">Işık Düzgünlüğü (Uniformity)</span>
+                    <span className="text-[10px] text-slate-500 font-mono">U0 (Min/Ort)</span>
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
+                    %{round(simResult.uniformityU0 * 100, 1)}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    U1 (Min/Maks): <b className="text-slate-200">%{round(simResult.uniformityU1 * 100, 1)}</b>
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1">
-                  Ortam: {ambientLux} Lux ({ambientLux > 50 ? 'Yüksek' : 'İdeal'})
+                <div className="mt-2 p-1.5 rounded text-[10.5px] border border-slate-800 bg-slate-950 font-medium text-slate-300">
+                  <span className={uniEval.color}>{uniEval.text}</span>
                 </div>
               </div>
+
+              {/* YANSIYAN PARLAKLIK (NITS) */}
+              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400 font-medium">Gözlenen Parlaklık (Luminance)</span>
+                    <span className="text-[10px] text-slate-500 font-mono">Gain: {screenGain}x</span>
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-amber-400 mt-1">
+                    {Math.round(simResult.avgLuminanceNits)} <span className="text-xs font-normal text-slate-400">cd/m² (Nit)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Foot-Lambert: <b className="text-slate-200">{round(simResult.avgLuminanceFL, 1)} fL</b>
+                  </div>
+                </div>
+                <div className="mt-2 p-1.5 rounded text-[10.5px] border border-slate-800 bg-slate-950 font-medium text-slate-300">
+                  {simResult.avgLuminanceNits > 100 ? '✓ TV / LED netliğinde parlaklık' : '✓ Loş sinema standardı'}
+                </div>
+              </div>
+
+              {/* ORTAM KONTRASTI (ACR) */}
+              <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400 font-medium">Ortam Işığı Kontrastı (ACR)</span>
+                    <span className="text-[10px] text-slate-500 font-mono">Amb: {ambientLux} lx</span>
+                  </div>
+                  <div className="text-2xl font-bold font-mono text-purple-400 mt-1">
+                    {round(simResult.ambientContrastRatio, 1)}:1
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    {ambientLux === 0 ? 'Tamamen karanlık oda' : `${ambientLux} Lux ortam ışığı altında`}
+                  </div>
+                </div>
+                <div className="mt-2 p-1.5 rounded text-[10.5px] border border-slate-800 bg-slate-950 font-medium text-slate-300">
+                  <span className={acrEval.color}>{acrEval.text}</span>
+                </div>
+              </div>
+
             </div>
           </div>
         )}
 
-        {/* ANSI 9-NOKTA ANALİZİ SEKMESİ */}
+        {/* ANSI 9-NOKTA ANALİZİ */}
         {activeTab === 'ansi9' && (
           <div className="space-y-4 bg-slate-900 border border-slate-800 rounded-xl p-4">
             <div>
               <h3 className="font-semibold text-slate-200 text-sm">ANSI 9-Nokta Standart Fotometrik Ölçüm</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Yüzey 3x3 bölgeye ayrılarak merkez ve köşe noktalarında standart endüstri testi gerçekleştirilir.
+                Yüzey 3x3 bölgeye ayrılarak standart ANSI test noktalarındaki aydınlık ve homojenlik dağılımı ölçülür.
               </p>
             </div>
 
@@ -1056,14 +1127,14 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
         )}
 
-        {/* ÇOKLU ÖRTÜŞME & BLENDING SEKMESİ */}
+        {/* OVERLAP VE BLEND SEKMESİ */}
         {activeTab === 'overlap' && (
           <div className="space-y-4 bg-slate-900 border border-slate-800 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-slate-200 text-sm">Çoklu Projektör Örtüşme (Overlap) & Blend Analizi</h3>
+                <h3 className="font-semibold text-slate-200 text-sm">Çoklu Projektör Örtüşme (Overlap) & Blend Haritası</h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Aynı yüzey noktasına düşen projektör ışıklarının süperpozisyonu ve harmanlama kompanzasyonu.
+                  Projektörlerin yan yana geldiği hatlarda ışıkların süperpozisyonu ve harmanlama kompanzasyonu.
                 </p>
               </div>
               <label className="flex items-center gap-2 text-xs bg-slate-800 px-3 py-1.5 rounded border border-slate-700 cursor-pointer">
@@ -1073,7 +1144,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                   onChange={e => setBlendOverlap(e.target.checked)}
                   className="rounded text-sky-500"
                 />
-                <span className="font-medium text-slate-300">Soft-Edge Blending Dengeleme</span>
+                <span className="font-medium text-slate-300">Soft-Edge Blending Dengelemesi</span>
               </label>
             </div>
 
@@ -1087,36 +1158,24 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               <div className="flex gap-4 items-center justify-center pt-2 text-xs text-slate-400">
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded bg-[#0ea5e9]" />
-                  <span>Tek Projektör Alanı</span>
+                  <span>Tek Projektör Alanı (1x Işık)</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded bg-[#d946ef]" />
-                  <span>Örtüşme (Overlap) Bölgesi (Toplanan Işık)</span>
+                  <span>Örtüşme (Overlap) Bölgesi (Toplanan / Harmanlanan Işık)</span>
                 </div>
               </div>
-            </div>
-
-            <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
-              <span className="font-semibold text-slate-300 block">Matematiksel Süperpozisyon Kuralı:</span>
-              <p className="text-slate-400 font-mono text-[11px]">
-                E_total(x, y) = E1(x, y) + E2(x, y) + ... + En(x, y)
-              </p>
-              <p className="text-slate-400 text-[11px]">
-                {blendOverlap
-                  ? 'Soft-Edge Blending aktif: Örtüşme bölgesindeki aşırı parlaklık artışı (hotspot) doğrusal rampa maskesi ile dengelenmiştir.'
-                  : 'Harmansız mod: Örtüşen hücrelerde projektör aydınlıkları doğrudan toplanır, tepe parlaklık artar.'}
-              </p>
             </div>
           </div>
         )}
 
-        {/* SENARYO KARŞILAŞTIRMA SEKMESİ */}
+        {/* SENARYO KARŞILAŞTIRMA */}
         {activeTab === 'scenarios' && (
           <div className="space-y-4 bg-slate-900 border border-slate-800 rounded-xl p-4">
             <div>
-              <h3 className="font-semibold text-slate-200 text-sm">Farklı Lümen & Mesafe Senaryoları Karşılaştırması</h3>
+              <h3 className="font-semibold text-slate-200 text-sm">Farklı Lümen & Mesafe Senaryoları</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Aynı ekran geometrisi üzerinde farklı projektör modelleri ve atım mesafelerinin fotometrik karşılaştırması.
+                Mevcut yüzey boyutunda farklı güçteki cihazların aydınlık ve kontrast karşılaştırması.
               </p>
             </div>
 
@@ -1153,22 +1212,74 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
         )}
 
-        {/* FOTOMETRİK TEKNİK BİLGİ VE STANDARTLAR AÇIKLAMASI */}
-        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3 text-[11px] text-slate-400 space-y-1">
-          <div className="font-semibold text-slate-300">Fotometrik Hesaplama Yöntemi & Standartlar</div>
-          <div className="grid sm:grid-cols-2 gap-2 text-[10px]">
+        {/* 🌟 YENİ REHBER: "NASIL YORUMLANIR & NE ANLAMA GELİR?" */}
+        {activeTab === 'guide' && (
+          <div className="space-y-4 bg-slate-900 border border-slate-800 rounded-xl p-5 text-xs text-slate-300">
             <div>
-              <span className="text-slate-300 font-medium">Point-by-Point Formülü:</span> E = I(θ) · cos(α) / r²
-              <br/>
-              Burada I(θ) ilgili yöndeki Candela şiddetini, α ışın ile yüzey normali arasındaki açıyı, r ise projektör ile nokta arasındaki mesafeyi temsil eder.
+              <h3 className="font-bold text-base text-amber-400 flex items-center gap-2">
+                <span>📖 AV & Müze Projeksiyon Fotometri Rehberi</span>
+              </h3>
+              <p className="text-slate-400 text-xs mt-1">
+                Bu modüldeki teknik parametreleri pratik sahada nasıl yorumlayacağınızı ve nelere dikkat etmeniz gerektiğini aşağıdan inceleyebilirsiniz:
+              </p>
             </div>
-            <div>
-              <span className="text-slate-300 font-medium">Aydınlık (Lux) vs Parlaklık (Luminance):</span>
-              <br/>
-              Lux ekrana gelen ışık akısını temsil eder; Screen Gain Lux değerini değiştirmez. Yüzeyden göze yansıyan parlaklık L = E · Gain / π formülü ile cd/m² (Nit) cinsinden hesaplanır.
+
+            <div className="grid md:grid-cols-2 gap-4 pt-2">
+              <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800 space-y-2">
+                <span className="font-bold text-sky-400 block text-sm">1. Lux (Aydınlık) Nedir?</span>
+                <p className="text-slate-300 leading-relaxed">
+                  Projektörden çıkan ışığın ekranın 1 metrekaresine düşen miktarıdır ($lm/m^2$).
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-slate-400">
+                  <li><b>200 - 350 Lux:</b> Karartılmış tiyatro veya karanlık immersif oda için yeterli.</li>
+                  <li><b>400 - 600 Lux:</b> Müze, sergi ve deneyim alanları için altın standart.</li>
+                  <li><b>800+ Lux:</b> Pencereli, ışık alan veya gün ışığı sızan odalarda gereklidir.</li>
+                </ul>
+              </div>
+
+              <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800 space-y-2">
+                <span className="font-bold text-amber-400 block text-sm">2. cd/m² (Nits Parlaklık) Nedir?</span>
+                <p className="text-slate-300 leading-relaxed">
+                  Ekrana çarpan ışıktan izleyicinin gözüne yansıyan gerçek parlaklıktır (TV/monitör parlaklığı gibi).
+                </p>
+                <p className="text-slate-400 text-[11px]">
+                  <b>Önemli Fizik Kuralı:</b> Screen Gain yüzeye gelen Lux'ü değiştirmez. Ancak gain yüksekse izleyiciye yansıyan Nits değeri çarpanla artar (L = E · Gain / π).
+                </p>
+              </div>
+
+              <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800 space-y-2">
+                <span className="font-bold text-emerald-400 block text-sm">3. Düzgünlük (Uniformity U0)</span>
+                <p className="text-slate-300 leading-relaxed">
+                  Ekranın en karanlık köşesi ile ortalama ışık arasındaki orandır (U0 = Emin / Eavg).
+                </p>
+                <p className="text-slate-400 text-[11px]">
+                  <b>%70 ve Üzeri:</b> İnsan gözü köşelerdeki düşüşü algılayamaz, görüntü homojen görünür.<br/>
+                  <b>%50 Altı:</b> Köşelerde belirgin kararma (vignette) hissedilir.
+                </p>
+              </div>
+
+              <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800 space-y-2">
+                <span className="font-bold text-purple-400 block text-sm">4. Ortam Kontrastı (ACR)</span>
+                <p className="text-slate-300 leading-relaxed">
+                  Salondaki ortam aydınlığı (E_ortam) altında siyahların grileşmeden ne kadar net kalacağını gösterir.
+                </p>
+                <p className="text-slate-400 text-[11px]">
+                  <b>10:1:</b> Yazıların okunabildiği minimum sınır.<br/>
+                  <b>20:1 - 50:1:</b> Müze sergisi için zengin renk ve canlı görsel kalitesi.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800 space-y-1 text-slate-400">
+              <span className="font-semibold text-slate-200 block">🎨 Isı Haritası (Heatmap) Renk Skalası Anlamı:</span>
+              <p>
+                <b>Mavi:</b> Işığın zayıf kaldığı veya köşe düşüşü yaşanan loş bölgeler.<br/>
+                <b>Yeşil / Sarı:</b> Tasarımın hedeflediği ideal, homojen parlaklık alanı.<br/>
+                <b>Kırmızı:</b> Aşırı parlaklık veya harmanlanmamış örtüşme tepe noktası (Hotspot).
+              </p>
             </div>
           </div>
-        </div>
+        )}
 
       </div>
     </div>
