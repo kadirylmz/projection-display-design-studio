@@ -14,7 +14,10 @@ export default function ReportGenerator() {
   const { slots } = useMapping();
 
   const [lang, setLang] = useState<ReportLang>('tr');
-  const [sections, setSections] = useState<ReportSectionFlags>(DEFAULT_SECTIONS);
+  const [sections, setSections] = useState<ReportSectionFlags>(() => ({
+    ...DEFAULT_SECTIONS,
+    led: false, // Projeksiyon mekanlarında varsayılan olarak kapalı; kullanıcı dilediğinde kutucuktan tek tıkla ekler/çıkarır
+  }));
   const [presentation, setPresentation] = useState(false);
 
   // 1. PROJEKSİYONLAR ARASI MONTAJ, EKSEN VE MESAFE MATRİSİ HESABI
@@ -224,7 +227,19 @@ export default function ReportGenerator() {
 
         {/* RAPORA DAHİL EDİLECEK BÖLÜMLER */}
         <div className="border-t border-slate-800 pt-2.5 space-y-1.5">
-          <b className="text-slate-200">Rapora Dahil Edilecek Bölümler</b>
+          <div className="flex justify-between items-center">
+            <b className="text-slate-200">Rapora Dahil Edilecek Bölümler</b>
+            <button
+              type="button"
+              className="text-[10.5px] text-sky-400 hover:text-sky-300 underline"
+              onClick={() => setSections(prev => ({
+                ...prev,
+                led: !prev.led,
+              }))}
+            >
+              {sections.led ? 'LED Duvarı Çıkar' : '+ LED Duvarı Ekle'}
+            </button>
+          </div>
           {([
             ['summary', '1. Proje Özeti & Metrikler'],
             ['room3d', '2. 3B Simülasyon & Mekansal Görünüş'],
@@ -233,13 +248,15 @@ export default function ReportGenerator() {
             ['projection', '5. Projektör & Lens Hesapları'],
             ['lux', '6. Lux & Parlaklık Analizi'],
             ['multiProjector', '7. Çoklu Projektör & Kanvas Haritası'],
-            ['electrical', '8. Elektrik Yük & Tek Hat Dağıtım Şeması'],
-            ['equipmentList', '9. Ekipman Listesi (BOM)'],
-            ['assumptionsAndWarnings', '10. Şantiye Standartları & Onay İmzaları'],
+            ['led', '8. LED Duvar Spesifikasyonları'],
+            ['electrical', '9. Elektrik Yük & Tek Hat Dağıtım Şeması'],
+            ['drawings2d', '10. 2B CAD Teknik Çizimler'],
+            ['equipmentList', '11. Ekipman Listesi (BOM)'],
+            ['assumptionsAndWarnings', '12. Şantiye Standartları & Onay İmzaları'],
           ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
             <label key={k} className="flex items-center gap-2 cursor-pointer hover:text-white transition">
               <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
-              <span>{label}</span>
+              <span className={k === 'led' ? (sections.led ? 'text-amber-300 font-bold' : 'text-slate-400') : ''}>{label}</span>
             </label>
           ))}
         </div>
