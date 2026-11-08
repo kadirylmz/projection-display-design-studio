@@ -86,4 +86,52 @@ describe('rapor üretici (kabul testi 10)', () => {
     expect(htmlWith3D).not.toContain('three-d-caption');
     expect(htmlWith3D).not.toContain('Mekan içerisindeki projeksiyon açıları');
   });
+
+  it('yüzey bazlı (Zemin, Duvarlar) ayrı fotometrik lüks haritalarını, metrik kartlarını ve dağılım cetvellerini rapora ekler', () => {
+    const htmlWithPhoto = buildReportHtml({
+      ...payload,
+      photometricSurfaces: [
+        {
+          surfaceId: 'surf-floor',
+          surfaceName: 'Zemin (Floor)',
+          surfaceType: 'floor',
+          widthM: 23.3,
+          heightM: 7.0,
+          projectorCount: 8,
+          avgLux: 321,
+          minLux: 148,
+          maxLux: 427,
+          uniformityU0: 0.461,
+          uniformityU1: 0.346,
+          luminanceNits: 102,
+          luminanceFL: 29.8,
+          screenGain: 1.0,
+          ambientLux: 20,
+          ambientContrastRatio: 17,
+          isManualLux: false,
+          heatmapSnapshotUrl: 'data:image/png;base64,HEATMAP_FLOOR_IMG',
+          distributionRows: [
+            {
+              code: 'PJ 1',
+              startX: 0,
+              endX: 6.61,
+              widthM: 6.61,
+              centerX: 3.3,
+              throwDistM: 4.3,
+              throwRatio: 0.65,
+              overlapText: '1.05m (%16 Blend PJ 2 ile) | ↕ 0.98m (%24 Dikey Blend PJ 5 ile)',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(htmlWithPhoto).toContain('Zemin (Floor) — Fotometrik Aydınlık Analizi');
+    expect(htmlWithPhoto).toContain('HEATMAP_FLOOR_IMG');
+    expect(htmlWithPhoto).toContain('321 <span style="font-size:11px; font-weight:normal; color:#64748b;">lx</span>');
+    expect(htmlWithPhoto).toContain('%46.1');
+    expect(htmlWithPhoto).toContain('102 <span style="font-size:11px; font-weight:normal; color:#64748b;">cd/m²</span>');
+    expect(htmlWithPhoto).toContain('17:1');
+    expect(htmlWithPhoto).toContain('1.05m (%16 Blend PJ 2 ile)');
+  });
 });

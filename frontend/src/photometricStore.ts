@@ -2,6 +2,42 @@ import { create } from 'zustand';
 import { Projector3DConfig, Surface3DConfig, SurfaceGeometryType } from './engine/photometrics';
 import { SurfaceItem } from './modules/ContentPlanner';
 
+export interface ProjectorDistributionRow {
+  code: string;
+  name: string;
+  rowName?: string;
+  startX: number;
+  endX: number;
+  widthM: number;
+  centerX: number;
+  centerY?: number;
+  throwDistM: number;
+  throwRatio: number;
+  overlapText: string;
+}
+
+export interface SurfacePhotometricEntry {
+  surfaceId: string;
+  surfaceName: string;
+  surfaceType: string; // 'wall' | 'floor' | 'ceiling'
+  widthM: number;
+  heightM: number;
+  projectorCount: number;
+  avgLux: number;
+  minLux: number;
+  maxLux: number;
+  uniformityU0: number;
+  uniformityU1: number;
+  luminanceNits: number;
+  luminanceFL: number;
+  screenGain: number;
+  ambientLux: number;
+  ambientContrastRatio: number;
+  isManualLux: boolean;
+  heatmapSnapshotUrl?: string;
+  distributionRows: ProjectorDistributionRow[];
+}
+
 export interface PhotometricStoreState {
   // Seçili Proje Yüzeyi
   selectedSurfaceId: string; // 'custom' veya 'surf-1', 'surf-2', vb.
@@ -34,6 +70,15 @@ export interface PhotometricStoreState {
   activeTab: 'heatmap' | '3d' | 'ansi9' | 'overlap' | 'scenarios' | 'guide';
   advancedMode: boolean;
 
+  // Manuel Lux Girişi
+  isManualLux: boolean;
+  manualAvgLux: number;
+  manualMinLux: number;
+  manualMaxLux: number;
+
+  // Rapora Dahil Edilecek Yüzey Lux Kayıtları Haritası
+  surfacePhotometrics: Record<string, SurfacePhotometricEntry>;
+
   // Eylemler
   setScreenW: (w: number) => void;
   setScreenH: (h: number) => void;
@@ -56,6 +101,13 @@ export interface PhotometricStoreState {
   setActiveTab: (tab: 'heatmap' | '3d' | 'ansi9' | 'overlap' | 'scenarios' | 'guide') => void;
   setAdvancedMode: (b: boolean) => void;
   
+  setIsManualLux: (b: boolean) => void;
+  setManualAvgLux: (v: number) => void;
+  setManualMinLux: (v: number) => void;
+  setManualMaxLux: (v: number) => void;
+
+  saveSurfacePhotometric: (entry: SurfacePhotometricEntry) => void;
+
   // Projeden Yüzey ve Projektör Bilgilerini Aktarma Fonksiyonu
   importFromPlannerSurface: (surface: SurfaceItem, lumensOverride?: number) => void;
   updateSelectedProjector: (patch: Partial<Projector3DConfig>) => void;
@@ -127,6 +179,12 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
   activeTab: 'heatmap',
   advancedMode: true,
 
+  isManualLux: false,
+  manualAvgLux: 350,
+  manualMinLux: 280,
+  manualMaxLux: 420,
+  surfacePhotometrics: {},
+
   setScreenW: (screenW) => set({ screenW }),
   setScreenH: (screenH) => set({ screenH }),
   setGeometry: (geometry) => set({ geometry }),
@@ -149,6 +207,20 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
   setViewMode: (viewMode) => set({ viewMode }),
   setActiveTab: (activeTab) => set({ activeTab }),
   setAdvancedMode: (advancedMode) => set({ advancedMode }),
+
+  setIsManualLux: (isManualLux) => set({ isManualLux }),
+  setManualAvgLux: (manualAvgLux) => set({ manualAvgLux }),
+  setManualMinLux: (manualMinLux) => set({ manualMinLux }),
+  setManualMaxLux: (manualMaxLux) => set({ manualMaxLux }),
+
+  saveSurfacePhotometric: (entry: SurfacePhotometricEntry) => {
+    set((state) => ({
+      surfacePhotometrics: {
+        ...state.surfacePhotometrics,
+        [entry.surfaceId]: entry
+      }
+    }));
+  },
 
   importFromPlannerSurface: (surface: SurfaceItem, lumensOverride?: number) => {
     const lm = lumensOverride || get().defaultProjectorLumens || 10000;
@@ -180,10 +252,15 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
     const halfW = wM / 2;
     const halfH = hM / 2;
 
-    const singleW = wM / Math.max(1, (cols - (cols - 1) * ovRatioX));
-    const stepW = cols > 1 ? singleW * (1 - ovRatioX) : singleW;
-    const singleH = hM / Math.max(1, (rows - (rows - 1) * ovRatioY));
-    const stepH = rows > 1 ? singleH * (1 - ovRatioY) : singleH;
+    const singleW = cols > 1 
+      ? Math.max(throwDist / Math.max(0.2, throwRatio), wM / Math.max(1, (cols - (cols - 1) * ovRatioX)))
+      : Math.max(wM, throwDist / Math.max(0.2, throwRatio));
+    const stepW = cols > 1 ? (wM - singleW) / (cols - 1) : 0;
+
+    const singleH = rows > 1
+      ? Math.max(singleW / 1.6, hM / Math.max(1, (rows - (rows - 1) * ovRatioY)))
+      : Math.max(hM, singleW / 1.6);
+    const stepH = rows > 1 ? (hM - singleH) / (rows - 1) : 0;
 
     let projCounter = 1;
     for (let r = 0; r < rows; r++) {

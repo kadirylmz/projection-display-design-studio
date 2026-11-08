@@ -62,6 +62,39 @@ export interface ReportProjectMeta {
   archPlanRotation?: 0 | 90 | 180 | 270;
 }
 
+export interface PhotometricReportSurface {
+  surfaceId: string;
+  surfaceName: string;
+  surfaceType: string; // 'wall' | 'floor' | 'ceiling'
+  widthM: number;
+  heightM: number;
+  projectorCount: number;
+  avgLux: number;
+  minLux: number;
+  maxLux: number;
+  uniformityU0: number; // Emin / Eavg
+  uniformityU1: number; // Emin / Emax
+  luminanceNits: number;
+  luminanceFL: number;
+  screenGain: number;
+  ambientLux: number;
+  ambientContrastRatio: number;
+  isManualLux?: boolean;
+  heatmapSnapshotUrl?: string;
+  distributionRows?: {
+    code: string;
+    name?: string;
+    rowName?: string;
+    startX: number;
+    endX: number;
+    widthM: number;
+    centerX: number;
+    throwDistM: number;
+    throwRatio: number;
+    overlapText: string;
+  }[];
+}
+
 export interface ReportPayload {
   lang: ReportLang;
   meta: ReportProjectMeta;
@@ -90,6 +123,7 @@ export interface ReportPayload {
     gain: number;
     ambientLux: number;
   };
+  photometricSurfaces?: PhotometricReportSurface[];
   mappingSlots?: ProjectorSlot[];
   led?: {
     cabinet: Cabinet;
@@ -523,24 +557,149 @@ export function buildReportHtml(p: ReportPayload): string {
     </section>`);
   }
 
-  // 5. FOTOMETRİK LUX & PARLAKLIK ANALİZİ
-  if (p.sections.lux && p.lux) {
-    const lx = computeLux({
-      ansiLumens: p.lux.ansiLumens,
-      brightnessPct: p.lux.brightnessPct,
-      width: p.lux.widthM,
-      height: p.lux.heightM,
-      gain: p.lux.gain,
-      ambientLux: p.lux.ambientLux,
-    });
-    assumptions.push(...lx.assumptions);
-    blocks.push(`<section class="report-section">
-      <h2>${tr.lux}</h2>
-      <table><tbody>
-        <tr><th>${tr.totalFlux}</th><td><b>${round(lx.totalLumens, 0)} ANSI Lümen</b></td><th>${tr.illuminance}</th><td><b>${round(lx.illuminanceLux, 1)} Lux</b> (${round(lx.illuminanceFc, 1)} fc)</td></tr>
-        <tr><th>${tr.luminance}</th><td><b>${round(lx.luminanceNits, 1)} cd/m² (Nit)</b> (${round(lx.luminanceFL, 1)} fL)</td><th>Ekran Gain / Yansıtma</th><td>${p.lux.gain} Gain</td></tr>
-      </tbody></table>
-    </section>`);
+  // 5. FOTOMETRİK LUX & PARLAKLIK ANALİZİ (YÜZEY BAZLI AYRI LUX HARİTALARI & DAĞILIM CETVELLERİ)
+  if (p.sections.lux) {
+    if (p.photometricSurfaces && p.photometricSurfaces.length > 0) {
+      const pSurfs = p.enabledSurfaceIds && p.enabledSurfaceIds.length > 0
+        ? p.photometricSurfaces.filter(s => p.enabledSurfaceIds!.includes(s.surfaceId))
+        : p.photometricSurfaces;
+
+      const surfaceCards = pSurfs.map((s, idx) => {
+        const avgL = Math.round(s.avgLux);
+        const minL = Math.round(s.minLux);
+        const maxL = Math.round(s.maxLux);
+        const u0 = (s.uniformityU0 * 100).toFixed(1);
+        const u1 = (s.uniformityU1 * 100).toFixed(1);
+        const nits = Math.round(s.luminanceNits);
+        const fl = s.luminanceFL.toFixed(1);
+        const acr = Math.round(s.ambientContrastRatio);
+
+        const luxStatusColor = avgL >= 300 && avgL <= 600 ? 'background:#dcfce7; color:#166534;' : avgL > 600 ? 'background:#e0f2fe; color:#0369a1;' : 'background:#fee2e2; color:#991b1b;';
+        const luxStatusText = avgL >= 300 && avgL <= 600 ? '✓ Müze & Sergi İdeal (300–500 lx)' : avgL > 600 ? '✓ Yüksek Aydınlık (Canlı)' : '⚠ Düşük Aydınlık (Karartma Şart)';
+
+        const uStatusColor = +u0 >= 60 ? 'background:#dcfce7; color:#166534;' : +u0 >= 40 ? 'background:#fef3c7; color:#92400e;' : 'background:#fee2e2; color:#991b1b;';
+        const uStatusText = +u0 >= 60 ? '✓ Çok Yüksek Homojenlik' : +u0 >= 40 ? '✓ Kabul Edilebilir Düzgünlük' : '⚠ Köşelerde Kararma Riski';
+
+        return `
+        <div class="photometric-report-card">
+          <div class="photometric-card-header">
+            <div>
+              <h3 class="surface-multi-card-title">${idx + 1}. ${esc(s.surfaceName)} — Fotometrik Aydınlık Analizi</h3>
+              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+                ${s.widthM}m × ${s.heightM}m (${(s.widthM * s.heightM).toFixed(1)} m²) · ${s.projectorCount} Adet Projektör
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${s.isManualLux ? '<span class="badge-circuit" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a;">✏️ Manuel Saha Ölçümü</span>' : '<span class="badge-circuit" style="background:#e0f2fe; color:#0369a1;">⚡ Noktadan Noktaya Simülasyon</span>'}
+              <span class="surface-multi-card-badge">${s.surfaceType === 'floor' ? 'Zemin / Floor' : s.surfaceType === 'ceiling' ? 'Tavan' : 'Duvar / Wall'}</span>
+            </div>
+          </div>
+
+          <div class="photometric-grid-layout">
+            <!-- Sol: 2B Isı Haritası Fotoğrafı -->
+            <div class="heatmap-report-container">
+              ${s.heatmapSnapshotUrl ? `
+                <img src="${esc(s.heatmapSnapshotUrl)}" alt="${esc(s.surfaceName)} Lux Haritası" class="heatmap-report-img" />
+                <div class="heatmap-report-caption">📸 2D Lux Isı Dağılımı ve Projektör Sınırları (${minL} lx → ${maxL} lx)</div>
+              ` : `
+                <div style="padding: 32px 16px; text-align: center; color: #94a3b8; font-size: 11px;">
+                  <i>Fotometrik Isı Haritası görseli Lüks Hesaplayıcı sekmesinden aktarılacaktır.</i>
+                </div>
+              `}
+            </div>
+
+            <!-- Sağ: 4 Temel Fotometrik Metrik -->
+            <div class="photometric-mini-metrics">
+              <div class="photometric-mini-card">
+                <div class="photometric-mini-title">Ortalama Aydınlık (Lux)</div>
+                <div class="photometric-mini-value" style="color: #0284c7;">${avgL} <span style="font-size:11px; font-weight:normal; color:#64748b;">lx</span></div>
+                <div class="photometric-mini-sub">Min: <b>${minL}</b> / Max: <b>${maxL}</b> lx</div>
+                <div class="photometric-mini-badge" style="${luxStatusColor}">${luxStatusText}</div>
+              </div>
+
+              <div class="photometric-mini-card">
+                <div class="photometric-mini-title">Işık Düzgünlüğü (Uniformity)</div>
+                <div class="photometric-mini-value" style="color: #059669;">%${u0}</div>
+                <div class="photometric-mini-sub">U0 (Min/Ort): <b>%${u0}</b> · U1: <b>%${u1}</b></div>
+                <div class="photometric-mini-badge" style="${uStatusColor}">${uStatusText}</div>
+              </div>
+
+              <div class="photometric-mini-card">
+                <div class="photometric-mini-title">Gözlenen Parlaklık</div>
+                <div class="photometric-mini-value" style="color: #d97706;">${nits} <span style="font-size:11px; font-weight:normal; color:#64748b;">cd/m²</span></div>
+                <div class="photometric-mini-sub">${fl} fL · Ekran Gain: ${s.screenGain}x</div>
+                <div class="photometric-mini-badge" style="background:#fef3c7; color:#92400e;">✓ Müze Kontrastı İçin İdeal</div>
+              </div>
+
+              <div class="photometric-mini-card">
+                <div class="photometric-mini-title">Ortam Kontrastı (ACR)</div>
+                <div class="photometric-mini-value" style="color: #7c3aed;">${acr}:1</div>
+                <div class="photometric-mini-sub">Ortam Işığı: <b>${s.ambientLux} Lux</b></div>
+                <div class="photometric-mini-badge" style="${acr >= 15 ? 'background:#dcfce7; color:#166534;' : 'background:#fee2e2; color:#991b1b;'}">${acr >= 15 ? '✓ Yüksek Okunabilirlik' : '⚠ Düşük Kontrast'}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Projektör Kapsama & Dağılım Cetveli -->
+          ${s.distributionRows && s.distributionRows.length > 0 ? `
+            <div style="margin-top: 10px;">
+              <div style="font-size: 11px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+                📏 Projektör Kapsama, Atım ve Bindirme (Overlap) Dağılım Cetveli:
+              </div>
+              <table class="compact-table" style="background:#ffffff; font-size:11px;">
+                <thead style="background:#f1f5f9; color:#334155;">
+                  <tr>
+                    <th>Cihaz Kodu</th>
+                    <th>Başlangıç</th>
+                    <th>Bitiş</th>
+                    <th>Açılan Genişlik</th>
+                    <th>Optik Merkez (X)</th>
+                    <th>Atım (D) / TR</th>
+                    <th>Komşu Örtüşme (Blend)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${s.distributionRows.map((r) => `
+                    <tr>
+                      <td><b>${esc(r.code)}</b> ${r.rowName ? `<span style="font-size:10px; color:#64748b;">(${esc(r.rowName)})</span>` : ''}</td>
+                      <td style="font-family:monospace;">${r.startX.toFixed(2)} m</td>
+                      <td style="font-family:monospace;">${r.endX.toFixed(2)} m</td>
+                      <td style="font-family:monospace; color:#059669; font-weight:bold;">${r.widthM.toFixed(2)} m</td>
+                      <td style="font-family:monospace; color:#0284c7;">${r.centerX.toFixed(2)} m</td>
+                      <td style="font-family:monospace; color:#475569;">D=${r.throwDistM.toFixed(2)}m (TR: ${r.throwRatio}:1)</td>
+                      <td style="color:#b45309; font-weight:600;">${esc(r.overlapText)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
+        </div>
+        `;
+      }).join('');
+
+      blocks.push(`<section class="report-section">
+        <h2>${tr.lux}</h2>
+        ${surfaceCards}
+      </section>`);
+    } else if (p.lux) {
+      const lx = computeLux({
+        ansiLumens: p.lux.ansiLumens,
+        brightnessPct: p.lux.brightnessPct,
+        width: p.lux.widthM,
+        height: p.lux.heightM,
+        gain: p.lux.gain,
+        ambientLux: p.lux.ambientLux,
+      });
+      assumptions.push(...lx.assumptions);
+      blocks.push(`<section class="report-section">
+        <h2>${tr.lux}</h2>
+        <table><tbody>
+          <tr><th>${tr.totalFlux}</th><td><b>${round(lx.totalLumens, 0)} ANSI Lümen</b></td><th>${tr.illuminance}</th><td><b>${round(lx.illuminanceLux, 1)} Lux</b> (${round(lx.illuminanceFc, 1)} fc)</td></tr>
+          <tr><th>${tr.luminance}</th><td><b>${round(lx.luminanceNits, 1)} cd/m² (Nit)</b> (${round(lx.luminanceFL, 1)} fL)</td><th>Ekran Gain / Yansıtma</th><td>${p.lux.gain} Gain</td></tr>
+        </tbody></table>
+      </section>`);
+    }
   }
 
   // 6. ÇOKLU PROJEKTÖR & KANVAS HARİTALAMA (YÜZEY BAZLI AYRI PAFTALAR: ZEMİN, SAĞ DUVAR, SOL DUVAR VB.)
@@ -1024,6 +1183,93 @@ export function buildReportHtml(p: ReportPayload): string {
     margin-bottom: 24px;
     page-break-inside: avoid;
     break-inside: avoid;
+  }
+  .photometric-report-card {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .photometric-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  .photometric-grid-layout {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 16px;
+    margin-bottom: 14px;
+    align-items: start;
+  }
+  @media (max-width: 820px) {
+    .photometric-grid-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+  .heatmap-report-container {
+    background: #070b14;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .heatmap-report-img {
+    width: 100%;
+    max-height: 290px;
+    object-fit: contain;
+    border-radius: 4px;
+    background: #020617;
+  }
+  .heatmap-report-caption {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 6px;
+    font-family: monospace;
+    text-align: center;
+  }
+  .photometric-mini-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .photometric-mini-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .photometric-mini-title {
+    font-size: 10.5px;
+    color: #64748b;
+    font-weight: 600;
+  }
+  .photometric-mini-value {
+    font-size: 17px;
+    font-weight: 800;
+    font-family: monospace;
+    margin: 2px 0;
+  }
+  .photometric-mini-sub {
+    font-size: 10px;
+    color: #475569;
+  }
+  .photometric-mini-badge {
+    margin-top: 4px;
+    font-size: 9.5px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
   }
   .surface-multi-card-header {
     display: flex;

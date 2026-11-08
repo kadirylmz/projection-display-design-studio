@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LengthUnit, toMeters, round } from '../engine/units';
 import {
   simulatePhotometricLux,
@@ -163,6 +163,33 @@ function Photometric3DScene({
   );
 }
 
+
+export function getFootprint(pj: Projector3DConfig, surface: Surface3DConfig) {
+  const halfW = surface.widthM / 2;
+  const halfH = surface.heightM / 2;
+  const tr = pj.throwRatio || 0.8;
+  const dist = Math.hypot(
+    pj.pos[0] - pj.target[0],
+    pj.pos[1] - pj.target[1],
+    pj.pos[2] - pj.target[2]
+  ) || 4.5;
+  const beamW = dist / tr;
+  const beamH = beamW / 1.6;
+
+  const centerX = pj.target[0] + halfW;
+  let centerY = pj.target[1];
+  if (surface.geometry === 'floor' || surface.geometry === 'ceiling') {
+    centerY = pj.target[2] + halfH;
+  }
+
+  const startX = Math.max(0, centerX - beamW / 2);
+  const endX = Math.min(surface.widthM, centerX + beamW / 2);
+  const startY = Math.max(0, centerY - beamH / 2);
+  const endY = Math.min(surface.heightM, centerY + beamH / 2);
+
+  return { dist, beamW, beamH, centerX, centerY, startX, endX, startY, endY };
+}
+
 export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
   // Proje Store (İçerik Planlama Yüzeyleri)
   const plannerSurfaces = usePlannerStore(state => state.surfaces);
@@ -210,6 +237,16 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     setViewMode,
     setActiveTab,
     setAdvancedMode,
+    isManualLux,
+    manualAvgLux,
+    manualMinLux,
+    manualMaxLux,
+    setIsManualLux,
+    setManualAvgLux,
+    setManualMinLux,
+    setManualMaxLux,
+    surfacePhotometrics,
+    saveSurfacePhotometric,
     importFromPlannerSurface,
     updateSelectedProjector,
     addProjector,
@@ -236,6 +273,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
   // Canvas Ref
   const heatmapCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlapCanvasRef = useRef<HTMLCanvasElement>(null);
+
 
   // Grid Ölçüleri
   const [cols, rows] = useMemo(() => {
@@ -278,6 +316,135 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       blendOverlap
     );
   }, [surfaceConfig, projectors, cols, rows, blendOverlap]);
+
+  const [saveToast, setSaveToast] = useState<string | null>(null);
+
+  // Projektör Ayak İzleri & Çoklu Satır/Sıra Dağılım Analizi
+  const distributionData = useMemo(() => {
+    const fpList = activeProjectors.map((pj, idx) => {
+      const fp = getFootprint(pj, surfaceConfig);
+      return { pj, idx, ...fp };
+    });
+
+    const rowsMap = new Map<number, typeof fpList>();
+    fpList.forEach(item => {
+      const rowKey = Math.round(item.centerY * 2) / 2;
+      if (!rowsMap.has(rowKey)) rowsMap.set(rowKey, []);
+      rowsMap.get(rowKey)!.push(item);
+    });
+
+    const sortedRowKeys = Array.from(rowsMap.keys()).sort((a, b) => a - b);
+    const isMultiRow = sortedRowKeys.length > 1;
+
+    const resultRows: (typeof fpList[0] & { rowName?: string; overlapInfo: string; yOverlapInfo?: string })[] = [];
+
+    sortedRowKeys.forEach((rKey, rIdx) => {
+      const rowItems = rowsMap.get(rKey)!.sort((a, b) => a.centerX - b.centerX);
+      const rowName = isMultiRow ? `Sıra ${rIdx + 1}` : undefined;
+
+      rowItems.forEach((curr, cIdx) => {
+        let overlapInfo = '— (Kenar)';
+        if (cIdx < rowItems.length - 1) {
+          const next = rowItems[cIdx + 1];
+          const ovW = curr.endX - next.startX;
+          if (ovW > 0) {
+            const ovPct = Math.round((ovW / Math.max(0.1, curr.beamW)) * 100);
+            overlapInfo = `${ovW.toFixed(2)}m (%${ovPct} Blend PJ ${next.idx + 1} ile)`;
+          }
+        }
+
+        let yOverlapInfo: string | undefined = undefined;
+        if (isMultiRow && rIdx < sortedRowKeys.length - 1) {
+          const nextRowKey = sortedRowKeys[rIdx + 1];
+          const nextRowItems = rowsMap.get(nextRowKey)!;
+          const matchingUnder = nextRowItems.find(item => Math.abs(item.centerX - curr.centerX) < curr.beamW * 0.4);
+          if (matchingUnder) {
+            const ovH = curr.endY - matchingUnder.startY;
+            if (ovH > 0) {
+              const ovPct = Math.round((ovH / Math.max(0.1, curr.beamH)) * 100);
+              yOverlapInfo = `${ovH.toFixed(2)}m (%${ovPct} Dikey Blend PJ ${matchingUnder.idx + 1} ile)`;
+            }
+          }
+        }
+
+        resultRows.push({
+          ...curr,
+          rowName,
+          overlapInfo: yOverlapInfo ? `${overlapInfo} | ↕ ${yOverlapInfo}` : overlapInfo,
+          yOverlapInfo,
+        });
+      });
+    });
+
+    return { rows: resultRows, isMultiRow, sortedRowKeys, rowsMap };
+  }, [activeProjectors, surfaceConfig]);
+
+  // Manuel & Efektif Fotometrik Metrikler
+  const effAvgLux = isManualLux ? manualAvgLux : simResult.avgLux;
+  const effMinLux = isManualLux ? manualMinLux : simResult.minLux;
+  const effMaxLux = isManualLux ? manualMaxLux : simResult.maxLux;
+  const effU0 = isManualLux ? (effMinLux / Math.max(1, effAvgLux)) : simResult.uniformityU0;
+  const effU1 = isManualLux ? (effMinLux / Math.max(1, effMaxLux)) : simResult.uniformityU1;
+  const effNits = isManualLux ? ((effAvgLux * screenGain) / Math.PI) : simResult.avgLuminanceNits;
+  const effFL = isManualLux ? (effNits * 0.2919) : simResult.avgLuminanceFL;
+  const effACR = isManualLux ? ((effAvgLux + ambientLux) / Math.max(1, ambientLux)) : simResult.ambientContrastRatio;
+
+  // Rapora Kaydet Fonksiyonu
+  const handleSaveToReport = useCallback(() => {
+    let snapshotUrl: string | undefined = undefined;
+    if (heatmapCanvasRef.current) {
+      try {
+        snapshotUrl = heatmapCanvasRef.current.toDataURL('image/png');
+      } catch (err) {
+        console.warn('Canvas snapshot error:', err);
+      }
+    }
+
+    const distRowsForReport = distributionData.rows.map(r => ({
+      code: `PJ ${r.idx + 1}`,
+      name: r.pj.name,
+      rowName: r.rowName,
+      startX: r.startX,
+      endX: r.endX,
+      widthM: r.beamW,
+      centerX: r.centerX,
+      throwDistM: r.dist,
+      throwRatio: r.pj.throwRatio || 0.8,
+      overlapText: r.overlapInfo,
+    }));
+
+    const currentSurf = plannerSurfaces.find(s => s.id === selectedSurfaceId);
+    const surfName = currentSurf ? currentSurf.name : `Özel Yüzey (${surfaceConfig.widthM}m × ${surfaceConfig.heightM}m)`;
+    const surfType = currentSurf ? currentSurf.type : (geometry === 'floor' ? 'floor' : geometry === 'ceiling' ? 'ceiling' : 'wall');
+
+    saveSurfacePhotometric({
+      surfaceId: selectedSurfaceId,
+      surfaceName: surfName,
+      surfaceType: surfType,
+      widthM: surfaceConfig.widthM,
+      heightM: surfaceConfig.heightM,
+      projectorCount: activeProjectors.length,
+      avgLux: effAvgLux,
+      minLux: effMinLux,
+      maxLux: effMaxLux,
+      uniformityU0: effU0,
+      uniformityU1: effU1,
+      luminanceNits: effNits,
+      luminanceFL: effFL,
+      screenGain: screenGain,
+      ambientLux: ambientLux,
+      ambientContrastRatio: effACR,
+      isManualLux: isManualLux,
+      heatmapSnapshotUrl: snapshotUrl,
+      distributionRows: distRowsForReport,
+    });
+
+    setSaveToast(`✓ "${surfName}" 2B Isı Haritası ve Lux Analizi Raporlama Modülüne Eklendi!`);
+    setTimeout(() => setSaveToast(null), 4000);
+  }, [selectedSurfaceId, plannerSurfaces, surfaceConfig, geometry, activeProjectors.length, effAvgLux, effMinLux, effMaxLux, effU0, effU1, effNits, effFL, screenGain, ambientLux, effACR, isManualLux, distributionData.rows, saveSurfacePhotometric]);
+
+
+
 
   // Canvas Çizimi (Heatmap)
   useEffect(() => {
@@ -366,28 +533,14 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
 
       // 🌟 PROJEKTÖR KAPSAMA ALANLARI & ÇERÇEVELERİ (FOOTPRINTS)
       if (showProjectorOutlines) {
-        const halfW = surfaceConfig.widthM / 2;
         activeProjectors.forEach((pj, pIdx) => {
-          // Eğer solo izleme açıksa sadece o projektörün çerçevesi çizilsin
           if (isSolo && pj.id !== viewMode) return;
 
-          const tr = pj.throwRatio || 0.8;
-          const dist = Math.abs(pj.pos[2]) || 4.5;
-          const beamW = dist / tr;
-          const beamH = beamW / 1.7778; // 16:9
-
-          const centerX = pj.target[0] + halfW;
-          const centerY = pj.target[1];
-
-          const x1 = Math.max(0, centerX - beamW / 2);
-          const x2 = Math.min(surfaceConfig.widthM, centerX + beamW / 2);
-          const y1 = Math.max(0, centerY - beamH / 2);
-          const y2 = Math.min(surfaceConfig.heightM, centerY + beamH / 2);
-
-          const px1 = (x1 / surfaceConfig.widthM) * w;
-          const px2 = (x2 / surfaceConfig.widthM) * w;
-          const pyTop = ((surfaceConfig.heightM - y2) / surfaceConfig.heightM) * h;
-          const pyBottom = ((surfaceConfig.heightM - y1) / surfaceConfig.heightM) * h;
+          const fp = getFootprint(pj, surfaceConfig);
+          const px1 = (fp.startX / surfaceConfig.widthM) * w;
+          const px2 = (fp.endX / surfaceConfig.widthM) * w;
+          const pyTop = ((surfaceConfig.heightM - fp.endY) / surfaceConfig.heightM) * h;
+          const pyBottom = ((surfaceConfig.heightM - fp.startY) / surfaceConfig.heightM) * h;
 
           const boxW = Math.max(4, px2 - px1);
           const boxH = Math.max(4, pyBottom - pyTop);
@@ -399,8 +552,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           ctx.strokeRect(px1, pyTop, boxW, boxH);
 
           // Optik Merkez Artısı (+)
-          const pcx = (centerX / surfaceConfig.widthM) * w;
-          const pcy = ((surfaceConfig.heightM - centerY) / surfaceConfig.heightM) * h;
+          const pcx = (fp.centerX / surfaceConfig.widthM) * w;
+          const pcy = ((surfaceConfig.heightM - fp.centerY) / surfaceConfig.heightM) * h;
           ctx.setLineDash([]);
           ctx.beginPath();
           ctx.moveTo(pcx - 8, pcy);
@@ -410,7 +563,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           ctx.stroke();
 
           // Başlık Rozeti: PJ 1 [0.0m - 6.5m]
-          const badgeText = `PJ ${pIdx + 1}: ${pj.name.split('(')[0].trim()} [${Math.max(0, centerX - beamW / 2).toFixed(1)}m – ${Math.min(surfaceConfig.widthM, centerX + beamW / 2).toFixed(1)}m]`;
+          const badgeText = `PJ ${pIdx + 1}: ${pj.name.split('(')[0].trim()} [${fp.startX.toFixed(1)}m – ${fp.endX.toFixed(1)}m]`;
           ctx.font = 'bold 11px sans-serif';
           const textMetrics = ctx.measureText(badgeText);
           const badgeW = textMetrics.width + 12;
@@ -1284,21 +1437,118 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               </div>
             </div>
 
-            {/* 🌟 25 METRELİK YÜZEYDE HANGİ CİHAZ NEREYE IŞIK VERİYOR? (KAPSAMA & BLEND CETVELİ) */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-3 shadow-lg">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <h3 className="font-bold text-sm text-sky-400 flex items-center gap-1.5">
-                    <span>📏 Projektör Kapsama & Dağılım Cetveli ({surfaceConfig.widthM}m Yüzey)</span>
-                  </h3>
-                  <p className="text-slate-400 text-[11px] mt-0.5">
-                    Mekandaki {activeProjectors.length} projektörün duvardaki net başlangıç/bitiş mesafeleri ve bindirme (overlap) aralıkları:
-                  </p>
-                </div>
+            
+            {/* BAŞLIK & RAPORLAMA VE MANUEL LUX KONTROLLERİ */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+              <div>
+                <h3 className="font-bold text-sm text-sky-400 flex items-center gap-1.5">
+                  <span>📏 Projektör Kapsama, Atım & Örtüşme (Blend) Analizi</span>
+                  <span className="text-xs font-mono text-slate-400">({surfaceConfig.widthM}m × {surfaceConfig.heightM}m)</span>
+                </h3>
+                <p className="text-slate-400 text-[11px] mt-0.5">
+                  {distributionData.isMultiRow ? `${distributionData.sortedRowKeys.length} Sıra Halinde Toplam ${activeProjectors.length} Projektörün Yatay ve Dikey Kesişimleri:` : `Mekandaki ${activeProjectors.length} projektörün duvardaki net başlangıç/bitiş mesafeleri ve bindirme payları:`}
+                </p>
+              </div>
 
-                {/* Görünüm Filtresi */}
+              {/* Rapor Ekle Butonu & Mod Seçiciler */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleSaveToReport}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-900/30 flex items-center gap-1.5 transition active:scale-95"
+                  title="Bu yüzeyin 2B Isı Haritası görselini, metraj cetvelini ve lux analizini Raporlama modülüne aktarır"
+                >
+                  <span>📸 Bu Yüzeyi Rapora Ekle</span>
+                </button>
+
+                <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setIsManualLux(false)}
+                    className={`px-2 py-1 rounded text-[11px] font-medium transition ${!isManualLux ? 'bg-sky-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    ⚡ Simülasyon
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsManualLux(true)}
+                    className={`px-2 py-1 rounded text-[11px] font-medium transition ${isManualLux ? 'bg-amber-600 text-white font-bold shadow' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    ✏️ Manuel Lux Girişi
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Bildirim Toast'ı */}
+            {saveToast && (
+              <div className="p-2.5 rounded-lg bg-emerald-950/80 border border-emerald-500 text-emerald-200 text-xs font-medium flex items-center justify-between shadow-lg">
+                <span>{saveToast}</span>
+                <span className="text-[10px] text-emerald-400">Rapor sekmesinde görüntülenebilir</span>
+              </div>
+            )}
+
+            {/* MANUEL LUX GİRİŞ ALANI (Aktifse) */}
+            {isManualLux && (
+              <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <span>✏️ Manuel Ölçüm / Sahada Luxmetre ile Alınan Değerler:</span>
+                  </span>
+                  <span className="text-[10.5px] text-amber-400/80">Raporda ve aşağıdaki tüm metrik kartlarında bu değerler kullanılacaktır</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1 font-medium">Ortalama Aydınlık (E_avg):</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="10"
+                        max="10000"
+                        value={manualAvgLux}
+                        onChange={(e) => setManualAvgLux(Math.max(1, Number(e.target.value) || 0))}
+                        className="w-full bg-slate-900 border border-amber-500/50 rounded-lg px-2.5 py-1 text-sm font-mono text-amber-300 font-bold focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      />
+                      <span className="text-xs text-slate-400">Lux</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1 font-medium">Minimum Aydınlık (E_min):</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        value={manualMinLux}
+                        onChange={(e) => setManualMinLux(Math.max(0, Number(e.target.value) || 0))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-sm font-mono text-sky-300 font-bold focus:outline-none focus:ring-1 focus:ring-sky-400"
+                      />
+                      <span className="text-xs text-slate-400">Lux</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1 font-medium">Maksimum Aydınlık (E_max):</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="10"
+                        max="20000"
+                        value={manualMaxLux}
+                        onChange={(e) => setManualMaxLux(Math.max(1, Number(e.target.value) || 0))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-sm font-mono text-rose-300 font-bold focus:outline-none focus:ring-1 focus:ring-rose-400"
+                      />
+                      <span className="text-xs text-slate-400">Lux</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* CETVEL VE KAPSAMA ALANI FİLTRESİ */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-3 shadow-lg">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-300">Haritada Tekil Projektör İzole Et (Solo Mod):</span>
                 <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs flex-wrap">
-                  <span className="text-[10.5px] text-slate-400 px-1 font-medium">Haritada Göster:</span>
                   <button
                     type="button"
                     onClick={() => setViewMode('combined')}
@@ -1327,45 +1577,55 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
               </div>
 
-              {/* Görsel Yatay Cetvel Barı (0m ile widthM arası) */}
-              <div className="relative w-full h-8 bg-slate-950 border border-slate-700 rounded-lg overflow-hidden flex">
-                {activeProjectors.map((pj, idx) => {
-                  const halfW = surfaceConfig.widthM / 2;
-                  const tr = pj.throwRatio || 0.8;
-                  const dist = Math.abs(pj.pos[2]) || 4.5;
-                  const beamW = dist / tr;
-                  const centerX = pj.target[0] + halfW;
-                  const startX = Math.max(0, centerX - beamW / 2);
-                  const endX = Math.min(surfaceConfig.widthM, centerX + beamW / 2);
-                  const widthPct = ((endX - startX) / surfaceConfig.widthM) * 100;
-                  const leftPct = (startX / surfaceConfig.widthM) * 100;
+              {/* GÖRSEL YATAY CETVEL BARLARI (Satır Bazlı Kulvarlar) */}
+              <div className="space-y-1.5">
+                {distributionData.sortedRowKeys.map((rKey, rIdx) => {
+                  const rowItems = distributionData.rowsMap.get(rKey) || [];
+                  const rowTitle = distributionData.isMultiRow ? `Sıra ${rIdx + 1} (Y: ${(rKey).toFixed(1)}m derinlik)` : undefined;
 
                   return (
-                    <div
-                      key={pj.id}
-                      className="absolute top-0 bottom-0 border-r border-white/20 flex flex-col justify-center items-center text-[10px] font-bold text-white shadow transition hover:opacity-90 cursor-pointer"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${widthPct}%`,
-                        backgroundColor: `${pj.color}33`,
-                        borderLeft: `3px solid ${pj.color}`
-                      }}
-                      onClick={() => {
-                        setSelectedProjId(pj.id);
-                        setViewMode(pj.id);
-                      }}
-                      title={`${pj.name}: ${startX.toFixed(2)}m – ${endX.toFixed(2)}m`}
-                    >
-                      <span style={{ color: pj.color }}>PJ {idx + 1}</span>
-                      <span className="text-[9px] text-slate-300 font-mono">
-                        {startX.toFixed(1)}m – {endX.toFixed(1)}m
-                      </span>
+                    <div key={rKey} className="space-y-0.5">
+                      {rowTitle && (
+                        <div className="text-[10px] text-slate-400 font-mono font-medium flex items-center justify-between">
+                          <span>{rowTitle}</span>
+                          <span className="text-[9px] text-slate-500">{rowItems.length} Projektör</span>
+                        </div>
+                      )}
+                      <div className="relative w-full h-8 bg-slate-950 border border-slate-700 rounded-lg overflow-hidden flex">
+                        {rowItems.map((item) => {
+                          const widthPct = ((item.endX - item.startX) / surfaceConfig.widthM) * 100;
+                          const leftPct = (item.startX / surfaceConfig.widthM) * 100;
+
+                          return (
+                            <div
+                              key={item.pj.id}
+                              className="absolute top-0 bottom-0 border-r border-white/20 flex flex-col justify-center items-center text-[10px] font-bold text-white shadow transition hover:opacity-90 cursor-pointer"
+                              style={{
+                                left: `${leftPct}%`,
+                                width: `${widthPct}%`,
+                                backgroundColor: `${item.pj.color}33`,
+                                borderLeft: `3px solid ${item.pj.color}`
+                              }}
+                              onClick={() => {
+                                setSelectedProjId(item.pj.id);
+                                setViewMode(item.pj.id);
+                              }}
+                              title={`${item.pj.name}: ${item.startX.toFixed(2)}m – ${item.endX.toFixed(2)}m`}
+                            >
+                              <span style={{ color: item.pj.color }}>PJ {item.idx + 1}</span>
+                              <span className="text-[9px] text-slate-300 font-mono">
+                                {item.startX.toFixed(1)}m – {item.endX.toFixed(1)}m
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Cetvel Detay Tablosu */}
+              {/* CETVEL DETAY TABLOSU */}
               <div className="overflow-x-auto border border-slate-800 rounded-lg">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-950 text-slate-400 uppercase text-[10px]">
@@ -1380,45 +1640,21 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800">
-                    {activeProjectors.map((pj, idx) => {
-                      const halfW = surfaceConfig.widthM / 2;
-                      const tr = pj.throwRatio || 0.8;
-                      const dist = Math.abs(pj.pos[2]) || 4.5;
-                      const beamW = dist / tr;
-                      const centerX = pj.target[0] + halfW;
-                      const startX = Math.max(0, centerX - beamW / 2);
-                      const endX = Math.min(surfaceConfig.widthM, centerX + beamW / 2);
-
-                      let overlapInfo = '— (Kenar)';
-                      if (idx < activeProjectors.length - 1) {
-                        const nextPj = activeProjectors[idx + 1];
-                        const nextTr = nextPj.throwRatio || 0.8;
-                        const nextDist = Math.abs(nextPj.pos[2]) || 4.5;
-                        const nextBeamW = nextDist / nextTr;
-                        const nextCenterX = nextPj.target[0] + halfW;
-                        const nextStartX = Math.max(0, nextCenterX - nextBeamW / 2);
-                        const ovW = endX - nextStartX;
-                        if (ovW > 0) {
-                          const ovPct = Math.round((ovW / beamW) * 100);
-                          overlapInfo = `${ovW.toFixed(2)}m (%${ovPct} Blend PJ ${idx + 2} ile)`;
-                        }
-                      }
-
-                      return (
-                        <tr key={pj.id} className="hover:bg-slate-800/40">
-                          <td className="p-2 font-bold flex items-center gap-1.5" style={{ color: pj.color }}>
-                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pj.color }} />
-                            <span>PJ {idx + 1}: {pj.name.split('(')[0].trim()}</span>
-                          </td>
-                          <td className="p-2 font-mono text-slate-200">{startX.toFixed(2)} m</td>
-                          <td className="p-2 font-mono text-slate-200">{endX.toFixed(2)} m</td>
-                          <td className="p-2 font-mono text-emerald-400 font-semibold">{beamW.toFixed(2)} m</td>
-                          <td className="p-2 font-mono text-sky-400">{centerX.toFixed(2)} m</td>
-                          <td className="p-2 font-mono text-slate-300">D={dist.toFixed(2)}m (TR: {tr}:1)</td>
-                          <td className="p-2 font-mono text-amber-300">{overlapInfo}</td>
-                        </tr>
-                      );
-                    })}
+                    {distributionData.rows.map((r) => (
+                      <tr key={r.pj.id} className="hover:bg-slate-800/40">
+                        <td className="p-2 font-bold flex items-center gap-1.5" style={{ color: r.pj.color }}>
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: r.pj.color }} />
+                          <span>PJ {r.idx + 1}: {r.pj.name.split('(')[0].trim()}</span>
+                          {r.rowName && <span className="text-[10px] text-slate-400 font-normal">({r.rowName})</span>}
+                        </td>
+                        <td className="p-2 font-mono text-slate-200">{r.startX.toFixed(2)} m</td>
+                        <td className="p-2 font-mono text-slate-200">{r.endX.toFixed(2)} m</td>
+                        <td className="p-2 font-mono text-emerald-400 font-semibold">{r.beamW.toFixed(2)} m</td>
+                        <td className="p-2 font-mono text-sky-400">{r.centerX.toFixed(2)} m</td>
+                        <td className="p-2 font-mono text-slate-300">D={r.dist.toFixed(2)}m (TR: {r.pj.throwRatio}:1)</td>
+                        <td className="p-2 font-mono text-amber-300 font-medium">{r.overlapInfo}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1434,15 +1670,16 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     <span className="text-[11px] text-slate-400 font-medium">Ortalama Aydınlık (Lux)</span>
                     <span className="text-[10px] text-slate-500 font-mono">E_avg</span>
                   </div>
-                  <div className="text-2xl font-bold font-mono text-sky-400 mt-1">
-                    {Math.round(simResult.avgLux)} <span className="text-xs font-normal text-slate-400">Lux (lm/m²)</span>
+                  <div className="text-2xl font-bold font-mono text-sky-400 mt-1 flex items-baseline gap-1.5">
+                    <span>{Math.round(effAvgLux)}</span>
+                    <span className="text-xs font-normal text-slate-400">Lux (lm/m²)</span>
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    Min: <b className="text-sky-300">{Math.round(simResult.minLux)}</b> / Max: <b className="text-amber-300">{Math.round(simResult.maxLux)}</b> lx
+                    Min: <b className="text-sky-300">{Math.round(effMinLux)}</b> / Max: <b className="text-amber-300">{Math.round(effMaxLux)}</b> lx
                   </div>
                 </div>
-                <div className={`mt-2 p-1.5 rounded text-[10.5px] border font-medium ${luxEval.color}`}>
-                  {luxEval.text}
+                <div className={`mt-2 p-1.5 rounded text-[10.5px] border font-medium ${isManualLux ? 'bg-amber-950/60 border-amber-500/40 text-amber-300' : luxEval.color}`}>
+                  {isManualLux ? '✏️ Manuel Ölçülen Saha Değeri' : luxEval.text}
                 </div>
               </div>
 
@@ -1454,14 +1691,16 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     <span className="text-[10px] text-slate-500 font-mono">U0 (Min/Ort)</span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
-                    %{round(simResult.uniformityU0 * 100, 1)}
+                    %{round(effU0 * 100, 1)}
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    U1 (Min/Maks): <b className="text-slate-200">%{round(simResult.uniformityU1 * 100, 1)}</b>
+                    U1 (Min/Maks): <b className="text-slate-200">%{round(effU1 * 100, 1)}</b>
                   </div>
                 </div>
                 <div className="mt-2 p-1.5 rounded text-[10.5px] border border-slate-800 bg-slate-950 font-medium text-slate-300">
-                  <span className={uniEval.color}>{uniEval.text}</span>
+                  <span className={effU0 >= 0.5 ? 'text-emerald-400' : 'text-amber-300'}>
+                    {effU0 >= 0.6 ? '✓ Yüksek Homojenlik' : effU0 >= 0.4 ? '✓ Kabul Edilebilir Düzgünlük' : '⚠ Köşelerde Kararma Riski'}
+                  </span>
                 </div>
               </div>
 
@@ -1472,15 +1711,16 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     <span className="text-[11px] text-slate-400 font-medium">Gözlenen Parlaklık (Luminance)</span>
                     <span className="text-[10px] text-slate-500 font-mono">Gain: {screenGain}x</span>
                   </div>
-                  <div className="text-2xl font-bold font-mono text-amber-400 mt-1">
-                    {Math.round(simResult.avgLuminanceNits)} <span className="text-xs font-normal text-slate-400">cd/m² (Nit)</span>
+                  <div className="text-2xl font-bold font-mono text-amber-400 mt-1 flex items-baseline gap-1.5">
+                    <span>{Math.round(effNits)}</span>
+                    <span className="text-xs font-normal text-slate-400">cd/m² (Nit)</span>
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
-                    Foot-Lambert: <b className="text-slate-200">{round(simResult.avgLuminanceFL, 1)} fL</b>
+                    Foot-Lambert: <b className="text-slate-200">{round(effFL, 1)} fL</b>
                   </div>
                 </div>
                 <div className="mt-2 p-1.5 rounded text-[10.5px] border border-slate-800 bg-slate-950 font-medium text-slate-300">
-                  {simResult.avgLuminanceNits > 100 ? '✓ TV / LED netliğinde parlaklık' : '✓ Loş sinema standardı'}
+                  {effNits > 100 ? '✓ TV / LED netliğinde parlaklık' : '✓ Loş sinema standardı'}
                 </div>
               </div>
 
@@ -1492,19 +1732,21 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                     <span className="text-[10px] text-slate-500 font-mono">Amb: {ambientLux} lx</span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-purple-400 mt-1">
-                    {round(simResult.ambientContrastRatio, 1)}:1
+                    {round(effACR, 1)}:1
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
                     {ambientLux === 0 ? 'Tamamen karanlık oda' : `${ambientLux} Lux ortam ışığı altında`}
                   </div>
                 </div>
                 <div className="mt-2 p-1.5 rounded text-[10.5px] border border-slate-800 bg-slate-950 font-medium text-slate-300">
-                  <span className={acrEval.color}>{acrEval.text}</span>
+                  <span className={effACR >= 15 ? 'text-emerald-400' : 'text-amber-300'}>
+                    {effACR >= 20 ? '✓ Mükemmel Kontrast' : effACR >= 15 ? '✓ İyi Okunabilirlik' : '⚠ Düşük Kontrast'}
+                  </span>
                 </div>
               </div>
 
             </div>
-          </div>
+</div>
         )}
 
         {/* ANSI 9-NOKTA ANALİZİ */}

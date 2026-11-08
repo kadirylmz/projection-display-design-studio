@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { buildReportHtml, DEFAULT_SECTIONS, ReportLang, ReportSectionFlags } from '../engine/report';
 import { useProjectStore } from '../projectStore';
 import { usePlannerStore } from '../plannerStore';
+import { usePhotometricStore } from '../photometricStore';
 import { useMapping } from '../mappingStore';
 import { calculateInterProjectorDistances } from '../engine/interprojector';
 import { contentPlannerRoomPlan } from '../engine/drawings';
@@ -81,6 +82,83 @@ export default function ReportGenerator() {
       : (meta.room3dSnapshotUrl ? [meta.room3dSnapshotUrl] : []);
   }, [meta.room3dSnapshots, meta.room3dSnapshotUrl]);
 
+  const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
+
+  const reportPhotometricSurfaces = useMemo(() => {
+    return ipSurfaces.map(s => {
+      if (surfacePhotometrics[s.id]) {
+        return surfacePhotometrics[s.id];
+      }
+      const wM = +(s.widthM || 10).toFixed(2);
+      const hM = +(s.heightM || 4).toFixed(2);
+      const area = wM * hM;
+      const count = (s.cols || 1) * (s.rows || 1);
+      const lumensPerPj = 10000;
+      const totalFlux = count * lumensPerPj * 0.90;
+      const avgL = Math.round(totalFlux / Math.max(1, area));
+      const minL = Math.round(avgL * 0.72);
+      const maxL = Math.round(avgL * 1.25);
+      const nits = Math.round((avgL * 1.0) / Math.PI);
+      const fl = +(nits * 0.2919).toFixed(1);
+      const acr = Math.round((avgL + 20) / 20);
+
+      const tr = s.throwRatio || 0.8;
+      const dist = s.throwDistM || 4.5;
+      const beamW = +(dist / tr).toFixed(2);
+      const stepW = (s.cols || 1) > 1 ? Math.max(0.1, (wM - beamW) / ((s.cols || 1) - 1)) : 0;
+
+      const distRows = [];
+      let pjIdx = 1;
+      for (let r = 0; r < (s.rows || 1); r++) {
+        for (let c = 0; c < (s.cols || 1); c++) {
+          const stX = +(c * stepW).toFixed(2);
+          const enX = +(stX + beamW).toFixed(2);
+          const cX = +((stX + enX) / 2).toFixed(2);
+          let ovText = '— (Kenar)';
+          if (c < (s.cols || 1) - 1) {
+            const nextStX = +((c + 1) * stepW).toFixed(2);
+            const ovW = +(enX - nextStX).toFixed(2);
+            ovText = `${ovW}m (%${Math.round((ovW / Math.max(0.1, beamW)) * 100)} Blend)`;
+          }
+          distRows.push({
+            code: `PJ ${pjIdx}`,
+            name: `${s.name} - PJ ${pjIdx}`,
+            rowName: (s.rows || 1) > 1 ? `Sıra ${r + 1}` : undefined,
+            startX: stX,
+            endX: enX,
+            widthM: beamW,
+            centerX: cX,
+            throwDistM: dist,
+            throwRatio: tr,
+            overlapText: ovText,
+          });
+          pjIdx++;
+        }
+      }
+
+      return {
+        surfaceId: s.id,
+        surfaceName: s.name,
+        surfaceType: s.type || 'wall',
+        widthM: wM,
+        heightM: hM,
+        projectorCount: count,
+        avgLux: avgL,
+        minLux: minL,
+        maxLux: maxL,
+        uniformityU0: minL / Math.max(1, avgL),
+        uniformityU1: minL / Math.max(1, maxL),
+        luminanceNits: nits,
+        luminanceFL: fl,
+        screenGain: 1.0,
+        ambientLux: 20,
+        ambientContrastRatio: acr,
+        isManualLux: false,
+        distributionRows: distRows,
+      };
+    });
+  }, [ipSurfaces, surfacePhotometrics]);
+
   // 3. HTML RAPORUNU OLUŞTUR
   const html = useMemo(() => buildReportHtml({
     lang,
@@ -92,6 +170,7 @@ export default function ReportGenerator() {
     interProjectorAnalysis,
     projection: projectionSnap,
     lux: luxSnap,
+    photometricSurfaces: reportPhotometricSurfaces,
     mappingSlots: slots,
     led: ledSnap,
     electrical,
@@ -107,6 +186,7 @@ export default function ReportGenerator() {
     interProjectorAnalysis,
     projectionSnap,
     luxSnap,
+    reportPhotometricSurfaces,
     slots,
     ledSnap,
     electrical,
