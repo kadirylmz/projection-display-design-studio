@@ -14,6 +14,7 @@ import { usePhotometricStore } from '../photometricStore';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Text as DreiText, Line as DreiLine } from '@react-three/drei';
 import * as THREE from 'three';
+import RoomGIScene3D from './RoomGIScene3D';
 
 interface ScenarioComparisonItem {
   name: string;
@@ -1297,6 +1298,14 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab('gi')}
+              className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === 'gi' ? 'bg-purple-600 text-white shadow font-bold' : 'text-purple-400 hover:text-white'}`}
+              title="Komple 3B oda yüzeyleri, zemin/tavan ve duvarlar arasındaki fiziksel ışık sekmeleri (Global Illumination)"
+            >
+              ✨ 3D Global Illumination (Işık Sekmesi)
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('ansi9')}
               className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === 'ansi9' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
             >
@@ -1347,6 +1356,13 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         {activeTab === '3d' && (
           <div className="space-y-3">
             <Photometric3DScene surface={surfaceConfig} projectors={projectors} />
+          </div>
+        )}
+
+        {/* 🌟 3D GLOBAL ILLUMINATION & IŞIK SEKMESİ SEKMESİ */}
+        {activeTab === 'gi' && (
+          <div className="space-y-3">
+            <RoomGIScene3D />
           </div>
         )}
 

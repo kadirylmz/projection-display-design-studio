@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Projector3DConfig, Surface3DConfig, SurfaceGeometryType } from './engine/photometrics';
 import { SurfaceItem } from './modules/ContentPlanner';
+import { RoomSurfaceType, SurfaceMaterial, DEFAULT_MATERIALS } from './engine/globalIllumination';
 
 export interface ProjectorDistributionRow {
   code: string;
@@ -67,7 +68,7 @@ export interface PhotometricStoreState {
   showIsoContours: boolean;
   showProjectorOutlines: boolean;
   viewMode: 'combined' | 'dominant' | string; // 'combined', 'dominant' veya seçili projektör ID'si ('proj-1', vb.)
-  activeTab: 'heatmap' | '3d' | 'ansi9' | 'overlap' | 'scenarios' | 'guide';
+  activeTab: 'heatmap' | '3d' | 'gi' | 'ansi9' | 'overlap' | 'scenarios' | 'guide';
   advancedMode: boolean;
 
   // Manuel Lux Girişi
@@ -75,6 +76,13 @@ export interface PhotometricStoreState {
   manualAvgLux: number;
   manualMinLux: number;
   manualMaxLux: number;
+
+  // Global Illumination (GI) & Light Bounce Motoru Ayarları
+  giBounceCount: number;
+  giViewMode: 'total' | 'direct' | 'indirect' | 'reflectance';
+  giResolution: 'coarse' | 'medium' | 'fine';
+  selectedGISurfaceId: string;
+  surfaceMaterials: Record<RoomSurfaceType, SurfaceMaterial>;
 
   // Rapora Dahil Edilecek Yüzey Lux Kayıtları Haritası
   surfacePhotometrics: Record<string, SurfacePhotometricEntry>;
@@ -98,13 +106,19 @@ export interface PhotometricStoreState {
   setShowIsoContours: (b: boolean) => void;
   setShowProjectorOutlines: (b: boolean) => void;
   setViewMode: (vm: 'combined' | 'dominant' | string) => void;
-  setActiveTab: (tab: 'heatmap' | '3d' | 'ansi9' | 'overlap' | 'scenarios' | 'guide') => void;
+  setActiveTab: (tab: 'heatmap' | '3d' | 'gi' | 'ansi9' | 'overlap' | 'scenarios' | 'guide') => void;
   setAdvancedMode: (b: boolean) => void;
   
   setIsManualLux: (b: boolean) => void;
   setManualAvgLux: (v: number) => void;
   setManualMinLux: (v: number) => void;
   setManualMaxLux: (v: number) => void;
+
+  setGIBounceCount: (n: number) => void;
+  setGIViewMode: (vm: 'total' | 'direct' | 'indirect' | 'reflectance') => void;
+  setGIResolution: (res: 'coarse' | 'medium' | 'fine') => void;
+  setSelectedGISurfaceId: (id: string) => void;
+  setSurfaceMaterial: (type: RoomSurfaceType, mat: SurfaceMaterial) => void;
 
   saveSurfacePhotometric: (entry: SurfacePhotometricEntry) => void;
 
@@ -185,6 +199,23 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
   manualMaxLux: 420,
   surfacePhotometrics: {},
 
+  // Global Illumination
+  giBounceCount: 2,
+  giViewMode: 'total',
+  giResolution: 'medium',
+  selectedGISurfaceId: 'room-front-wall',
+  surfaceMaterials: {
+    front_wall: DEFAULT_MATERIALS.matte_white,
+    back_wall: DEFAULT_MATERIALS.dark_grey,
+    left_wall: DEFAULT_MATERIALS.matte_white,
+    right_wall: DEFAULT_MATERIALS.matte_white,
+    floor: DEFAULT_MATERIALS.dark_grey,
+    ceiling: DEFAULT_MATERIALS.black_velvet,
+    curved_wall: DEFAULT_MATERIALS.matte_white,
+    custom_surface: DEFAULT_MATERIALS.light_grey,
+    column_obstacle: DEFAULT_MATERIALS.concrete,
+  },
+
   setScreenW: (screenW) => set({ screenW }),
   setScreenH: (screenH) => set({ screenH }),
   setGeometry: (geometry) => set({ geometry }),
@@ -212,6 +243,17 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
   setManualAvgLux: (manualAvgLux) => set({ manualAvgLux }),
   setManualMinLux: (manualMinLux) => set({ manualMinLux }),
   setManualMaxLux: (manualMaxLux) => set({ manualMaxLux }),
+
+  setGIBounceCount: (giBounceCount) => set({ giBounceCount }),
+  setGIViewMode: (giViewMode) => set({ giViewMode }),
+  setGIResolution: (giResolution) => set({ giResolution }),
+  setSelectedGISurfaceId: (selectedGISurfaceId) => set({ selectedGISurfaceId }),
+  setSurfaceMaterial: (type, mat) => set((state) => ({
+    surfaceMaterials: {
+      ...state.surfaceMaterials,
+      [type]: mat
+    }
+  })),
 
   saveSurfacePhotometric: (entry: SurfacePhotometricEntry) => {
     set((state) => ({
