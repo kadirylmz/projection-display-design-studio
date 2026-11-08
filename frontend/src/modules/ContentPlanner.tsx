@@ -284,6 +284,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('cross');
   const [showSlices, setShowSlices] = useState<boolean>(true);
   const [showGrid, setShowGrid] = useState<boolean>(true);
+  const [show2dName, setShow2dName] = useState<boolean>(true);
+  const [show2dResolution, setShow2dResolution] = useState<boolean>(true);
+  const [show2dDensity, setShow2dDensity] = useState<boolean>(true);
+  const [show2dDimensions, setShow2dDimensions] = useState<boolean>(true);
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
@@ -2088,12 +2092,31 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {viewMode === '2d' && (
-                <label className="flex items-center gap-1 cursor-pointer text-slate-300 text-[11px]">
-                  <input type="checkbox" checked={showSlices} onChange={e => setShowSlices(e.target.checked)} />
-                  <span>Projektör Sınırları</span>
-                </label>
+                <div className="flex flex-wrap items-center gap-2 bg-slate-950 px-2 py-1 rounded border border-slate-800 text-[10.5px]">
+                  <span className="font-bold text-amber-300">✍️ Yazılar:</span>
+                  <label className="flex items-center gap-1 cursor-pointer text-slate-200" title="Yüzey Adı">
+                    <input type="checkbox" checked={show2dName} onChange={e => setShow2dName(e.target.checked)} />
+                    <span>Yüzey</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer text-emerald-400" title="Net Piksel Çözünürlüğü">
+                    <input type="checkbox" checked={show2dResolution} onChange={e => setShow2dResolution(e.target.checked)} />
+                    <span>Piksel</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer text-sky-400" title="Piksel Yoğunluğu (mm/px)">
+                    <input type="checkbox" checked={show2dDensity} onChange={e => setShow2dDensity(e.target.checked)} />
+                    <span>mm/px</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer text-indigo-300" title="Açınım Boyutları ve Oran">
+                    <input type="checkbox" checked={show2dDimensions} onChange={e => setShow2dDimensions(e.target.checked)} />
+                    <span>Ölçüler</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer text-amber-300" title="Projektör Sınırları ve Overlap">
+                    <input type="checkbox" checked={showSlices} onChange={e => setShowSlices(e.target.checked)} />
+                    <span>Projektörler</span>
+                  </label>
+                </div>
               )}
               <button
                 onClick={downloadPixelMapPng}
@@ -2483,51 +2506,59 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
                             {/* Merkez Bilgi Yazıları */}
                             <g transform={isVerticalBox ? `rotate(-90 ${cx} ${cy})` : undefined}>
-                              <text
-                                x={cx}
-                                y={cy - surfFont * 1.15}
-                                fill="#f8fafc"
-                                fontSize={surfFont * 0.92}
-                                fontWeight="bold"
-                                textAnchor="middle"
-                              >
-                                {s.name}
-                              </text>
+                              {show2dName && (
+                                <text
+                                  x={cx}
+                                  y={cy - surfFont * 1.15}
+                                  fill="#f8fafc"
+                                  fontSize={surfFont * 0.92}
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  {s.name}
+                                </text>
+                              )}
 
-                              <text
-                                x={cx}
-                                y={cy - surfFont * 0.1}
-                                fill="#4ade80"
-                                fontSize={surfFont * 1.05}
-                                fontWeight="bold"
-                                fontFamily="monospace"
-                                textAnchor="middle"
-                              >
-                                {s.netW} × {s.netH} pixel
-                              </text>
+                              {show2dResolution && (
+                                <text
+                                  x={cx}
+                                  y={cy - surfFont * 0.1}
+                                  fill="#4ade80"
+                                  fontSize={surfFont * 1.05}
+                                  fontWeight="bold"
+                                  fontFamily="monospace"
+                                  textAnchor="middle"
+                                >
+                                  {s.netW} × {s.netH} pixel
+                                </text>
+                              )}
 
-                              <text
-                                x={cx}
-                                y={cy + surfFont * 0.8}
-                                fill="#38bdf8"
-                                fontSize={surfFont * 0.7}
-                                fontWeight="bold"
-                                fontFamily="monospace"
-                                textAnchor="middle"
-                              >
-                                Piksel: {s.avgMmPerPx} mm/px (İdeal ≤{s.idealMuseumMmPerPx}mm) · Optik @{s.throwDistM}m: {s.distMmPerPx} mm/px
-                              </text>
+                              {show2dDensity && (
+                                <text
+                                  x={cx}
+                                  y={cy + surfFont * 0.8}
+                                  fill="#38bdf8"
+                                  fontSize={surfFont * 0.7}
+                                  fontWeight="bold"
+                                  fontFamily="monospace"
+                                  textAnchor="middle"
+                                >
+                                  Piksel: {s.avgMmPerPx} mm/px (İdeal ≤{s.idealMuseumMmPerPx}mm) · Optik @{s.throwDistM}m: {s.distMmPerPx} mm/px
+                                </text>
+                              )}
 
-                              <text
-                                x={cx}
-                                y={cy + surfFont * 1.55}
-                                fill="#cbd5e1"
-                                fontSize={surfFont * 0.65}
-                                fontFamily="monospace"
-                                textAnchor="middle"
-                              >
-                                Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m (Oran {s.aspectPhysical}:1 · {s.cols}×{s.rows} PJ)
-                              </text>
+                              {show2dDimensions && (
+                                <text
+                                  x={cx}
+                                  y={cy + surfFont * 1.55}
+                                  fill="#cbd5e1"
+                                  fontSize={surfFont * 0.65}
+                                  fontFamily="monospace"
+                                  textAnchor="middle"
+                                >
+                                  Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m (Oran {s.aspectPhysical}:1 · {s.cols}×{s.rows} PJ)
+                                </text>
+                              )}
                             </g>
                           </g>
                         </g>

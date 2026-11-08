@@ -47,15 +47,17 @@ export function toSvg(d: Drawing, o: { pixelWidth?: number; background?: string 
   const sx = (x: number) => +(x - b.x0 + m).toFixed(4), sy = (y: number) => +(b.y1 - y + m).toFixed(4);
   const col = (l: string) => d.layers.find(x => x.name === l)?.hex ?? '#e2e8f0';
   const sw = Math.max(W, H) / 700;
+  const bg = o.background ?? '#0b1220';
   const out = d.prims.map(p => {
     const c = col(p.layer);
     if (p.t === 'line') return `<line x1="${sx(p.x1)}" y1="${sy(p.y1)}" x2="${sx(p.x2)}" y2="${sy(p.y2)}" stroke="${c}" stroke-width="${sw}"/>`;
     if (p.t === 'rect') return `<rect x="${sx(p.x)}" y="${sy(p.y + p.h)}" width="${p.w}" height="${p.h}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
     if (p.t === 'circle') return `<circle cx="${sx(p.cx)}" cy="${sy(p.cy)}" r="${p.r}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
-    return `<text x="${sx(p.x)}" y="${sy(p.y)}" font-size="${p.h}" fill="${c}" font-family="sans-serif" text-anchor="${p.anchor ?? 'start'}">${esc(p.text)}</text>`;
+    const halo = (p.h * 0.18).toFixed(2);
+    return `<text x="${sx(p.x)}" y="${sy(p.y)}" font-size="${p.h}" fill="${c}" paint-order="stroke fill" stroke="${bg}" stroke-width="${halo}" stroke-linejoin="round" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600" text-anchor="${p.anchor ?? 'start'}">${esc(p.text)}</text>`;
   });
   const size = o.pixelWidth ? ` width="${o.pixelWidth}" height="${Math.round(o.pixelWidth * H / W)}"` : '';
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${+W.toFixed(4)} ${+H.toFixed(4)}"${size}><rect width="100%" height="100%" fill="${o.background ?? '#0b1220'}"/>${out.join('')}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${+W.toFixed(4)} ${+H.toFixed(4)}"${size}><rect width="100%" height="100%" fill="${bg}"/>${out.join('')}</svg>`;
 }
 
 const dxfText = (s: string) => [...s].map(ch => ch.charCodeAt(0) > 126 ? `\\U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` : ch).join('');

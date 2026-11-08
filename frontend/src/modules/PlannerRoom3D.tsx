@@ -113,12 +113,14 @@ function StylizedHuman3D({
   isDragging,
   onSelectActor,
   onStartDrag,
+  showLabel = true,
 }: {
   actor: HumanActor;
   isSelected: boolean;
   isDragging: boolean;
   onSelectActor: (id: string) => void;
   onStartDrag: (id: string, e: any) => void;
+  showLabel?: boolean;
 }) {
   const cfg = HUMAN_VARIANT_CATALOG[actor.variant] || HUMAN_VARIANT_CATALOG.male_casual;
   const scale = actor.variant === 'child_visitor' ? 0.74 : actor.variant === 'female_dress' ? 0.94 : 1.0;
@@ -343,17 +345,19 @@ function StylizedHuman3D({
       )}
 
       {/* Baş Üstü Bilgi Etiketi */}
-      <Text
-        position={[0, cfg.heightM + 0.18, 0]}
-        fontSize={0.21}
-        color={isSelected ? '#facc15' : '#4ade80'}
-        anchorX="center"
-        anchorY="bottom"
-        outlineWidth={0.025}
-        outlineColor="#020617"
-      >
-        {`${actor.name} (${cfg.heightM}m)`}
-      </Text>
+      {showLabel && (
+        <Text
+          position={[0, cfg.heightM + 0.18, 0]}
+          fontSize={0.21}
+          color={isSelected ? '#facc15' : '#4ade80'}
+          anchorX="center"
+          anchorY="bottom"
+          outlineWidth={0.025}
+          outlineColor="#020617"
+        >
+          {`${actor.name} (${cfg.heightM}m)`}
+        </Text>
+      )}
     </group>
   );
 }
@@ -361,7 +365,7 @@ function StylizedHuman3D({
 /**
  * Fiziksel Oda Kabuğu (Duvar Projeksiyon Ölçülerinden Bağımsız Mimari Oda Çerçevesi, Tavan Yüksekliği, Köşe Kolonları)
  */
-function PhysicalRoomShell3D({ room }: { room: PhysicalRoomConfig }) {
+function PhysicalRoomShell3D({ room, showLabel = true }: { room: PhysicalRoomConfig; showLabel?: boolean }) {
   if (!room.enabled) return null;
 
   const w = room.widthM;
@@ -430,17 +434,19 @@ function PhysicalRoomShell3D({ room }: { room: PhysicalRoomConfig }) {
         />
       ))}
 
-      <Text
-        position={[0, h + 0.35, -hl]}
-        fontSize={0.32}
-        color="#a5b4fc"
-        anchorX="center"
-        anchorY="bottom"
-        outlineWidth={0.025}
-        outlineColor="#020617"
-      >
-        {`🏛️ FİZİKSEL ODA KABUĞU: ${w}m (En) × ${l}m (Boy) × Tavan Yüksekliği: ${h}m`}
-      </Text>
+      {showLabel && (
+        <Text
+          position={[0, h + 0.35, -hl]}
+          fontSize={0.32}
+          color="#a5b4fc"
+          anchorX="center"
+          anchorY="bottom"
+          outlineWidth={0.025}
+          outlineColor="#020617"
+        >
+          {`🏛️ FİZİKSEL ODA KABUĞU: ${w}m (En) × ${l}m (Boy) × Tavan Yüksekliği: ${h}m`}
+        </Text>
+      )}
     </group>
   );
 }
@@ -462,6 +468,7 @@ function ProjectorFrustum3D({
   label,
   detailText,
   showLabels,
+  showShadowLabels = true,
   showSurfaceFill = true,
   isCurvedSurface = false,
 }: {
@@ -477,6 +484,7 @@ function ProjectorFrustum3D({
   label: string;
   detailText: string;
   showLabels: boolean;
+  showShadowLabels?: boolean;
   showSurfaceFill?: boolean;
   isCurvedSurface?: boolean;
 }) {
@@ -789,17 +797,19 @@ function ProjectorFrustum3D({
               color="#ef4444"
               lineWidth={2.2}
             />
-            <Text
-              position={[0, 0, 0.012]}
-              fontSize={0.18}
-              color="#f87171"
-              anchorX="center"
-              anchorY="middle"
-              outlineWidth={0.022}
-              outlineColor="#020617"
-            >
-              {`⚠ ${sh.actorName} GÖLGESİ (${sh.shadowH.toFixed(2)}m)`}
-            </Text>
+            {showShadowLabels && (
+              <Text
+                position={[0, 0, 0.012]}
+                fontSize={0.18}
+                color="#f87171"
+                anchorX="center"
+                anchorY="middle"
+                outlineWidth={0.022}
+                outlineColor="#020617"
+              >
+                {`⚠ ${sh.actorName} GÖLGESİ (${sh.shadowH.toFixed(2)}m)`}
+              </Text>
+            )}
           </group>
 
           {/* İnsanın Başından Duvara Giden Gölge Işını */}
@@ -884,6 +894,10 @@ export default function PlannerRoom3D({
 }: PlannerRoom3DProps) {
   const [showBeams, setShowBeams] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
+  const [showRoomLabels, setShowRoomLabels] = useState(true);
+  const [showSurfaceLabels, setShowSurfaceLabels] = useState(true);
+  const [showProjLabels, setShowProjLabels] = useState(true);
+  const [showHumanLabels, setShowHumanLabels] = useState(true);
   const [showHuman, setShowHuman] = useState(true);
   const [viewFilter, setViewFilter] = useState<'all' | 'selected'>('all');
   const [includeHudOnExport, setIncludeHudOnExport] = useState(true);
@@ -1295,10 +1309,37 @@ export default function PlannerRoom3D({
             <input type="checkbox" checked={showBeams} onChange={e => setShowBeams(e.target.checked)} />
             <span>Işık Konileri & Gölgeler</span>
           </label>
-          <label className="flex items-center gap-1 cursor-pointer text-slate-300">
-            <input type="checkbox" checked={showLabels} onChange={e => setShowLabels(e.target.checked)} />
-            <span>Ölçü Etiketleri</span>
-          </label>
+          <div className="flex flex-wrap items-center gap-2 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[10.5px]">
+            <span className="font-bold text-amber-300">✍️ Yazılar:</span>
+            <label className="flex items-center gap-1 cursor-pointer text-indigo-300" title="Fiziksel oda ölçü başlığı">
+              <input type="checkbox" checked={showRoomLabels} onChange={e => setShowRoomLabels(e.target.checked)} />
+              <span>Oda</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer text-slate-200" title="Duvar ve yüzey isim & boyutları">
+              <input type="checkbox" checked={showSurfaceLabels} onChange={e => setShowSurfaceLabels(e.target.checked)} />
+              <span>Yüzey</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer text-sky-300" title="Projektör etiketleri ve D mesafesi">
+              <input type="checkbox" checked={showProjLabels} onChange={e => setShowProjLabels(e.target.checked)} />
+              <span>Projektör & Atım</span>
+            </label>
+            <label className="flex items-center gap-1 cursor-pointer text-emerald-300" title="İnsan isimleri ve duvardaki gölge uyarıları">
+              <input type="checkbox" checked={showHumanLabels} onChange={e => setShowHumanLabels(e.target.checked)} />
+              <span>İnsan & Gölge</span>
+            </label>
+            <button
+              onClick={() => {
+                const anyOff = !showRoomLabels || !showSurfaceLabels || !showProjLabels || !showHumanLabels;
+                setShowRoomLabels(anyOff);
+                setShowSurfaceLabels(anyOff);
+                setShowProjLabels(anyOff);
+                setShowHumanLabels(anyOff);
+              }}
+              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[9.5px] text-slate-300"
+            >
+              {!showRoomLabels && !showSurfaceLabels && !showProjLabels && !showHumanLabels ? 'Tümünü Aç' : 'Gizle'}
+            </button>
+          </div>
           <label className="flex items-center gap-1 cursor-pointer text-sky-300" title="İndirilen 3B PNG altına teknik özet barı ekler">
             <input type="checkbox" checked={includeHudOnExport} onChange={e => setIncludeHudOnExport(e.target.checked)} />
             <span>PNG Antet</span>
@@ -1529,7 +1570,7 @@ export default function PlannerRoom3D({
 
           <Suspense fallback={null}>
             {/* FİZİKSEL ODA KABUĞU */}
-            <PhysicalRoomShell3D room={physicalRoom} />
+            <PhysicalRoomShell3D room={physicalRoom} showLabel={showRoomLabels} />
 
             {sceneData.specialSurf ? (
               <SpecialGeometryScene
@@ -1537,7 +1578,9 @@ export default function PlannerRoom3D({
                 floorSurf={sceneData.floor}
                 humans={showHuman ? humans : []}
                 showBeams={showBeams}
-                showLabels={showLabels}
+                showLabels={showSurfaceLabels}
+                showProjLabels={showProjLabels}
+                showHumanLabels={showHumanLabels}
                 onSelect={onSelect}
               />
             ) : (
@@ -1550,7 +1593,9 @@ export default function PlannerRoom3D({
                 roomHeightY={sceneData.roomHeightY}
                 humans={showHuman ? humans : []}
                 showBeams={showBeams}
-                showLabels={showLabels}
+                showLabels={showSurfaceLabels}
+                showProjLabels={showProjLabels}
+                showHumanLabels={showHumanLabels}
                 onSelect={onSelect}
               />
             )}
@@ -1565,6 +1610,7 @@ export default function PlannerRoom3D({
                   isDragging={actor.id === draggingHumanId}
                   onSelectActor={setSelectedHumanId}
                   onStartDrag={handleStartDragHuman}
+                  showLabel={showHumanLabels}
                 />
               ))}
           </Suspense>
@@ -1595,6 +1641,8 @@ function RoomBoxScene({
   humans,
   showBeams,
   showLabels,
+  showProjLabels = true,
+  showHumanLabels = true,
   onSelect,
 }: {
   surfaces: CalculatedSurface[];
@@ -1606,6 +1654,8 @@ function RoomBoxScene({
   humans: HumanActor[];
   showBeams: boolean;
   showLabels: boolean;
+  showProjLabels?: boolean;
+  showHumanLabels?: boolean;
   onSelect: (id: string) => void;
 }) {
   const walls = surfaces.filter(s => s.type === 'wall');
@@ -1750,6 +1800,7 @@ function RoomBoxScene({
                     <planeGeometry args={[(surf.effectiveWidthM - totalOptW) / 2, surf.effectiveHeightM]} />
                     <meshBasicMaterial color="#dc2626" transparent opacity={0.35} side={THREE.DoubleSide} />
                   </mesh>
+                  {showLabels && (
                   <Text
                     position={[0, -surf.effectiveHeightM / 2 + 0.35, 0.04]}
                     fontSize={0.28}
@@ -1761,11 +1812,12 @@ function RoomBoxScene({
                   >
                     {`⚠ YÜZEY TAM DOLMUYOR: Projektörler ${totalOptW.toFixed(2)}m açıyor (${(surf.effectiveWidthM - totalOptW).toFixed(2)}m Boşluk Var!)`}
                   </Text>
+                )}
                 </>
               )}
 
               {/* Eğer Görüntü Duvardan Dışarı Taşıyorsa Uyarı */}
-              {isOverfilledW && (
+              {isOverfilledW && showLabels && (
                 <Text
                   position={[0, -surf.effectiveHeightM / 2 + 0.35, 0.04]}
                   fontSize={0.26}
@@ -1780,7 +1832,7 @@ function RoomBoxScene({
               )}
 
               {/* Tam Doluyorsa Onay Yazısı */}
-              {!isUnderfilledW && !isOverfilledW && (
+              {!isUnderfilledW && !isOverfilledW && showLabels && (
                 <Text
                   position={[0, -surf.effectiveHeightM / 2 + 0.32, 0.04]}
                   fontSize={0.25}
@@ -1808,6 +1860,7 @@ function RoomBoxScene({
               />
 
               {/* Duvar Üstü Bilgi Yazısı */}
+              {showLabels && (
               <Text
                 position={[0, surf.effectiveHeightM / 2 + 0.42, 0.05]}
                 fontSize={0.32}
@@ -1819,6 +1872,7 @@ function RoomBoxScene({
               >
                 {`${surf.name} (${surf.effectiveWidthM}m × ${surf.effectiveHeightM}m → ${surf.netW}×${surf.netH}px | Doluluk: %${covPctW})`}
               </Text>
+              )}
             </group>
 
             {/* Bu Duvara Ait Projektörler, Duvardaki Parlak Görüntü Dolgusu ve İnsan Gölgeleri */}
@@ -1836,7 +1890,8 @@ function RoomBoxScene({
                 color={col}
                 label={item.label}
                 detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
-                showLabels={showLabels}
+                showLabels={showProjLabels}
+                showShadowLabels={showHumanLabels}
                 showSurfaceFill={true}
               />
             ))}
@@ -1865,6 +1920,7 @@ function RoomBoxScene({
             />
           </mesh>
 
+          {showLabels && (
           <Text
             position={[0, 0.08, 0]}
             rotation={[-Math.PI / 2, 0, 0]}
@@ -1877,6 +1933,7 @@ function RoomBoxScene({
           >
             {`${floor.name}: ${floor.effectiveWidthM}m × ${floor.effectiveHeightM}m (${floor.netW}×${floor.netH}px · ${floor.avgMmPerPx} mm/px)`}
           </Text>
+          )}
 
           {showBeams && (viewFilter === 'all' || floor.id === selectedId) && (() => {
             const items: JSX.Element[] = [];
@@ -1929,6 +1986,8 @@ function SpecialGeometryScene({
   humans,
   showBeams,
   showLabels,
+  showProjLabels = true,
+  showHumanLabels = true,
   onSelect,
 }: {
   surf: CalculatedSurface;
@@ -1936,6 +1995,8 @@ function SpecialGeometryScene({
   humans: HumanActor[];
   showBeams: boolean;
   showLabels: boolean;
+  showProjLabels?: boolean;
+  showHumanLabels?: boolean;
   onSelect: (id: string) => void;
 }) {
   const r = surf.radiusM;

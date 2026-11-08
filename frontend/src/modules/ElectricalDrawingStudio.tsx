@@ -21,6 +21,22 @@ export default function ElectricalDrawingStudio() {
   // Kullanıcının doğrudan bu ekrandan adet değiştirebilmesi için state:
   const [projectorQty, setProjectorQty] = useState<number>(totalProjectors || 10);
 
+  // SEÇMELİ METİN VE KATMAN GÖRÜNÜM AYARLARI (KULLANICI İSTEDİĞİNİ AÇIP KAPATIR)
+  // 1) Mimari Oda Planı Seçenekleri:
+  const [roomShowRoomDim, setRoomShowRoomDim] = useState<boolean>(true);
+  const [roomShowThrowDim, setRoomShowThrowDim] = useState<boolean>(true);
+  const [roomShowPjLabels, setRoomShowPjLabels] = useState<boolean>(true);
+  const [roomShowElLabels, setRoomShowElLabels] = useState<boolean>(true);
+  const [roomShowFrustums, setRoomShowFrustums] = useState<boolean>(true);
+  const [roomShowTitleBlock, setRoomShowTitleBlock] = useState<boolean>(true);
+
+  // 2) Elektrik Tek Hat Şeması Seçenekleri:
+  const [elShowBusSpecs, setElShowBusSpecs] = useState<boolean>(true);
+  const [elShowBreakerSpecs, setElShowBreakerSpecs] = useState<boolean>(true);
+  const [elShowCableSpecs, setElShowCableSpecs] = useState<boolean>(true);
+  const [elShowPhaseCurrent, setElShowPhaseCurrent] = useState<boolean>(true);
+  const [elShowLoadDetails, setElShowLoadDetails] = useState<boolean>(true);
+
   const { loads, circuits, supply } = electrical;
 
   // Girilen Projektör Adedi ve Birim Güce Göre Elektrik Yüklerini & Linyeleri Otomatik Dağıt
@@ -81,17 +97,50 @@ export default function ElectricalDrawingStudio() {
         return contentPlannerRoomPlan(physicalRoom, surfaces, {
           customProjectorQty: projectorQty,
           perProjectorWatt: singleProjWatt,
+          showRoomDimensions: roomShowRoomDim,
+          showThrowDimensions: roomShowThrowDim,
+          showProjectorLabels: roomShowPjLabels,
+          showElectricalLabels: roomShowElLabels,
+          showFrustums: roomShowFrustums,
+          showTitleBlock: roomShowTitleBlock,
         });
       }
       if (sheet === 'electrical' && elRes.r) {
-        return electricalSingleLine(loads, circuits, supply, elRes.r);
+        return electricalSingleLine(loads, circuits, supply, elRes.r, {
+          showBusSpecs: elShowBusSpecs,
+          showBreakerSpecs: elShowBreakerSpecs,
+          showCableSpecs: elShowCableSpecs,
+          showPhaseAndCurrent: elShowPhaseCurrent,
+          showLoadDetails: elShowLoadDetails,
+        });
       }
       return null;
     } catch (e) {
       console.error('CAD Drawing Error:', e);
       return null;
     }
-  }, [sheet, physicalRoom, surfaces, loads, circuits, supply, elRes.r, projectorQty, singleProjWatt]);
+  }, [
+    sheet,
+    physicalRoom,
+    surfaces,
+    loads,
+    circuits,
+    supply,
+    elRes.r,
+    projectorQty,
+    singleProjWatt,
+    roomShowRoomDim,
+    roomShowThrowDim,
+    roomShowPjLabels,
+    roomShowElLabels,
+    roomShowFrustums,
+    roomShowTitleBlock,
+    elShowBusSpecs,
+    elShowBreakerSpecs,
+    elShowCableSpecs,
+    elShowPhaseCurrent,
+    elShowLoadDetails,
+  ]);
 
   const svg = useMemo(
     () => (activeDrawing ? toSvg(activeDrawing, { background: '#0b1220' }) : ''),
@@ -429,6 +478,113 @@ export default function ElectricalDrawingStudio() {
               </button>
             </div>
           )}
+        </div>
+
+        {/* SEÇMELİ YAZI VE KATMAN KONTROL PANELİ (İSTENENLER AÇILIP KAPATILIR) */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-2 rounded bg-slate-900/90 border border-slate-800 text-[11px]">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-bold text-amber-300 flex items-center gap-1">
+              <span>✍️ Seçmeli Yazılar:</span>
+            </span>
+
+            {sheet === 'room' ? (
+              <>
+                <label className="flex items-center gap-1 cursor-pointer text-slate-200 hover:text-white" title="Oda dış mimari genişlik ve boy ölçü çizgileri">
+                  <input type="checkbox" checked={roomShowRoomDim} onChange={e => setRoomShowRoomDim(e.target.checked)} />
+                  <span>Oda Dış Kotları</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-amber-300 hover:text-amber-200" title="Projektörlerin duvara dik atım mesafesi (D) ölçü çizgileri">
+                  <input type="checkbox" checked={roomShowThrowDim} onChange={e => setRoomShowThrowDim(e.target.checked)} />
+                  <span>Atım Mesafesi (D)</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-sky-300 hover:text-sky-200" title="Cihaz adı ve tavandan montaj kotu (H)">
+                  <input type="checkbox" checked={roomShowPjLabels} onChange={e => setRoomShowPjLabels(e.target.checked)} />
+                  <span>Cihaz Adı & Askı Kotu (H)</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-rose-300 hover:text-rose-200" title="230V Priz sembolü ve watt güç etiketi">
+                  <input type="checkbox" checked={roomShowElLabels} onChange={e => setRoomShowElLabels(e.target.checked)} />
+                  <span>230V Priz & Güç (W)</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-emerald-300 hover:text-emerald-200" title="Işık atım konileri (üçgen frustum çizgileri)">
+                  <input type="checkbox" checked={roomShowFrustums} onChange={e => setRoomShowFrustums(e.target.checked)} />
+                  <span>Işık Konileri</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white" title="Sağ alt mimari antet ve sembol lejantı">
+                  <input type="checkbox" checked={roomShowTitleBlock} onChange={e => setRoomShowTitleBlock(e.target.checked)} />
+                  <span>Antet & Lejant</span>
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="flex items-center gap-1 cursor-pointer text-sky-300 hover:text-sky-200" title="Şebeke beslemesi ve ana dağıtım barası detayları">
+                  <input type="checkbox" checked={elShowBusSpecs} onChange={e => setElShowBusSpecs(e.target.checked)} />
+                  <span>Bara & Şebeke</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-amber-300 hover:text-amber-200" title="Sigorta ve ana kesici amper değerleri">
+                  <input type="checkbox" checked={elShowBreakerSpecs} onChange={e => setElShowBreakerSpecs(e.target.checked)} />
+                  <span>Sigortalar (16A / 40A)</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-emerald-300 hover:text-emerald-200" title="Kablo kesiti (mm2), mesafe (m) ve gerilim düşümü (%dU)">
+                  <input type="checkbox" checked={elShowCableSpecs} onChange={e => setElShowCableSpecs(e.target.checked)} />
+                  <span>Kablo (3x2.5mm²) & %dU</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-indigo-300 hover:text-indigo-200" title="Faz dağılımı ve linye işletme akımı (Ib)">
+                  <input type="checkbox" checked={elShowPhaseCurrent} onChange={e => setElShowPhaseCurrent(e.target.checked)} />
+                  <span>Faz & Akım (Ib)</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer text-slate-200 hover:text-white" title="Yük kutusu, cihaz modelleri ve watt detayları">
+                  <input type="checkbox" checked={elShowLoadDetails} onChange={e => setElShowLoadDetails(e.target.checked)} />
+                  <span>Yük & Watt Detayı</span>
+                </label>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                if (sheet === 'room') {
+                  setRoomShowRoomDim(true);
+                  setRoomShowThrowDim(true);
+                  setRoomShowPjLabels(true);
+                  setRoomShowElLabels(true);
+                  setRoomShowFrustums(true);
+                  setRoomShowTitleBlock(true);
+                } else {
+                  setElShowBusSpecs(true);
+                  setElShowBreakerSpecs(true);
+                  setElShowCableSpecs(true);
+                  setElShowPhaseCurrent(true);
+                  setElShowLoadDetails(true);
+                }
+              }}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px]"
+            >
+              Tümünü Aç
+            </button>
+            <button
+              onClick={() => {
+                if (sheet === 'room') {
+                  setRoomShowRoomDim(false);
+                  setRoomShowThrowDim(false);
+                  setRoomShowFrustums(false);
+                  setRoomShowTitleBlock(false);
+                  setRoomShowPjLabels(true);
+                  setRoomShowElLabels(true);
+                } else {
+                  setElShowBusSpecs(false);
+                  setElShowCableSpecs(false);
+                  setElShowPhaseCurrent(false);
+                  setElShowBreakerSpecs(true);
+                  setElShowLoadDetails(true);
+                }
+              }}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 text-[10px]"
+              title="Yalnızca temel cihaz ve sigorta etiketlerini bırakır"
+            >
+              Sade Görünüm
+            </button>
+          </div>
         </div>
 
         {/* CAD ÇİZİM GÖRSELLEŞTİRME PENCERESİ */}

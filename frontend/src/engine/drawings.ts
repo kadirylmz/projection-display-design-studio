@@ -83,6 +83,12 @@ export function roomPlan(room: { w: number; l: number; h: number }, projectors: 
 export interface ContentPlannerRoomPlanOptions {
   customProjectorQty?: number;
   perProjectorWatt?: number;
+  showRoomDimensions?: boolean;      // Dış oda genişliği & boyu ölçü çizgileri
+  showThrowDimensions?: boolean;     // Projektörün duvara atım mesafesi (D) ölçü çizgileri
+  showProjectorLabels?: boolean;     // Projektör adları ve tavan askı kotu (H)
+  showElectricalLabels?: boolean;    // Kırmızı 230V priz sembolleri ve watt etiketleri
+  showFrustums?: boolean;            // Işık atım konileri (üçgen ışın çizgileri)
+  showTitleBlock?: boolean;          // Sağ alt teknik antet ve lejant
 }
 
 /**
@@ -99,6 +105,15 @@ export function contentPlannerRoomPlan(
 ): Drawing {
   const d = newDrawing('Mimari Projeksiyon & Elektrik Yerleşim Planı (CAD)', 'mm');
   const mm = 1000; // Metre -> Milimetre
+
+  const {
+    showRoomDimensions = true,
+    showThrowDimensions = true,
+    showProjectorLabels = true,
+    showElectricalLabels = true,
+    showFrustums = true,
+    showTitleBlock = true,
+  } = options;
 
   const walls = surfaces.filter(s => s.type === 'wall');
   const floor = surfaces.find(s => s.type === 'floor');
@@ -173,40 +188,52 @@ export function contentPlannerRoomPlan(
 
         // Projektör Şasisi (500x420 mm)
         d.prims.push({ t: 'rect', x: pjX - 210, y: pjZ - 250, w: 420, h: 500, layer: 'PROJEKTOR' });
+
         // Elektrik Prizi / Besleme Sembolü (Kırmızı Daire + 230V Soket)
-        d.prims.push({ t: 'circle', cx: pjX, cy: pjZ + 320, r: 90, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'line', x1: pjX - 60, y1: pjZ + 320, x2: pjX + 60, y2: pjZ + 320, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ + 260, x2: pjX, y2: pjZ + 380, layer: 'ELEKTRIK' });
+        if (showElectricalLabels) {
+          d.prims.push({ t: 'circle', cx: pjX, cy: pjZ + 320, r: 90, layer: 'ELEKTRIK' });
+          d.prims.push({ t: 'line', x1: pjX - 60, y1: pjZ + 320, x2: pjX + 60, y2: pjZ + 320, layer: 'ELEKTRIK' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ + 260, x2: pjX, y2: pjZ + 380, layer: 'ELEKTRIK' });
+        }
 
         // Montaj ve Elektrik Etiketi
-        d.prims.push({
-          t: 'text',
-          x: pjX + 260,
-          y: pjZ - 50,
-          h: t * 0.65,
-          text: `PJ-Sol.${c + 1} | H=${mountH.toFixed(2)}m | ${pWatt}W (230V)`,
-          layer: 'METIN',
-        });
+        if (showProjectorLabels || showElectricalLabels) {
+          const parts: string[] = [];
+          if (showProjectorLabels) parts.push(`PJ-Sol.${c + 1}`, `H=${mountH.toFixed(2)}m`);
+          if (showElectricalLabels) parts.push(`${pWatt}W (230V)`);
+          d.prims.push({
+            t: 'text',
+            x: pjX + 260,
+            y: pjZ - 50,
+            h: t * 0.65,
+            text: parts.join(' | '),
+            layer: 'METIN',
+          });
+        }
 
         // Duvara Dik Atım Mesafesi (Throw Distance) Ölçülendirme Çizgisi
-        d.prims.push({ t: 'line', x1: targetX, y1: pjZ, x2: pjX, y2: pjZ, layer: 'OLCU' });
-        d.prims.push({ t: 'line', x1: targetX, y1: pjZ - 120, x2: targetX, y2: pjZ + 120, layer: 'OLCU' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
-        d.prims.push({
-          t: 'text',
-          x: (targetX + pjX) / 2,
-          y: pjZ + 80,
-          h: t * 0.6,
-          text: `D = ${throwM.toFixed(2)} m (${Math.round(throwM * mm)} mm)`,
-          layer: 'OLCU',
-          anchor: 'middle',
-        });
+        if (showThrowDimensions) {
+          d.prims.push({ t: 'line', x1: targetX, y1: pjZ, x2: pjX, y2: pjZ, layer: 'OLCU' });
+          d.prims.push({ t: 'line', x1: targetX, y1: pjZ - 120, x2: targetX, y2: pjZ + 120, layer: 'OLCU' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
+          d.prims.push({
+            t: 'text',
+            x: (targetX + pjX) / 2,
+            y: pjZ + 80,
+            h: t * 0.6,
+            text: `D = ${throwM.toFixed(2)} m (${Math.round(throwM * mm)} mm)`,
+            layer: 'OLCU',
+            anchor: 'middle',
+          });
+        }
 
         // Işık Atım Konisi (Frustum Üst Görünüş Üçgeni)
-        const halfSpanMm = (singleW * mm) / 2;
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ - halfSpanMm, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ + halfSpanMm, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'line', x1: targetX, y1: targetZ - halfSpanMm, x2: targetX, y2: targetZ + halfSpanMm, layer: 'IMAJ' });
+        if (showFrustums) {
+          const halfSpanMm = (singleW * mm) / 2;
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ - halfSpanMm, layer: 'PROJEKTOR' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ + halfSpanMm, layer: 'PROJEKTOR' });
+          d.prims.push({ t: 'line', x1: targetX, y1: targetZ - halfSpanMm, x2: targetX, y2: targetZ + halfSpanMm, layer: 'IMAJ' });
+        }
       }
     } else if (wIdx === 1) {
       // ÖN KISA DUVAR (Z = -hl)
@@ -229,36 +256,48 @@ export function contentPlannerRoomPlan(
         const pjZ = (-hl + throwM * mm);
 
         d.prims.push({ t: 'rect', x: pjX - 250, y: pjZ - 210, w: 500, h: 420, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'circle', cx: pjX + 320, cy: pjZ, r: 90, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'line', x1: pjX + 260, y1: pjZ, x2: pjX + 380, y2: pjZ, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'line', x1: pjX + 320, y1: pjZ - 60, x2: pjX + 320, y2: pjZ + 60, layer: 'ELEKTRIK' });
 
-        d.prims.push({
-          t: 'text',
-          x: pjX - 240,
-          y: pjZ + 280,
-          h: t * 0.65,
-          text: `PJ-Ön.${c + 1} | H=${mountH.toFixed(2)}m | ${pWatt}W (230V)`,
-          layer: 'METIN',
-        });
+        if (showElectricalLabels) {
+          d.prims.push({ t: 'circle', cx: pjX + 320, cy: pjZ, r: 90, layer: 'ELEKTRIK' });
+          d.prims.push({ t: 'line', x1: pjX + 260, y1: pjZ, x2: pjX + 380, y2: pjZ, layer: 'ELEKTRIK' });
+          d.prims.push({ t: 'line', x1: pjX + 320, y1: pjZ - 60, x2: pjX + 320, y2: pjZ + 60, layer: 'ELEKTRIK' });
+        }
+
+        if (showProjectorLabels || showElectricalLabels) {
+          const parts: string[] = [];
+          if (showProjectorLabels) parts.push(`PJ-Ön.${c + 1}`, `H=${mountH.toFixed(2)}m`);
+          if (showElectricalLabels) parts.push(`${pWatt}W (230V)`);
+          d.prims.push({
+            t: 'text',
+            x: pjX - 240,
+            y: pjZ + 280,
+            h: t * 0.65,
+            text: parts.join(' | '),
+            layer: 'METIN',
+          });
+        }
 
         // Ölçü Çizgisi
-        d.prims.push({ t: 'line', x1: pjX, y1: targetZ, x2: pjX, y2: pjZ, layer: 'OLCU' });
-        d.prims.push({ t: 'line', x1: pjX - 120, y1: targetZ, x2: pjX + 120, y2: targetZ, layer: 'OLCU' });
-        d.prims.push({ t: 'line', x1: pjX - 120, y1: pjZ, x2: pjX + 120, y2: pjZ, layer: 'OLCU' });
-        d.prims.push({
-          t: 'text',
-          x: pjX + 80,
-          y: (targetZ + pjZ) / 2,
-          h: t * 0.6,
-          text: `D = ${throwM.toFixed(2)} m`,
-          layer: 'OLCU',
-        });
+        if (showThrowDimensions) {
+          d.prims.push({ t: 'line', x1: pjX, y1: targetZ, x2: pjX, y2: pjZ, layer: 'OLCU' });
+          d.prims.push({ t: 'line', x1: pjX - 120, y1: targetZ, x2: pjX + 120, y2: targetZ, layer: 'OLCU' });
+          d.prims.push({ t: 'line', x1: pjX - 120, y1: pjZ, x2: pjX + 120, y2: pjZ, layer: 'OLCU' });
+          d.prims.push({
+            t: 'text',
+            x: pjX + 80,
+            y: (targetZ + pjZ) / 2,
+            h: t * 0.6,
+            text: `D = ${throwM.toFixed(2)} m`,
+            layer: 'OLCU',
+          });
+        }
 
-        const halfSpanMm = (singleW * mm) / 2;
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX - halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'line', x1: targetX - halfSpanMm, y1: targetZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'IMAJ' });
+        if (showFrustums) {
+          const halfSpanMm = (singleW * mm) / 2;
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX - halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
+          d.prims.push({ t: 'line', x1: targetX - halfSpanMm, y1: targetZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'IMAJ' });
+        }
       }
     } else if (wIdx === 2) {
       // SAĞ UZUN DUVAR (X = +hw)
@@ -281,37 +320,49 @@ export function contentPlannerRoomPlan(
         const pjZ = targetZ;
 
         d.prims.push({ t: 'rect', x: pjX - 210, y: pjZ - 250, w: 420, h: 500, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'circle', cx: pjX, cy: pjZ + 320, r: 90, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'line', x1: pjX - 60, y1: pjZ + 320, x2: pjX + 60, y2: pjZ + 320, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ + 260, x2: pjX, y2: pjZ + 380, layer: 'ELEKTRIK' });
 
-        d.prims.push({
-          t: 'text',
-          x: pjX - 2000,
-          y: pjZ - 50,
-          h: t * 0.65,
-          text: `PJ-Sağ.${c + 1} | H=${mountH.toFixed(2)}m | ${pWatt}W (230V)`,
-          layer: 'METIN',
-        });
+        if (showElectricalLabels) {
+          d.prims.push({ t: 'circle', cx: pjX, cy: pjZ + 320, r: 90, layer: 'ELEKTRIK' });
+          d.prims.push({ t: 'line', x1: pjX - 60, y1: pjZ + 320, x2: pjX + 60, y2: pjZ + 320, layer: 'ELEKTRIK' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ + 260, x2: pjX, y2: pjZ + 380, layer: 'ELEKTRIK' });
+        }
+
+        if (showProjectorLabels || showElectricalLabels) {
+          const parts: string[] = [];
+          if (showProjectorLabels) parts.push(`PJ-Sağ.${c + 1}`, `H=${mountH.toFixed(2)}m`);
+          if (showElectricalLabels) parts.push(`${pWatt}W (230V)`);
+          d.prims.push({
+            t: 'text',
+            x: pjX - 2000,
+            y: pjZ - 50,
+            h: t * 0.65,
+            text: parts.join(' | '),
+            layer: 'METIN',
+          });
+        }
 
         // Ölçü Çizgisi
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: pjZ, layer: 'OLCU' });
-        d.prims.push({ t: 'line', x1: targetX, y1: pjZ - 120, x2: targetX, y2: pjZ + 120, layer: 'OLCU' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
-        d.prims.push({
-          t: 'text',
-          x: (targetX + pjX) / 2,
-          y: pjZ + 80,
-          h: t * 0.6,
-          text: `D = ${throwM.toFixed(2)} m`,
-          layer: 'OLCU',
-          anchor: 'middle',
-        });
+        if (showThrowDimensions) {
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: pjZ, layer: 'OLCU' });
+          d.prims.push({ t: 'line', x1: targetX, y1: pjZ - 120, x2: targetX, y2: pjZ + 120, layer: 'OLCU' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
+          d.prims.push({
+            t: 'text',
+            x: (targetX + pjX) / 2,
+            y: pjZ + 80,
+            h: t * 0.6,
+            text: `D = ${throwM.toFixed(2)} m`,
+            layer: 'OLCU',
+            anchor: 'middle',
+          });
+        }
 
-        const halfSpanMm = (singleW * mm) / 2;
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ - halfSpanMm, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ + halfSpanMm, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'line', x1: targetX, y1: targetZ - halfSpanMm, x2: targetX, y2: targetZ + halfSpanMm, layer: 'IMAJ' });
+        if (showFrustums) {
+          const halfSpanMm = (singleW * mm) / 2;
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX - halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
+          d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
+          d.prims.push({ t: 'line', x1: targetX - halfSpanMm, y1: targetZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'IMAJ' });
+        }
       }
     }
   });
@@ -326,16 +377,25 @@ export function contentPlannerRoomPlan(
         const tz = floor.cols === 1 ? 0 : -hl + (c + 0.5) * (roomL * mm / floor.cols);
         const tx = floor.rows === 1 ? 0 : -hw + (r + 0.5) * (roomW * mm / floor.rows);
         d.prims.push({ t: 'circle', cx: tx, cy: tz, r: 280, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'circle', cx: tx, cy: tz + 380, r: 90, layer: 'ELEKTRIK' });
-        d.prims.push({ t: 'rect', x: tx - (singleH * mm) / 2, y: tz - (singleW * mm) / 2, w: singleH * mm, h: singleW * mm, layer: 'IMAJ' });
-        d.prims.push({
-          t: 'text',
-          x: tx + 330,
-          y: tz - 60,
-          h: t * 0.55,
-          text: `Zemin-PJ.${c + 1}.${r + 1} | D=${floor.throwDistM}m | ${pWatt}W`,
-          layer: 'METIN',
-        });
+        if (showElectricalLabels) {
+          d.prims.push({ t: 'circle', cx: tx, cy: tz + 380, r: 90, layer: 'ELEKTRIK' });
+        }
+        if (showFrustums) {
+          d.prims.push({ t: 'rect', x: tx - (singleH * mm) / 2, y: tz - (singleW * mm) / 2, w: singleH * mm, h: singleW * mm, layer: 'IMAJ' });
+        }
+        if (showProjectorLabels || showElectricalLabels) {
+          const parts: string[] = [];
+          if (showProjectorLabels) parts.push(`Zemin-PJ.${c + 1}.${r + 1}`, `D=${floor.throwDistM}m`);
+          if (showElectricalLabels) parts.push(`${pWatt}W`);
+          d.prims.push({
+            t: 'text',
+            x: tx + 330,
+            y: tz - 60,
+            h: t * 0.55,
+            text: parts.join(' | '),
+            layer: 'METIN',
+          });
+        }
       }
     }
   }
@@ -344,86 +404,271 @@ export function contentPlannerRoomPlan(
   const displayQty = options.customProjectorQty ?? totalPjCount;
 
   // 3. DIŞ ODA ÖLÇÜLENDİRME ÇİZGİLERİ (MİMARİ KOTLAR)
-  const dimOffset = 1500;
-  // Yatay Oda Genişliği
-  d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset, x2: hw, y2: hl + dimOffset, layer: 'OLCU' });
-  d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset * 0.8, x2: -hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
-  d.prims.push({ t: 'line', x1: hw, y1: hl + dimOffset * 0.8, x2: hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
-  d.prims.push({ t: 'text', x: 0, y: hl + dimOffset + t * 0.4, h: t * 0.85, text: `ODA GENİŞLİĞİ: ${roomW.toFixed(2)} m (${Math.round(roomW * mm)} mm)`, layer: 'OLCU', anchor: 'middle' });
+  if (showRoomDimensions) {
+    const dimOffset = 1500;
+    // Yatay Oda Genişliği
+    d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset, x2: hw, y2: hl + dimOffset, layer: 'OLCU' });
+    d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset * 0.8, x2: -hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
+    d.prims.push({ t: 'line', x1: hw, y1: hl + dimOffset * 0.8, x2: hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
+    d.prims.push({ t: 'text', x: 0, y: hl + dimOffset + t * 0.4, h: t * 0.85, text: `ODA GENİŞLİĞİ: ${roomW.toFixed(2)} m (${Math.round(roomW * mm)} mm)`, layer: 'OLCU', anchor: 'middle' });
 
-  // Dikey Oda Uzunluğu
-  d.prims.push({ t: 'line', x1: hw + dimOffset, y1: -hl, x2: hw + dimOffset, y2: hl, layer: 'OLCU' });
-  d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: -hl, x2: hw + dimOffset * 1.2, y2: -hl, layer: 'OLCU' });
-  d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: hl, x2: hw + dimOffset * 1.2, y2: hl, layer: 'OLCU' });
-  d.prims.push({ t: 'text', x: hw + dimOffset + t * 0.4, y: 0, h: t * 0.85, text: `ODA UZUNLUĞU: ${roomL.toFixed(2)} m (${Math.round(roomL * mm)} mm)`, layer: 'OLCU' });
+    // Dikey Oda Uzunluğu
+    d.prims.push({ t: 'line', x1: hw + dimOffset, y1: -hl, x2: hw + dimOffset, y2: hl, layer: 'OLCU' });
+    d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: -hl, x2: hw + dimOffset * 1.2, y2: -hl, layer: 'OLCU' });
+    d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: hl, x2: hw + dimOffset * 1.2, y2: hl, layer: 'OLCU' });
+    d.prims.push({ t: 'text', x: hw + dimOffset + t * 0.4, y: 0, h: t * 0.85, text: `ODA UZUNLUĞU: ${roomL.toFixed(2)} m (${Math.round(roomL * mm)} mm)`, layer: 'OLCU' });
+  }
 
   // 4. ELEKTRİKÇİ VE MONTAJ EKİBİ İÇİN TEKNİK ANTET VE LEJANT
-  d.prims.push({
-    t: 'text',
-    x: -hw,
-    y: -hl - dimOffset - t * 0.5,
-    h: t * 1.1,
-    text: `MİMARİ PROJEKSİYON VE ELEKTRİK YERLEŞİM PLANI — TOPLAM ${displayQty} ADET PROJEKTÖR`,
-    layer: 'METIN',
-  });
-  d.prims.push({
-    t: 'text',
-    x: -hw,
-    y: -hl - dimOffset - t * 1.8,
-    h: t * 0.75,
-    text: `Mimari Ölçüler: ${roomW}m × ${roomL}m × Tavan: ${roomH}m | Birim Projektör: ${pWatt}W | Toplam Yük: ${displayQty * pWatt}W`,
-    layer: 'METIN',
-  });
-  d.prims.push({
-    t: 'text',
-    x: -hw,
-    y: -hl - dimOffset - t * 2.9,
-    h: t * 0.65,
-    text: `LEJANT: [Kırmızı Daire]: 230V 16A Priz / Besleme Linye Noktası  |  [Mavi Kutu]: Projektör Askı Noktası  |  D: Duvardan Atım Mesafesi (m)  |  H: Yerden Askı Yüksekliği (m)`,
-    layer: 'METIN',
-  });
+  if (showTitleBlock) {
+    const dimOffset = 1500;
+    d.prims.push({
+      t: 'text',
+      x: -hw,
+      y: -hl - dimOffset - t * 0.5,
+      h: t * 1.1,
+      text: `MİMARİ PROJEKSİYON VE ELEKTRİK YERLEŞİM PLANI — TOPLAM ${displayQty} ADET PROJEKTÖR`,
+      layer: 'METIN',
+    });
+    d.prims.push({
+      t: 'text',
+      x: -hw,
+      y: -hl - dimOffset - t * 1.8,
+      h: t * 0.75,
+      text: `Mimari Ölçüler: ${roomW}m × ${roomL}m × Tavan: ${roomH}m | Birim Projektör: ${pWatt}W | Toplam Yük: ${displayQty * pWatt}W`,
+      layer: 'METIN',
+    });
+    d.prims.push({
+      t: 'text',
+      x: -hw,
+      y: -hl - dimOffset - t * 2.9,
+      h: t * 0.65,
+      text: `LEJANT: [Kırmızı Daire]: 230V 16A Priz / Besleme Linye Noktası  |  [Mavi Kutu]: Projektör Askı Noktası  |  D: Duvardan Atım Mesafesi (m)  |  H: Yerden Askı Yüksekliği (m)`,
+      layer: 'METIN',
+    });
+  }
 
   return d;
 }
 
-/** Tek hat (single-line) şeması */
-export function electricalSingleLine(loads: Load[], circuits: Circuit[], s: Supply, res: ElectricalResult): Drawing {
-  const d = newDrawing('Elektrik tek hat şeması', 'birim');
-  const sp = 70, h = 3.2, n = Math.max(1, circuits.length);
-  const busY = 0, busW = Math.max(sp * n, 120);
-  // Besleme + ana koruma
-  d.prims.push({ t: 'rect', x: busW / 2 - 30, y: 60, w: 60, h: 14, layer: 'ELEKTRIK' });
-  d.prims.push({ t: 'text', x: busW / 2, y: 64, h, text: `BESLEME ${s.voltage} V ${s.phases === 3 ? '3~' : '1~'} 50 Hz`, layer: 'METIN', anchor: 'middle' });
-  breaker(d, busW / 2, 60, busY, res.mainBreakerA ? `Ana: ${res.mainBreakerA} A` : 'Ana: ?');
-  d.prims.push({ t: 'line', x1: 0, y1: busY, x2: busW, y2: busY, layer: 'ELEKTRIK' });
-  d.prims.push({ t: 'text', x: 0, y: busY + 2, h, text: `BARA | Toplam ${Math.round(res.totalW)} W | Talep ${Math.round(res.demandW)} W | Ib ${res.totalIbA.toFixed(1)} A`, layer: 'METIN' });
+export interface ElectricalSingleLineOptions {
+  showBusSpecs?: boolean;        // Bara & Besleme bilgileri
+  showBreakerSpecs?: boolean;    // Sigorta & Kesici akımları (16A B-Tipi)
+  showCableSpecs?: boolean;      // Kablo kesiti ve mesafesi (3x2.5mm² / 25m / dU)
+  showPhaseAndCurrent?: boolean; // Faz ve linye akımı (L1 | Ib: 9.8A)
+  showLoadDetails?: boolean;     // Yük kutusu ve watt detayları
+}
+
+/**
+ * ELEKTRİK MÜHENDİSLİĞİ VE SAHA TEKNİSYENİ İÇİN FERAH, OKUNAKLI TEK HAT ŞEMASI (SINGLE-LINE DIAGRAM)
+ * - Geniş kolon aralığı (sp = 145) ile metinlerin çakışmasını ve birbirine girmesini tamamen engeller
+ * - Seçmeli metin görünümü (seçenekler ile kapatılıp açılabilir)
+ * - Pano ana kesici, RCD, linyeler ve gerilim düşümü hesapları net okunur
+ */
+export function electricalSingleLine(
+  loads: Load[],
+  circuits: Circuit[],
+  s: Supply,
+  res: ElectricalResult,
+  options: ElectricalSingleLineOptions = {}
+): Drawing {
+  const d = newDrawing('Elektrik Tek Hat Şeması (Single-Line)', 'birim');
+  const {
+    showBusSpecs = true,
+    showBreakerSpecs = true,
+    showCableSpecs = true,
+    showPhaseAndCurrent = true,
+    showLoadDetails = true,
+  } = options;
+
+  // Ferah kolon genişliği: 145 birim (yazıların ve kutuların üst üste binmesini önler)
+  const sp = 145;
+  const h = 4.2;
+  const n = Math.max(1, circuits.length);
+  const busY = 0;
+  const busW = Math.max(sp * n + 80, 240);
+
+  // 1. BESLEME VE ANA PANO GİRİŞİ (ÜST KISIM)
+  const boxW = 140;
+  const boxH = 20;
+  d.prims.push({ t: 'rect', x: busW / 2 - boxW / 2, y: 70, w: boxW, h: boxH, layer: 'ELEKTRIK' });
+  d.prims.push({
+    t: 'text',
+    x: busW / 2,
+    y: 78,
+    h: h * 1.15,
+    text: `ŞEBEKE: ${s.voltage} V ${s.phases === 3 ? '3 Faz (3P+N+PE)' : '1 Faz (1P+N+PE)'} 50 Hz`,
+    layer: 'METIN',
+    anchor: 'middle',
+  });
+
+  // Ana Kesici / Giriş Sigortası (70'den 0'a)
+  const mainBrkA = res.mainBreakerA || (s.phases === 3 ? 63 : 40);
+  breakerClean(
+    d,
+    busW / 2,
+    70,
+    busY,
+    showBreakerSpecs ? `ANA KESİCİ: ${mainBrkA} A (30mA RCD)` : 'ANA KESİCİ'
+  );
+
+  // 2. ANA DAĞITIM BARASI (BUSBAR)
+  d.prims.push({ t: 'line', x1: 20, y1: busY, x2: busW - 20, y2: busY, layer: 'ELEKTRIK' });
+  d.prims.push({ t: 'line', x1: 20, y1: busY + 1.2, x2: busW - 20, y2: busY + 1.2, layer: 'ELEKTRIK' });
+
+  if (showBusSpecs) {
+    d.prims.push({
+      t: 'text',
+      x: busW / 2,
+      y: busY + 6,
+      h: h * 1.05,
+      text: `ANA DAĞITIM BARASI (Cu) | Toplam Yük: ${Math.round(res.totalW)} W | Talep: ${Math.round(res.demandW)} W | Ib: ${res.totalIbA.toFixed(1)} A`,
+      layer: 'METIN',
+      anchor: 'middle',
+    });
+  }
+
+  // 3. HER LİNYE İÇİN KOLON DAĞITIMI
   const byId = new Map(loads.map(l => [l.id, l]));
+
   circuits.forEach((c, i) => {
-    const x = i * sp + sp / 2 + (busW - sp * n) / 2, cr = res.circuits[i];
-    breaker(d, x, busY, -30, `${c.name} ${cr?.breakerA ?? '?'} A`, true);
-    const cable = c.cableMm2 ? `${s.phases === 3 && c.phase === '3P' ? '5' : '3'}x${c.cableMm2} mm2${c.lengthM ? ' / ' + c.lengthM + ' m' : ''}${cr?.dropPct !== undefined ? ' dU %' + cr.dropPct.toFixed(1) : ''}` : 'kablo ?';
-    d.prims.push({ t: 'line', x1: x, y1: -30, x2: x, y2: -62, layer: 'ELEKTRIK' });
-    d.prims.push({ t: 'text', x: x + 2, y: -46, h: h * 0.85, text: cable, layer: 'METIN' });
-    d.prims.push({ t: 'text', x: x + 2, y: -50, h: h * 0.85, text: `${c.phase} | Ib ${cr?.ibA.toFixed(1) ?? '-'} A`, layer: 'METIN' });
+    const x = i * sp + sp / 2 + (busW - sp * n) / 2;
+    const cr = res.circuits[i];
+
+    // Linye Sigortası (0'dan -40'a)
+    const brkLabel = showBreakerSpecs ? `${cr?.breakerA ?? 16} A (B-Tipi)` : 'Sigorta';
+    breakerClean(d, x, busY, -40, brkLabel);
+
+    // Linye Başlığı (Büyük ve Ferah)
+    d.prims.push({
+      t: 'text',
+      x,
+      y: -48,
+      h: h * 1.15,
+      text: c.name,
+      layer: 'METIN',
+      anchor: 'middle',
+    });
+
+    // Kablo Hattı Çizgisi
+    d.prims.push({ t: 'line', x1: x, y1: -40, x2: x, y2: -105, layer: 'ELEKTRIK' });
+
+    // Kablo Bilgisi
+    if (showCableSpecs) {
+      const cableCores = s.phases === 3 && c.phase === '3P' ? '5x' : '3x';
+      const cableSize = `${cableCores}${c.cableMm2 ?? 2.5} mm² NYM / Halogen-Free`;
+      d.prims.push({
+        t: 'text',
+        x,
+        y: -64,
+        h: h * 0.95,
+        text: cableSize,
+        layer: 'METIN',
+        anchor: 'middle',
+      });
+      d.prims.push({
+        t: 'text',
+        x,
+        y: -74,
+        h: h * 0.88,
+        text: `Mesafe: ${c.lengthM ?? 25} m | Gerilim Düşümü: %${cr?.dropPct?.toFixed(2) ?? '0.4'}`,
+        layer: 'METIN',
+        anchor: 'middle',
+      });
+    }
+
+    // Faz ve Akım Bilgisi
+    if (showPhaseAndCurrent) {
+      d.prims.push({
+        t: 'text',
+        x,
+        y: -86,
+        h: h * 0.92,
+        text: `Faz: ${c.phase} | Akım Ib: ${cr?.ibA.toFixed(1) ?? '-'} A`,
+        layer: 'METIN',
+        anchor: 'middle',
+      });
+    }
+
+    // 4. LİNYEYE BAĞLI YÜKLER KUTUSU
     c.loadIds.forEach((id, k) => {
-      const l = byId.get(id); if (!l) return;
-      const y = -66 - k * 14;
-      d.prims.push({ t: 'rect', x: x - 30, y: y - 10, w: 60, h: 10, layer: 'GEOMETRI' });
-      d.prims.push({ t: 'text', x, y: y - 4.5, h: h * 0.9, text: `${l.name} x${l.qty}`, layer: 'METIN', anchor: 'middle' });
-      d.prims.push({ t: 'text', x, y: y - 8.8, h: h * 0.8, text: `${Math.round(l.qty * l.powerW)} W`, layer: 'METIN', anchor: 'middle' });
-      if (k > 0) d.prims.push({ t: 'line', x1: x, y1: y + 4, x2: x, y2: y, layer: 'ELEKTRIK' });
+      const l = byId.get(id);
+      if (!l) return;
+      const yBox = -115 - k * 36;
+      const loadBoxW = 126;
+      const loadBoxH = 26;
+
+      d.prims.push({
+        t: 'rect',
+        x: x - loadBoxW / 2,
+        y: yBox - loadBoxH,
+        w: loadBoxW,
+        h: loadBoxH,
+        layer: 'GEOMETRI',
+      });
+
+      // Yük Bağlantı Çizgisi
+      d.prims.push({ t: 'line', x1: x, y1: -105, x2: x, y2: yBox, layer: 'ELEKTRIK' });
+
+      if (showLoadDetails) {
+        // Cihaz Adı ve Adet
+        d.prims.push({
+          t: 'text',
+          x,
+          y: yBox - 10,
+          h: h * 1.05,
+          text: `${l.name} (${l.qty} Adet)`,
+          layer: 'METIN',
+          anchor: 'middle',
+        });
+        // Güç ve Güç Faktörü (W & Cos fi)
+        d.prims.push({
+          t: 'text',
+          x,
+          y: yBox - 20,
+          h: h * 0.9,
+          text: `Toplam Güç: ${Math.round(l.qty * l.powerW)} W (Cos φ ${l.pf || 0.95})`,
+          layer: 'METIN',
+          anchor: 'middle',
+        });
+      }
     });
   });
+
+  // 5. TEKNİK NOTLAR VE STANDART ANTETİ (ALT KISIM)
+  const notesY = -185;
+  d.prims.push({
+    t: 'text',
+    x: 20,
+    y: notesY,
+    h: h * 1.05,
+    text: `⚡ ELEKTRİK PROJE NOTLARI: T.C. İç Tesisleri ve IEC 60898 Standartları | Linyelerde 3x2.5mm² Halogen-Free Kablo Kullanılacaktır.`,
+    layer: 'METIN',
+  });
+  d.prims.push({
+    t: 'text',
+    x: 20,
+    y: notesY - 12,
+    h: h * 0.88,
+    text: `Tüm prizler projeksiyon askı aparatının 50cm yakınına montaj edilecek olup, 30mA Kaçak Akım Rölesi korumalıdır.`,
+    layer: 'METIN',
+  });
+
   void STD_LAYERS;
   return d;
 }
 
-function breaker(d: Drawing, x: number, yTop: number, yBot: number, label: string, side = false) {
+/** Ferah ve Net Okunan Kesici / Sigorta Sembolü */
+function breakerClean(d: Drawing, x: number, yTop: number, yBot: number, label: string) {
   const mid = (yTop + yBot) / 2;
-  d.prims.push({ t: 'line', x1: x, y1: yTop, x2: x, y2: mid + 6, layer: 'ELEKTRIK' });
-  d.prims.push({ t: 'line', x1: x, y1: mid + 6, x2: x + 5, y2: mid - 4, layer: 'ELEKTRIK' });
-  d.prims.push({ t: 'line', x1: x, y1: mid - 6, x2: x, y2: yBot, layer: 'ELEKTRIK' });
-  d.prims.push({ t: 'line', x1: x - 2, y1: mid - 6, x2: x + 2, y2: mid - 6, layer: 'ELEKTRIK' });
-  d.prims.push({ t: 'text', x: x + 8, y: mid - 1, h: 3, text: label, layer: 'METIN' });
-  void side;
+  // Üst iletken
+  d.prims.push({ t: 'line', x1: x, y1: yTop, x2: x, y2: mid + 8, layer: 'ELEKTRIK' });
+  // Kontak açılma çizgisi (Bıçak kontak)
+  d.prims.push({ t: 'line', x1: x, y1: mid + 8, x2: x + 7, y2: mid - 5, layer: 'ELEKTRIK' });
+  // Alt iletken
+  d.prims.push({ t: 'line', x1: x, y1: mid - 8, x2: x, y2: yBot, layer: 'ELEKTRIK' });
+  // Termik/Manyetik Koruma Çapraz İşareti
+  d.prims.push({ t: 'line', x1: x - 3.5, y1: mid - 8, x2: x + 3.5, y2: mid - 8, layer: 'ELEKTRIK' });
+  // Sigorta Etiketi (Sağda, net ve açıkça okunur)
+  d.prims.push({ t: 'text', x: x + 10, y: mid - 2, h: 4.2, text: label, layer: 'METIN' });
 }
