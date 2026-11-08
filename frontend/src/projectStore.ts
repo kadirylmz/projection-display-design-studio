@@ -62,6 +62,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     revision: 1,
     description: 'Projeksiyon, LED duvar ve elektrik altyapı mühendislik tasarımı.',
     notes: '',
+    room3dSnapshots: [],
   },
   projectionSnap: {
     projectorName: 'Manuel Projektör',

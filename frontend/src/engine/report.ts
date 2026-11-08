@@ -58,6 +58,7 @@ export interface ReportProjectMeta {
   description: string;
   notes?: string;
   room3dSnapshotUrl?: string;
+  room3dSnapshots?: string[];
 }
 
 export interface ReportPayload {
@@ -65,6 +66,7 @@ export interface ReportPayload {
   meta: ReportProjectMeta;
   sections: ReportSectionFlags;
   room3dSnapshotUrl?: string;
+  room3dSnapshots?: string[];
   room3dNotes?: string;
   architecturalPlanSvg?: string;
   interProjectorAnalysis?: InterProjectorAnalysis;
@@ -279,24 +281,28 @@ export function buildReportHtml(p: ReportPayload): string {
   }
 
   // 2. 3B SİMÜLASYON & PERSPEKTİF ODA GÖRÜNÜŞÜ (Seçiliyse)
-  const snapshotUrl = p.room3dSnapshotUrl || m.room3dSnapshotUrl;
-  if (p.sections.room3d && (snapshotUrl || p.interProjectorAnalysis)) {
+  const snapshots: string[] = (p.room3dSnapshots && p.room3dSnapshots.length > 0)
+    ? p.room3dSnapshots
+    : (m.room3dSnapshots && m.room3dSnapshots.length > 0)
+      ? m.room3dSnapshots
+      : (p.room3dSnapshotUrl || m.room3dSnapshotUrl ? [p.room3dSnapshotUrl || m.room3dSnapshotUrl!] : []);
+
+  if (p.sections.room3d && (snapshots.length > 0 || p.interProjectorAnalysis)) {
     blocks.push(`<section class="report-section">
       <h2>${tr.room3d}</h2>
-      ${snapshotUrl ? `
-        <div class="three-d-card">
-          <img src="${esc(snapshotUrl)}" alt="3B Simülasyon Görünüşü" class="three-d-img" />
-          <div class="three-d-caption">
-            <div class="caption-title">✓ 3B Mekansal Simülasyon, Işık Demetleri (Frustum) ve Ziyaretçi Ölçek Analizi</div>
-            <div class="caption-desc">Mekan içerisindeki projeksiyon açıları, izleyici boyları (1.78m standart insan modeli) ve duvardaki gölge risk durumları Three.js motoruyla tam ölçekli olarak doğrulanmıştır.</div>
-          </div>
+      ${snapshots.length > 0 ? `
+        <div class="three-d-gallery">
+          ${snapshots.map((url, idx) => `
+            <div class="three-d-card">
+              <img src="${esc(url)}" alt="3B Simülasyon Görünüşü #${idx + 1}" class="three-d-img" />
+            </div>
+          `).join('')}
         </div>
       ` : `
         <div class="empty-3d-box">
-          <p>📸 <b>3B Sahne Görünümü:</b> <i>İçerik Çözünürlüğü Planlayıcı / 3D Oda sekmesinden "3B Açıyı Rapora Aktar" butonuna tıklayarak istediğiniz kamera açısından yüksek çözünürlüklü 3B simülasyon görüntüsünü buraya aktarabilirsiniz.</i></p>
+          <p>📸 <b>3B Sahne Görünümü:</b> <i>İçerik Çözünürlüğü Planlayıcı / 3D Oda sekmesinden "3B Açıyı Rapora Ekle" butonuna tıklayarak istediğiniz kamera açısından yüksek çözünürlüklü 3B simülasyon görüntüsünü buraya aktarabilirsiniz.</i></p>
         </div>
       `}
-      ${p.room3dNotes ? `<div class="note-box"><b>3B Simülasyon Notları:</b> ${esc(p.room3dNotes)}</div>` : ''}
     </section>`);
   }
 
@@ -744,35 +750,26 @@ export function buildReportHtml(p: ReportPayload): string {
   .text-purple { color: #7c3aed; }
   .text-rose { color: #e11d48; }
   
+  .three-d-gallery {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 12px 0;
+  }
   .three-d-card {
     background: #090e17;
     border: 1px solid #1e293b;
     border-radius: 8px;
     overflow: hidden;
-    margin: 12px 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
   .three-d-img {
     width: 100%;
     display: block;
-    max-height: 480px;
+    max-height: 520px;
     object-fit: contain;
     background: #060911;
-  }
-  .three-d-caption {
-    padding: 12px 16px;
-    background: #0f172a;
-    border-top: 1px solid #1e293b;
-  }
-  .caption-title {
-    color: #38bdf8;
-    font-weight: 700;
-    font-size: 12px;
-    margin-bottom: 4px;
-  }
-  .caption-desc {
-    color: #94a3b8;
-    font-size: 11px;
-    line-height: 1.4;
   }
   .empty-3d-box {
     background: #f8fafc;

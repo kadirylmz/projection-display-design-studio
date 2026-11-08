@@ -903,6 +903,8 @@ export default function PlannerRoom3D({
   const [viewFilter, setViewFilter] = useState<'all' | 'selected'>('all');
   const [includeHudOnExport, setIncludeHudOnExport] = useState(true);
   const [reportToast, setReportToast] = useState(false);
+  const meta = useProjectStore(s => s.meta);
+  const snapshotCount = meta.room3dSnapshots?.length ?? (meta.room3dSnapshotUrl ? 1 : 0);
 
   // İlk İzleyiciyi Başlangıçta Sol Duvarın Önüne (Gölge/Bakış Mesafesine) Yerleştir!
   const [humans, setHumans] = useState<HumanActor[]>(() => {
@@ -1312,7 +1314,15 @@ export default function PlannerRoom3D({
     }
 
     const dataUrl = outCanvas.toDataURL('image/png');
-    useProjectStore.getState().setMeta({ room3dSnapshotUrl: dataUrl });
+    const prevMeta = useProjectStore.getState().meta;
+    const existingSnapshots = prevMeta.room3dSnapshots && prevMeta.room3dSnapshots.length > 0
+      ? prevMeta.room3dSnapshots
+      : (prevMeta.room3dSnapshotUrl ? [prevMeta.room3dSnapshotUrl] : []);
+    const updatedSnapshots = [...existingSnapshots, dataUrl];
+    useProjectStore.getState().setMeta({
+      room3dSnapshotUrl: dataUrl,
+      room3dSnapshots: updatedSnapshots,
+    });
     setReportToast(true);
     setTimeout(() => setReportToast(false), 3000);
   };
@@ -1426,7 +1436,7 @@ export default function PlannerRoom3D({
             className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-bold shadow flex items-center gap-1 transition"
             title="Mevcut 3B kamera açısını doğrudan Müşteri Raporu'na aktarır"
           >
-            <span>{reportToast ? '✓ Rapora Eklendi!' : '📋 3B Açıyı Rapora Ekle'}</span>
+            <span>{reportToast ? `✓ 3B Açı Eklendi! (Toplam ${snapshotCount})` : `📋 3B Açıyı Rapora Ekle${snapshotCount > 0 ? ` (${snapshotCount})` : ''}`}</span>
           </button>
         </div>
       </div>

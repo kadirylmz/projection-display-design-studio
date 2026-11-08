@@ -73,4 +73,17 @@ describe('rapor üretici (kabul testi 10)', () => {
     expect(htmlEn).not.toContain('5. LED Wall Specifications');
     expect(htmlEn).not.toContain('6. Electrical Load');
   });
+  it('birden fazla 3B görünüm açısını alt açıklama olmaksızın galeri olarak rapora ekler', () => {
+    const htmlWith3D = buildReportHtml({
+      ...payload,
+      room3dSnapshots: ['data:image/png;base64,AAA1', 'data:image/png;base64,AAA2', 'data:image/png;base64,AAA3'],
+    });
+    expect(htmlWith3D).toContain('data:image/png;base64,AAA1');
+    expect(htmlWith3D).toContain('data:image/png;base64,AAA2');
+    expect(htmlWith3D).toContain('data:image/png;base64,AAA3');
+    expect(htmlWith3D).toContain('three-d-gallery');
+    // Altındaki açıklama kutusu kaldırılmış olmalı
+    expect(htmlWith3D).not.toContain('three-d-caption');
+    expect(htmlWith3D).not.toContain('Mekan içerisindeki projeksiyon açıları');
+  });
 });

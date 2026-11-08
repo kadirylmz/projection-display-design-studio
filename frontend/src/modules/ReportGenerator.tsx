@@ -62,12 +62,19 @@ export default function ReportGenerator() {
     }
   }, [physicalRoom, ipSurfaces]);
 
+  const snapshots = useMemo(() => {
+    return (meta.room3dSnapshots && meta.room3dSnapshots.length > 0)
+      ? meta.room3dSnapshots
+      : (meta.room3dSnapshotUrl ? [meta.room3dSnapshotUrl] : []);
+  }, [meta.room3dSnapshots, meta.room3dSnapshotUrl]);
+
   // 3. HTML RAPORUNU OLUŞTUR
   const html = useMemo(() => buildReportHtml({
     lang,
     meta,
     sections,
-    room3dSnapshotUrl: meta.room3dSnapshotUrl,
+    room3dSnapshotUrl: snapshots[0] || meta.room3dSnapshotUrl,
+    room3dSnapshots: snapshots,
     architecturalPlanSvg,
     interProjectorAnalysis,
     projection: projectionSnap,
@@ -79,6 +86,7 @@ export default function ReportGenerator() {
   }), [
     lang,
     meta,
+    snapshots,
     sections,
     architecturalPlanSvg,
     interProjectorAnalysis,
@@ -158,46 +166,80 @@ export default function ReportGenerator() {
         {/* 3B SİMÜLASYON GÖRÜNÜMÜ KARTI */}
         <div className="p-2.5 rounded bg-slate-950 border border-slate-800 space-y-2">
           <div className="flex justify-between items-center">
-            <b className="text-amber-400 text-[11px]">📸 3B Sahne Simülasyonu</b>
-            {meta.room3dSnapshotUrl && (
+            <b className="text-amber-400 text-[11px]">📸 3B Sahne Simülasyonu ({snapshots.length})</b>
+            {snapshots.length > 0 && (
               <button
                 className="text-[10px] text-red-400 hover:text-red-300 underline"
-                onClick={() => setMeta({ room3dSnapshotUrl: undefined })}
+                onClick={() => setMeta({ room3dSnapshotUrl: undefined, room3dSnapshots: [] })}
               >
-                Kaldır
+                Tümünü Temizle
               </button>
             )}
           </div>
 
-          {meta.room3dSnapshotUrl ? (
-            <div className="space-y-1.5">
-              <img
-                src={meta.room3dSnapshotUrl}
-                alt="3B Önizleme"
-                className="w-full h-24 object-cover rounded border border-sky-900/60"
-              />
+          {snapshots.length > 0 ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                {snapshots.map((url, idx) => (
+                  <div key={idx} className="relative group rounded border border-sky-900/60 overflow-hidden bg-slate-900">
+                    <img
+                      src={url}
+                      alt={`3B Önizleme #${idx + 1}`}
+                      className="w-full h-20 object-cover"
+                    />
+                    <div className="absolute top-1 left-1 bg-black/75 text-[9px] text-white px-1.5 py-0.5 rounded font-mono">
+                      #{idx + 1}
+                    </div>
+                    <button
+                      title="Bu Açıyı Sil"
+                      onClick={() => {
+                        const updated = snapshots.filter((_, i) => i !== idx);
+                        setMeta({
+                          room3dSnapshots: updated,
+                          room3dSnapshotUrl: updated[0] || undefined,
+                        });
+                      }}
+                      className="absolute top-1 right-1 bg-red-600/90 hover:bg-red-500 text-white rounded w-4 h-4 flex items-center justify-center text-[10px] shadow font-bold"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1">
-                <span>✓ 3B Kamera Görünüşü Rapora Dahil Edildi</span>
+                <span>✓ Toplam {snapshots.length} adet 3B açı rapora dahil edildi</span>
               </div>
             </div>
           ) : (
             <div className="text-[10.5px] text-slate-400 leading-relaxed bg-slate-900/80 p-2 rounded border border-slate-800">
-              💡 <b>3B Görünüşü Eklemek İçin:</b> <i>"İçerik Çözünürlüğü Planlayıcı / 3D Oda"</i> sekmesine gidip dilediğiniz açıdan <b>"📋 3B Açıyı Rapora Ekle"</b> butonuna basabilir veya aşağıdan dosya yükleyebilirsiniz.
+              💡 <b>3B Görünüşü Eklemek İçin:</b> <i>"İçerik Çözünürlüğü Planlayıcı / 3D Oda"</i> sekmesine gidip dilediğiniz açılardan <b>"📋 3B Açıyı Rapora Ekle"</b> butonuna basabilir veya aşağıdan dosya yükleyebilirsiniz.
             </div>
           )}
 
           <label className="block">
-            <span className="text-[10px] text-slate-400">Harici 3B Render / Fotoğraf Yükle</span>
+            <span className="text-[10px] text-slate-400">+ Harici 3B Render / Fotoğraf Ekle</span>
             <input
               type="file"
               accept="image/*"
+              multiple
               className="inp text-[10px] !mt-1"
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const rd = new FileReader();
-                rd.onload = () => setMeta({ room3dSnapshotUrl: rd.result as string });
-                rd.readAsDataURL(f);
+              onChange={async e => {
+                const files = Array.from(e.target.files || []);
+                if (files.length === 0) return;
+                const readAsDataUrl = (file: File): Promise<string> =>
+                  new Promise<string>((resolve, reject) => {
+                    const rd = new FileReader();
+                    rd.onload = () => resolve(rd.result as string);
+                    rd.onerror = reject;
+                    rd.readAsDataURL(file);
+                  });
+                const urls = await Promise.all(files.map(readAsDataUrl));
+                const nextSnapshots = [...snapshots, ...urls];
+                setMeta({
+                  room3dSnapshots: nextSnapshots,
+                  room3dSnapshotUrl: nextSnapshots[0],
+                });
+                e.target.value = '';
               }}
             />
           </label>
