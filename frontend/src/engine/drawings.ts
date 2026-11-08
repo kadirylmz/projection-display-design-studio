@@ -497,7 +497,7 @@ export function electricalSingleLine(
     x: busW / 2,
     y: 78,
     h: h * 1.15,
-    text: `ŞEBEKE: ${s.voltage} V ${s.phases === 3 ? '3 Faz (3P+N+PE)' : '1 Faz (1P+N+PE)'} 50 Hz`,
+    text: `BESLEME ${s.voltage} V ${s.phases === 3 ? '3 Faz (3P+N+PE)' : '1 Faz (1P+N+PE)'} 50 Hz`,
     layer: 'METIN',
     anchor: 'middle',
   });
@@ -556,7 +556,7 @@ export function electricalSingleLine(
     // Kablo Bilgisi
     if (showCableSpecs) {
       const cableCores = s.phases === 3 && c.phase === '3P' ? '5x' : '3x';
-      const cableSize = `${cableCores}${c.cableMm2 ?? 2.5} mm² NYM / Halogen-Free`;
+      const cableSize = `${cableCores}${c.cableMm2 ?? 2.5} mm2 (${c.cableMm2 ?? 2.5}mm²) NYM / Halogen-Free`;
       d.prims.push({
         t: 'text',
         x,

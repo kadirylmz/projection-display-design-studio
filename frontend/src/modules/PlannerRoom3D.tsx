@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Text, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { download } from '../util';
+import { useProjectStore } from '../projectStore';
 import type { CalculatedSurface, PhysicalRoomConfig } from './ContentPlanner';
 
 interface PlannerRoom3DProps {
@@ -901,6 +902,7 @@ export default function PlannerRoom3D({
   const [showHuman, setShowHuman] = useState(true);
   const [viewFilter, setViewFilter] = useState<'all' | 'selected'>('all');
   const [includeHudOnExport, setIncludeHudOnExport] = useState(true);
+  const [reportToast, setReportToast] = useState(false);
 
   // İlk İzleyiciyi Başlangıçta Sol Duvarın Önüne (Gölge/Bakış Mesafesine) Yerleştir!
   const [humans, setHumans] = useState<HumanActor[]>(() => {
@@ -1247,6 +1249,75 @@ export default function PlannerRoom3D({
     }, 'image/png');
   };
 
+  // Mevcut 3B Bakış Açısını Müşteri Raporuna Aktar
+  const capture3DViewToReport = () => {
+    const gl = glRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!gl || !scene || !camera) return;
+
+    gl.render(scene, camera);
+    const srcCanvas = gl.domElement;
+
+    const outCanvas = document.createElement('canvas');
+    const bannerH = includeHudOnExport ? 115 : 0;
+    outCanvas.width = srcCanvas.width;
+    outCanvas.height = srcCanvas.height + bannerH;
+
+    const ctx = outCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#070b14';
+    ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
+
+    ctx.drawImage(srcCanvas, 0, 0);
+
+    if (includeHudOnExport && activeSurf && coverageStats) {
+      const y0 = srcCanvas.height;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, y0, outCanvas.width, bannerH);
+
+      ctx.strokeStyle = '#0ea5e9';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, y0);
+      ctx.lineTo(outCanvas.width, y0);
+      ctx.stroke();
+
+      const fsTitle = Math.max(15, Math.round(outCanvas.width / 72));
+      const fsSub = Math.max(12, Math.round(outCanvas.width / 94));
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold ' + fsTitle + 'px sans-serif';
+      ctx.fillText(
+        '3B ODA, DOLULUK & GÖLGE SİMÜLASYONU — ' + activeSurf.name.toUpperCase() + ' (' + activeSurf.effectiveWidthM + 'm × ' + activeSurf.effectiveHeightM + 'm)',
+        24,
+        y0 + 32
+      );
+
+      ctx.fillStyle = '#4ade80';
+      ctx.font = 'bold ' + fsSub + 'px monospace';
+      ctx.fillText(
+        'İçerik: ' + activeSurf.netW + '×' + activeSurf.netH + ' px  |  Piksel: ' + activeSurf.avgMmPerPx + ' mm/px (' + activeSurf.ppi + ' PPI)  |  Yüzey Doluluk: Yatay %' + coverageStats.covPctW + ' (' + activeSurf.totalOpticalWidthM + 'm / ' + activeSurf.effectiveWidthM + 'm) · Dikey %' + coverageStats.covPctH,
+        24,
+        y0 + 62
+      );
+
+      ctx.fillStyle = coverageStats.hasShadowRisk ? '#f87171' : '#facc15';
+      ctx.font = fsSub + 'px monospace';
+      ctx.fillText(
+        'PJ Uzaklık: D=' + activeSurf.throwDistM + 'm · PJ Yükseklik: H=' + coverageStats.projHeight.toFixed(2) + 'm  |  ' + (coverageStats.hasShadowRisk ? '⚠ DUVARDA İNSAN GÖLGESİ OLUŞUYOR (' + coverageStats.shadowHeightOnWall + 'm)' : '✓ Gölge Yok'),
+        24,
+        y0 + 92
+      );
+    }
+
+    const dataUrl = outCanvas.toDataURL('image/png');
+    useProjectStore.getState().setMeta({ room3dSnapshotUrl: dataUrl });
+    setReportToast(true);
+    setTimeout(() => setReportToast(false), 3000);
+  };
+
+
   return (
     <div className="flex flex-col h-full w-full space-y-2">
       {/* 1. ÜST 3B SİMÜLASYON KONTROL, KAMERA AÇILARI VE PNG ÇIKIŞ BARI */}
@@ -1349,6 +1420,13 @@ export default function PlannerRoom3D({
             className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow flex items-center gap-1"
           >
             <span>📸 3B PNG İndir</span>
+          </button>
+          <button
+            onClick={capture3DViewToReport}
+            className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-bold shadow flex items-center gap-1 transition"
+            title="Mevcut 3B kamera açısını doğrudan Müşteri Raporu'na aktarır"
+          >
+            <span>{reportToast ? '✓ Rapora Eklendi!' : '📋 3B Açıyı Rapora Ekle'}</span>
           </button>
         </div>
       </div>
