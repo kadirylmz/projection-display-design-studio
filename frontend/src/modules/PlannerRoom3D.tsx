@@ -456,6 +456,16 @@ function PhysicalRoomShell3D({ room, showLabel = true }: { room: PhysicalRoomCon
  * Tek bir projektör cihazı + 3B Işık Konisi (Frustum) + Duvarda Aydınlanan Gerçek Görüntü Yüzeyi (Quad)
  * + Sahnedeki TÜM İzleyiciler İçin Gerçek Zamanlı Gölge (Duvarda ve Zeminde Shadow Occlusion) Simülasyonu!
  */
+export interface ProjectorObstacleDevice {
+  id: string;
+  name: string;
+  pos: [number, number, number];
+  widthM: number;
+  heightM: number;
+  depthM: number;
+  ceilingY?: number;
+}
+
 function ProjectorFrustum3D({
   pos,
   targetCenter,
@@ -464,6 +474,8 @@ function ProjectorFrustum3D({
   imgW,
   imgH,
   humans,
+  otherDevices = [],
+  ceilingH = 5.0,
   throwDist,
   color,
   label,
@@ -480,6 +492,8 @@ function ProjectorFrustum3D({
   imgW: number;
   imgH: number;
   humans: HumanActor[];
+  otherDevices?: ProjectorObstacleDevice[];
+  ceilingH?: number;
   throwDist: number;
   color: string;
   label: string;
@@ -497,6 +511,7 @@ function ProjectorFrustum3D({
     litQuat,
     wallShadows,
     floorShadows,
+    deviceShadows,
   } = useMemo(() => {
     const p = new THREE.Vector3(...pos);
     const c = new THREE.Vector3(...targetCenter);
@@ -671,6 +686,74 @@ function ProjectorFrustum3D({
       }
     }
 
+    // 3) PROJEKSİYON IŞIK YOLUNDAKİ DİĞER CİHAZLARIN (PROJEKTÖR VE ASKI BORUSU) DUVARDAKİ GÖLGESİ (OCCLUSION)
+    const dShadows: {
+      deviceId: string;
+      deviceName: string;
+      pos: [number, number, number];
+      quat: THREE.Quaternion;
+      shadowW: number;
+      shadowH: number;
+      poleW: number;
+      poleH: number;
+      distToWall: number;
+      rayStart: [number, number, number];
+      rayEnd: [number, number, number];
+    }[] = [];
+
+    if (!isFloorProjector && otherDevices && otherDevices.length > 0) {
+      for (const dev of otherDevices) {
+        const devCenter = new THREE.Vector3(...dev.pos);
+        const dirCenter = devCenter.clone().sub(p);
+        const denom = normal.dot(dirCenter);
+
+        // Işın projektör lensinden cihaza ve karşı duvara doğru ilerliyor mu?
+        if (denom < -0.001) {
+          const tHit = (planeD - normal.dot(p)) / denom;
+
+          // tHit >= 1.05 ise cihaz projektör ile karşı duvar arasındadır (ışık yolunu kesiyor!)
+          if (tHit >= 1.05 && tHit < 25.0) {
+            const hitPt = p.clone().addScaledVector(dirCenter, tHit);
+            const rel = hitPt.clone().sub(c);
+            const localX = rel.dot(r);
+            const localY = rel.dot(u);
+
+            const mag = Math.min(6.0, Math.max(1.0, tHit));
+            const sW = dev.widthM * mag;
+            const sH = dev.heightM * mag;
+
+            // Karşı duvardaki projeksiyon görüntüsü içine veya sınırına düşüyor mu?
+            if (Math.abs(localX) <= halfW + sW * 0.45 && Math.abs(localY) <= halfH + sH * 0.45) {
+              const ceilY = dev.ceilingY || ceilingH || 5.0;
+              const polePhysH = Math.max(0, ceilY - (dev.pos[1] + dev.heightM / 2));
+              const poleShadowH = Math.min(imgH * 1.5, polePhysH * mag);
+              const poleShadowW = Math.max(0.04, 0.05 * mag);
+
+              const shadowWorldPos = c
+                .clone()
+                .addScaledVector(r, localX)
+                .addScaledVector(u, localY)
+                .addScaledVector(normal, 0.046);
+
+              dShadows.push({
+                deviceId: dev.id,
+                deviceName: dev.name,
+                pos: [shadowWorldPos.x, shadowWorldPos.y, shadowWorldPos.z],
+                quat: qPlane,
+                shadowW: sW,
+                shadowH: sH,
+                poleW: poleShadowW,
+                poleH: poleShadowH,
+                distToWall: hitPt.distanceTo(devCenter),
+                rayStart: [dev.pos[0], dev.pos[1], dev.pos[2]],
+                rayEnd: [shadowWorldPos.x, shadowWorldPos.y, shadowWorldPos.z],
+              });
+            }
+          }
+        }
+      }
+    }
+
     return {
       beamGeo: g,
       corners: pts.map(v => [v.x, v.y, v.z] as [number, number, number]),
@@ -679,8 +762,9 @@ function ProjectorFrustum3D({
       litQuat: qPlane,
       wallShadows: wShadows,
       floorShadows: fShadows,
+      deviceShadows: dShadows,
     };
-  }, [pos, targetCenter, upVec, rightVec, imgW, imgH, humans]);
+  }, [pos, targetCenter, upVec, rightVec, imgW, imgH, humans, otherDevices, ceilingH]);
 
   const midBeamPos: [number, number, number] = [
     (pos[0] + targetCenter[0]) / 2,
@@ -766,6 +850,91 @@ function ProjectorFrustum3D({
           />
         </group>
       )}
+
+      {/* TAVAN ASKI BORUSU (CEILING MOUNT POLE) */}
+      {pos[1] < (ceilingH || 5.0) && (
+        <mesh position={[pos[0], pos[1] + ((ceilingH || 5.0) - pos[1]) / 2, pos[2]]}>
+          <cylinderGeometry args={[0.022, 0.022, Math.max(0.1, (ceilingH || 5.0) - pos[1]), 12]} />
+          <meshStandardMaterial color="#334155" metalness={0.8} roughness={0.3} />
+        </mesh>
+      )}
+
+      {/* DUVARDA OLUŞAN CİHAZ (IŞIK YOLUNA GİREN DİĞER PROJEKTÖR) GÖLGESİ */}
+      {deviceShadows.map(sh => (
+        <group key={`devsh-${sh.deviceId}`}>
+          <group position={sh.pos} quaternion={sh.quat}>
+            {/* Projektör Şasi Koyu Silüet Gölgesi */}
+            <mesh position={[0, 0, 0]}>
+              <planeGeometry args={[sh.shadowW, sh.shadowH]} />
+              <meshBasicMaterial color="#020617" transparent opacity={0.95} side={THREE.DoubleSide} />
+            </mesh>
+
+            {/* Tavan Askı Borusu Gölgesi */}
+            {sh.poleH > 0 && (
+              <mesh position={[0, sh.shadowH / 2 + sh.poleH / 2, 0.001]}>
+                <planeGeometry args={[sh.poleW, sh.poleH]} />
+                <meshBasicMaterial color="#020617" transparent opacity={0.90} side={THREE.DoubleSide} />
+              </mesh>
+            )}
+
+            {/* Kırmızı Lazer Bounding Box (Gölge Sınırı) */}
+            <Line
+              points={[
+                [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
+                [sh.shadowW / 2, -sh.shadowH / 2, 0.005],
+                [sh.shadowW / 2, sh.shadowH / 2, 0.005],
+                [-sh.shadowW / 2, sh.shadowH / 2, 0.005],
+                [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
+              ]}
+              color="#dc2626"
+              lineWidth={2.8}
+            />
+
+            {/* Çapraz Engel Uyarısı */}
+            <Line
+              points={[
+                [-sh.shadowW / 2, -sh.shadowH / 2, 0.006],
+                [sh.shadowW / 2, sh.shadowH / 2, 0.006],
+              ]}
+              color="#dc2626"
+              lineWidth={1.5}
+            />
+            <Line
+              points={[
+                [-sh.shadowW / 2, sh.shadowH / 2, 0.006],
+                [sh.shadowW / 2, -sh.shadowH / 2, 0.006],
+              ]}
+              color="#dc2626"
+              lineWidth={1.5}
+            />
+
+            {/* Mühendislik Uyarı Metni */}
+            {showShadowLabels && (
+              <Text
+                position={[0, -sh.shadowH / 2 - 0.22, 0.015]}
+                fontSize={Math.max(0.18, Math.min(0.26, sh.shadowW * 0.16))}
+                color="#f87171"
+                anchorX="center"
+                anchorY="top"
+                outlineWidth={0.026}
+                outlineColor="#020617"
+              >
+                {`⚠ DİKKAT: ${sh.deviceName.toUpperCase()} IŞIK YOLUNDA! DUVARDA GÖLGE OLUŞUYOR (${sh.distToWall.toFixed(2)}m)`}
+              </Text>
+            )}
+          </group>
+
+          {/* Işık Yolunu Kesen Cihazdan Duvardaki Gölgeye Doğru Kırmızı Kesikli Lazer Işını */}
+          <Line
+            points={[sh.rayStart, sh.rayEnd]}
+            color="#ef4444"
+            lineWidth={2.4}
+            dashed
+            dashSize={0.25}
+            gapSize={0.15}
+          />
+        </group>
+      ))}
 
       {/* 1. DUVARDA OLUŞAN GERÇEK ZAMANLI İNSAN GÖLGELERİ (Silüet + Kırmızı Uyarı + Gölge Işını) */}
       {wallShadows.map(sh => (
