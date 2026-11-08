@@ -62,6 +62,7 @@ export interface SurfaceItem {
     density?: { x: number; y: number };
     dimensions?: { x: number; y: number };
   };
+  customProjectorOffsets?: Record<string, { shiftX: number; shiftY: number; shiftZ?: number }>;
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -2372,6 +2373,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     onSelect={id => setSelectedId(id)}
                     physicalRoom={physicalRoom}
                     onUpdatePhysicalRoom={patch => setPhysicalRoom(prev => ({ ...prev, ...patch }))}
+                    onUpdateSurface={(surfId, updater) => {
+                      setSurfaces(prev => prev.map(s => (s.id === surfId ? updater(s) : s)));
+                    }}
                   />
                 </Suspense>
               </div>
