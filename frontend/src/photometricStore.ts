@@ -29,7 +29,9 @@ export interface PhotometricStoreState {
   blendOverlap: boolean;
   showHotDarkSpots: boolean;
   showIsoContours: boolean;
-  activeTab: 'heatmap' | 'ansi9' | 'overlap' | 'scenarios' | 'guide';
+  showProjectorOutlines: boolean;
+  viewMode: 'combined' | 'dominant' | string; // 'combined', 'dominant' veya seçili projektör ID'si ('proj-1', vb.)
+  activeTab: 'heatmap' | '3d' | 'ansi9' | 'overlap' | 'scenarios' | 'guide';
   advancedMode: boolean;
 
   // Eylemler
@@ -49,7 +51,9 @@ export interface PhotometricStoreState {
   setBlendOverlap: (b: boolean) => void;
   setShowHotDarkSpots: (b: boolean) => void;
   setShowIsoContours: (b: boolean) => void;
-  setActiveTab: (tab: 'heatmap' | 'ansi9' | 'overlap' | 'scenarios' | 'guide') => void;
+  setShowProjectorOutlines: (b: boolean) => void;
+  setViewMode: (vm: 'combined' | 'dominant' | string) => void;
+  setActiveTab: (tab: 'heatmap' | '3d' | 'ansi9' | 'overlap' | 'scenarios' | 'guide') => void;
   setAdvancedMode: (b: boolean) => void;
   
   // Projeden Yüzey ve Projektör Bilgilerini Aktarma Fonksiyonu
@@ -118,6 +122,8 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
   blendOverlap: true,
   showHotDarkSpots: true,
   showIsoContours: false,
+  showProjectorOutlines: true,
+  viewMode: 'combined',
   activeTab: 'heatmap',
   advancedMode: true,
 
@@ -139,6 +145,8 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
   setBlendOverlap: (blendOverlap) => set({ blendOverlap }),
   setShowHotDarkSpots: (showHotDarkSpots) => set({ showHotDarkSpots }),
   setShowIsoContours: (showIsoContours) => set({ showIsoContours }),
+  setShowProjectorOutlines: (showProjectorOutlines) => set({ showProjectorOutlines }),
+  setViewMode: (viewMode) => set({ viewMode }),
   setActiveTab: (activeTab) => set({ activeTab }),
   setAdvancedMode: (advancedMode) => set({ advancedMode }),
 

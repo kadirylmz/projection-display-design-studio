@@ -11,6 +11,9 @@ import {
 } from '../engine/photometrics';
 import { usePlannerStore } from '../plannerStore';
 import { usePhotometricStore } from '../photometricStore';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Grid, Text as DreiText, Line as DreiLine } from '@react-three/drei';
+import * as THREE from 'three';
 
 interface ScenarioComparisonItem {
   name: string;
@@ -23,6 +26,141 @@ interface ScenarioComparisonItem {
   u1: number;
   nits: number;
   contrast: number;
+}
+
+/**
+ * 3B Mekansal Fotometrik Görünüm (Three.js Simülasyonu)
+ * 25m duvardaki her projektörün havada asılı olduğu konumu ve ışık konisi (frustum) piramidini gösterir.
+ */
+function Photometric3DScene({
+  surface,
+  projectors
+}: {
+  surface: Surface3DConfig;
+  projectors: Projector3DConfig[];
+}) {
+  const halfW = surface.widthM / 2;
+  const halfH = surface.heightM / 2;
+
+  return (
+    <div className="relative w-full h-[520px] bg-slate-950 rounded-xl overflow-hidden border border-slate-800 shadow-2xl">
+      <Canvas
+        camera={{ position: [0, surface.heightM * 1.1, Math.max(8, surface.widthM * 0.75)], fov: 48 }}
+        gl={{ preserveDrawingBuffer: true, antialias: true }}
+      >
+        <color attach="background" args={['#070b14']} />
+        <ambientLight intensity={0.65} />
+        <directionalLight position={[10, 20, 15]} intensity={0.8} />
+        <OrbitControls makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI / 2 - 0.01} />
+        <Grid
+          position={[0, 0, 0]}
+          args={[Math.max(35, surface.widthM * 1.5), Math.max(25, surface.widthM * 1.2)]}
+          cellSize={1}
+          cellThickness={0.8}
+          cellColor="#1e293b"
+          sectionSize={5}
+          sectionThickness={1.5}
+          sectionColor="#334155"
+          fadeDistance={60}
+        />
+
+        {/* Projeksiyon Yüzeyi (Duvar / Zemin) */}
+        <group position={[0, halfH, 0]}>
+          <mesh>
+            <planeGeometry args={[surface.widthM, surface.heightM]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.7} metalness={0.1} />
+          </mesh>
+          <DreiLine
+            points={[
+              [-halfW, -halfH, 0.01],
+              [halfW, -halfH, 0.01],
+              [halfW, halfH, 0.01],
+              [-halfW, halfH, 0.01],
+              [-halfW, -halfH, 0.01]
+            ]}
+            color="#38bdf8"
+            lineWidth={3.5}
+          />
+          <DreiText
+            position={[0, halfH + 0.35, 0]}
+            fontSize={0.36}
+            color="#38bdf8"
+            anchorX="center"
+            anchorY="bottom"
+            outlineWidth={0.04}
+            outlineColor="#020617"
+          >
+            {`PROJEKSİYON YÜZEYİ (${surface.widthM}m × ${surface.heightM}m)`}
+          </DreiText>
+        </group>
+
+        {/* Projektörler ve Renkli Işık Piramitleri (Frustum Beams) */}
+        {projectors.filter(p => p.enabled).map((pj, idx) => {
+          const tr = pj.throwRatio || 0.8;
+          const dist = Math.abs(pj.pos[2]) || 4.5;
+          const beamW = dist / tr;
+          const beamH = beamW / 1.7778; // 16:9
+          const beamPts: [number, number, number][] = [
+            [pj.target[0] - beamW / 2, pj.target[1] + beamH / 2, pj.target[2] + 0.02],
+            [pj.target[0] + beamW / 2, pj.target[1] + beamH / 2, pj.target[2] + 0.02],
+            [pj.target[0] + beamW / 2, pj.target[1] - beamH / 2, pj.target[2] + 0.02],
+            [pj.target[0] - beamW / 2, pj.target[1] - beamH / 2, pj.target[2] + 0.02],
+          ];
+
+          return (
+            <group key={pj.id}>
+              {/* Projektör Gövdesi */}
+              <mesh position={pj.pos}>
+                <boxGeometry args={[0.55, 0.24, 0.55]} />
+                <meshStandardMaterial color={pj.color || '#38bdf8'} metalness={0.6} roughness={0.3} />
+              </mesh>
+              {/* Lens */}
+              <mesh position={[pj.pos[0], pj.pos[1], pj.pos[2] - 0.3]} rotation={[Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[0.08, 0.09, 0.1, 16]} />
+                <meshBasicMaterial color="#ffffff" />
+              </mesh>
+              {/* Cihaz Etiketi */}
+              <DreiText
+                position={[pj.pos[0], pj.pos[1] + 0.35, pj.pos[2]]}
+                fontSize={0.28}
+                color={pj.color || '#ffffff'}
+                anchorX="center"
+                anchorY="bottom"
+                outlineWidth={0.03}
+                outlineColor="#020617"
+              >
+                {`PJ ${idx + 1}: ${pj.name.split('(')[0].trim()} (TR: ${pj.throwRatio}:1)`}
+              </DreiText>
+
+              {/* Duvardaki Işık Ayak İzi (Footprint Quad) */}
+              <DreiLine
+                points={[beamPts[0], beamPts[1], beamPts[2], beamPts[3], beamPts[0]]}
+                color={pj.color || '#ffffff'}
+                lineWidth={3}
+              />
+
+              {/* 4 Köşe Işın Çizgisi */}
+              {beamPts.map((corner, cIdx) => (
+                <DreiLine
+                  key={cIdx}
+                  points={[pj.pos, corner]}
+                  color={pj.color || '#ffffff'}
+                  lineWidth={1.6}
+                  transparent
+                  opacity={0.65}
+                />
+              ))}
+            </group>
+          );
+        })}
+      </Canvas>
+
+      {/* 3D Bilgi Notu */}
+      <div className="absolute bottom-3 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 px-3 py-1.5 rounded-lg text-xs text-slate-300 pointer-events-none shadow-lg">
+        <span className="font-bold text-sky-400">💡 3B Mekansal Görünüm:</span> Fareyle sahneyi 360° çevirebilir, {projectors.filter(p => p.enabled).length} projektörün havada nerede asılı olduğunu ve {surface.widthM}m duvardaki dağılımını görebilirsiniz.
+      </div>
+    </div>
+  );
 }
 
 export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
@@ -47,6 +185,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     blendOverlap,
     showHotDarkSpots,
     showIsoContours,
+    showProjectorOutlines,
+    viewMode,
     activeTab,
     advancedMode,
     defaultProjectorLumens,
@@ -66,6 +206,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     setBlendOverlap,
     setShowHotDarkSpots,
     setShowIsoContours,
+    setShowProjectorOutlines,
+    setViewMode,
     setActiveTab,
     setAdvancedMode,
     importFromPlannerSurface,
@@ -74,7 +216,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     removeProjector
   } = usePhotometricStore();
 
-  // İlk açılışta projede tanımlı yüzey varsa otomatik senkronize et (eğer custom bırakılmışsa ve hiç projektör seçilmemişse)
+  // İlk açılışta projede tanımlı yüzey varsa otomatik senkronize et
   useEffect(() => {
     if (selectedSurfaceId === 'custom' && plannerSurfaces.length > 0 && projectors.length <= 2) {
       importFromPlannerSurface(plannerSurfaces[0], defaultProjectorLumens);
@@ -123,6 +265,9 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     };
   }, [screenW, screenH, geometry, curveRadius, curveAngle, inclineAngle, screenGain, surfaceReflectance, ambientLux, unit]);
 
+  // Aktif projektörler
+  const activeProjectors = useMemo(() => projectors.filter(p => p.enabled), [projectors]);
+
   // Simülasyon Çalıştırma
   const simResult: PhotometricSimulationResult = useMemo(() => {
     return simulatePhotometricLux(
@@ -134,7 +279,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     );
   }, [surfaceConfig, projectors, cols, rows, blendOverlap]);
 
-  // Canvas Çizimi (Heatmap) - activeTab değiştiğinde ve simülasyon güncellendiğinde anında çizilir
+  // Canvas Çizimi (Heatmap)
   useEffect(() => {
     if (activeTab !== 'heatmap') return;
 
@@ -151,8 +296,19 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       const cellW = w / simResult.cols;
       const cellH = h / simResult.rows;
 
-      const min = simResult.minLux;
-      const max = simResult.maxLux;
+      // Hangi projektörün gösterileceği (Tümü, Bireysel veya Dominant)
+      const isSolo = viewMode !== 'combined' && viewMode !== 'dominant';
+      const soloProjIdx = isSolo ? activeProjectors.findIndex(p => p.id === viewMode) : -1;
+
+      let min = simResult.minLux;
+      let max = simResult.maxLux;
+
+      if (isSolo && soloProjIdx >= 0) {
+        // Yalnızca seçili projektörün lüks skalası
+        const values = simResult.grid.map(c => c.perProjectorLux[soloProjIdx] || 0);
+        min = Math.min(...values);
+        max = Math.max(...values);
+      }
 
       // Grid Hücrelerini Çiz
       for (let r = 0; r < simResult.rows; r++) {
@@ -161,14 +317,42 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           const cell = simResult.grid[idx];
           if (!cell) continue;
 
-          const [red, green, blue] = getLuxColorRGB(cell.totalLux, min, max);
-          ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+          let cellLux = cell.totalLux;
+
+          if (isSolo && soloProjIdx >= 0) {
+            cellLux = cell.perProjectorLux[soloProjIdx] || 0;
+          }
+
+          if (viewMode === 'dominant') {
+            // Hangi projektörün baskın olduğunu gösteren renk modu
+            let maxPjVal = 0;
+            let maxPjColor = '#0f172a';
+            cell.perProjectorLux.forEach((lx, i) => {
+              if (lx > maxPjVal && activeProjectors[i]) {
+                maxPjVal = lx;
+                maxPjColor = activeProjectors[i].color || '#38bdf8';
+              }
+            });
+
+            if (cell.overlapCount > 1) {
+              // Örtüşme alanı: Canlı mor/pembe vurgusu
+              ctx.fillStyle = 'rgba(217, 70, 239, 0.75)';
+            } else if (maxPjVal > 10) {
+              ctx.fillStyle = maxPjColor;
+            } else {
+              ctx.fillStyle = '#0f172a';
+            }
+          } else {
+            const [red, green, blue] = getLuxColorRGB(cellLux, min, max);
+            ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+          }
+
           ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
         }
       }
 
       // Iso Contour çizgileri
-      if (showIsoContours && max > min) {
+      if (showIsoContours && max > min && viewMode !== 'dominant') {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
         ctx.lineWidth = 1;
         const numSteps = 5;
@@ -180,8 +364,73 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         }
       }
 
-      // Hotspot & Darkspot Göstergeleri
-      if (showHotDarkSpots && simResult.hotspot && simResult.darkspot) {
+      // 🌟 PROJEKTÖR KAPSAMA ALANLARI & ÇERÇEVELERİ (FOOTPRINTS)
+      if (showProjectorOutlines) {
+        const halfW = surfaceConfig.widthM / 2;
+        activeProjectors.forEach((pj, pIdx) => {
+          // Eğer solo izleme açıksa sadece o projektörün çerçevesi çizilsin
+          if (isSolo && pj.id !== viewMode) return;
+
+          const tr = pj.throwRatio || 0.8;
+          const dist = Math.abs(pj.pos[2]) || 4.5;
+          const beamW = dist / tr;
+          const beamH = beamW / 1.7778; // 16:9
+
+          const centerX = pj.target[0] + halfW;
+          const centerY = pj.target[1];
+
+          const x1 = Math.max(0, centerX - beamW / 2);
+          const x2 = Math.min(surfaceConfig.widthM, centerX + beamW / 2);
+          const y1 = Math.max(0, centerY - beamH / 2);
+          const y2 = Math.min(surfaceConfig.heightM, centerY + beamH / 2);
+
+          const px1 = (x1 / surfaceConfig.widthM) * w;
+          const px2 = (x2 / surfaceConfig.widthM) * w;
+          const pyTop = ((surfaceConfig.heightM - y2) / surfaceConfig.heightM) * h;
+          const pyBottom = ((surfaceConfig.heightM - y1) / surfaceConfig.heightM) * h;
+
+          const boxW = Math.max(4, px2 - px1);
+          const boxH = Math.max(4, pyBottom - pyTop);
+
+          ctx.save();
+          ctx.strokeStyle = pj.color || '#38bdf8';
+          ctx.lineWidth = 2.2;
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(px1, pyTop, boxW, boxH);
+
+          // Optik Merkez Artısı (+)
+          const pcx = (centerX / surfaceConfig.widthM) * w;
+          const pcy = ((surfaceConfig.heightM - centerY) / surfaceConfig.heightM) * h;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.moveTo(pcx - 8, pcy);
+          ctx.lineTo(pcx + 8, pcy);
+          ctx.moveTo(pcx, pcy - 8);
+          ctx.lineTo(pcx, pcy + 8);
+          ctx.stroke();
+
+          // Başlık Rozeti: PJ 1 [0.0m - 6.5m]
+          const badgeText = `PJ ${pIdx + 1}: ${pj.name.split('(')[0].trim()} [${Math.max(0, centerX - beamW / 2).toFixed(1)}m – ${Math.min(surfaceConfig.widthM, centerX + beamW / 2).toFixed(1)}m]`;
+          ctx.font = 'bold 11px sans-serif';
+          const textMetrics = ctx.measureText(badgeText);
+          const badgeW = textMetrics.width + 12;
+          const badgeH = 18;
+          const badgeX = Math.max(px1 + 4, Math.min(px1 + boxW - badgeW - 4, pcx - badgeW / 2));
+          const badgeY = Math.max(pyTop + 4, 4);
+
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.90)';
+          ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+          ctx.strokeStyle = pj.color || '#38bdf8';
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(badgeText, badgeX + 6, badgeY + 13);
+          ctx.restore();
+        });
+      }
+
+      // Hotspot & Darkspot Göstergeleri (Yalnızca kombine modda)
+      if (showHotDarkSpots && viewMode === 'combined' && simResult.hotspot && simResult.darkspot) {
         // Hotspot (Maksimum)
         const hotNormX = simResult.hotspot.xM / surfaceConfig.widthM;
         const hotNormY = simResult.hotspot.yM / surfaceConfig.heightM;
@@ -233,7 +482,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     render();
     const animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [simResult, activeTab, showHotDarkSpots, showIsoContours, surfaceConfig.widthM, surfaceConfig.heightM]);
+  }, [simResult, activeTab, viewMode, showProjectorOutlines, showHotDarkSpots, showIsoContours, surfaceConfig.widthM, surfaceConfig.heightM, activeProjectors]);
 
   // Canvas Çizimi (Overlap Görselleştirmesi)
   useEffect(() => {
@@ -349,8 +598,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       const testProj: Projector3DConfig[] = [{
         ...currentProj,
         ansiLumens: item.lumens,
-        pos: [wM / 2, hM / 2, item.dist],
-        target: [wM / 2, hM / 2, 0],
+        pos: [0, hM / 2, item.dist],
+        target: [0, hM / 2, 0],
         enabled: true
       }];
       const res = simulatePhotometricLux(surfaceConfig, testProj, 15, 10, false);
@@ -446,7 +695,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </label>
         </div>
 
-        {/* 🌟 PROJE İLE OTOMATİK SENKRONİZASYON (KULLANICININ ZATEN GİRDİĞİ YÜZEY VE PROJEKTÖRLER) */}
+        {/* PROJE İLE OTOMATİK SENKRONİZASYON */}
         <div className="space-y-2 bg-gradient-to-r from-sky-950/40 via-slate-950 to-slate-950 p-3 rounded-lg border border-sky-900/60 shadow">
           <div className="flex items-center justify-between">
             <label className="font-bold text-sky-300 text-xs flex items-center gap-1.5">
@@ -888,6 +1137,13 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab('3d')}
+              className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === '3d' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              🌐 3B Mekansal Simülasyon
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('ansi9')}
               className={`px-3 py-1.5 rounded-md font-medium transition ${activeTab === 'ansi9' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
             >
@@ -934,11 +1190,18 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
         </div>
 
+        {/* 🌟 3B MEKANSAL SİMÜLASYON SEKMESİ */}
+        {activeTab === '3d' && (
+          <div className="space-y-3">
+            <Photometric3DScene surface={surfaceConfig} projectors={projectors} />
+          </div>
+        )}
+
         {/* 🌟 ANA GÖRSELLEŞTİRME: 2D ISI HARİTASI */}
         {activeTab === 'heatmap' && (
           <div className="space-y-3">
             {/* Isı Haritası Tuvali */}
-            <div className="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center">
+            <div className="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center shadow-lg">
               <div className="relative w-full max-w-[840px] aspect-[16/9] flex items-center justify-center bg-black/50 rounded-lg overflow-hidden border border-slate-800/80">
                 <canvas
                   ref={heatmapCanvasRef}
@@ -984,9 +1247,18 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
               </div>
 
-              {/* Alt Kontroller */}
-              <div className="w-full flex items-center justify-between text-xs text-slate-400 pt-2 px-2">
-                <div className="flex items-center gap-4">
+              {/* Alt Kontroller & Çerçeve / İso Çizgileri Toggle */}
+              <div className="w-full flex items-center justify-between text-xs text-slate-400 pt-2 px-2 flex-wrap gap-2">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <label className="flex items-center gap-1.5 cursor-pointer font-medium text-sky-300">
+                    <input
+                      type="checkbox"
+                      checked={showProjectorOutlines}
+                      onChange={e => setShowProjectorOutlines(e.target.checked)}
+                      className="rounded text-sky-500"
+                    />
+                    📐 Projektör Sınırlarını & Kapsama Alanlarını Göster (PJ 1, PJ 2...)
+                  </label>
                   <label className="flex items-center gap-1.5 cursor-pointer">
                     <input
                       type="checkbox"
@@ -1012,7 +1284,147 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               </div>
             </div>
 
-            {/* 🌟 AÇIKLAYICI METRİK KARTLARI (NE ANLAMA GELDİĞİ VE MÜHENDİSLİK YORUMU) */}
+            {/* 🌟 25 METRELİK YÜZEYDE HANGİ CİHAZ NEREYE IŞIK VERİYOR? (KAPSAMA & BLEND CETVELİ) */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-3 shadow-lg">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h3 className="font-bold text-sm text-sky-400 flex items-center gap-1.5">
+                    <span>📏 Projektör Kapsama & Dağılım Cetveli ({surfaceConfig.widthM}m Yüzey)</span>
+                  </h3>
+                  <p className="text-slate-400 text-[11px] mt-0.5">
+                    Mekandaki {activeProjectors.length} projektörün duvardaki net başlangıç/bitiş mesafeleri ve bindirme (overlap) aralıkları:
+                  </p>
+                </div>
+
+                {/* Görünüm Filtresi */}
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs flex-wrap">
+                  <span className="text-[10.5px] text-slate-400 px-1 font-medium">Haritada Göster:</span>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('combined')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${viewMode === 'combined' ? 'bg-sky-600 text-white shadow font-bold' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Tümü (Kombine)
+                  </button>
+                  {activeProjectors.map((p, idx) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setViewMode(p.id)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${viewMode === p.id ? 'bg-sky-600 text-white shadow font-bold' : 'text-slate-400 hover:text-white'}`}
+                      style={{ color: viewMode === p.id ? '#ffffff' : p.color }}
+                    >
+                      PJ {idx + 1}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('dominant')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${viewMode === 'dominant' ? 'bg-purple-600 text-white shadow font-bold' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Kapsama Haritası
+                  </button>
+                </div>
+              </div>
+
+              {/* Görsel Yatay Cetvel Barı (0m ile widthM arası) */}
+              <div className="relative w-full h-8 bg-slate-950 border border-slate-700 rounded-lg overflow-hidden flex">
+                {activeProjectors.map((pj, idx) => {
+                  const halfW = surfaceConfig.widthM / 2;
+                  const tr = pj.throwRatio || 0.8;
+                  const dist = Math.abs(pj.pos[2]) || 4.5;
+                  const beamW = dist / tr;
+                  const centerX = pj.target[0] + halfW;
+                  const startX = Math.max(0, centerX - beamW / 2);
+                  const endX = Math.min(surfaceConfig.widthM, centerX + beamW / 2);
+                  const widthPct = ((endX - startX) / surfaceConfig.widthM) * 100;
+                  const leftPct = (startX / surfaceConfig.widthM) * 100;
+
+                  return (
+                    <div
+                      key={pj.id}
+                      className="absolute top-0 bottom-0 border-r border-white/20 flex flex-col justify-center items-center text-[10px] font-bold text-white shadow transition hover:opacity-90 cursor-pointer"
+                      style={{
+                        left: `${leftPct}%`,
+                        width: `${widthPct}%`,
+                        backgroundColor: `${pj.color}33`,
+                        borderLeft: `3px solid ${pj.color}`
+                      }}
+                      onClick={() => {
+                        setSelectedProjId(pj.id);
+                        setViewMode(pj.id);
+                      }}
+                      title={`${pj.name}: ${startX.toFixed(2)}m – ${endX.toFixed(2)}m`}
+                    >
+                      <span style={{ color: pj.color }}>PJ {idx + 1}</span>
+                      <span className="text-[9px] text-slate-300 font-mono">
+                        {startX.toFixed(1)}m – {endX.toFixed(1)}m
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Cetvel Detay Tablosu */}
+              <div className="overflow-x-auto border border-slate-800 rounded-lg">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-950 text-slate-400 uppercase text-[10px]">
+                    <tr>
+                      <th className="p-2">Cihaz Kodu</th>
+                      <th className="p-2">Duvardaki Başlangıç</th>
+                      <th className="p-2">Duvardaki Bitiş</th>
+                      <th className="p-2">Açılan Genişlik</th>
+                      <th className="p-2">Optik Merkez (X)</th>
+                      <th className="p-2">Atım (D) / TR</th>
+                      <th className="p-2">Komşu Örtüşme (Blend)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {activeProjectors.map((pj, idx) => {
+                      const halfW = surfaceConfig.widthM / 2;
+                      const tr = pj.throwRatio || 0.8;
+                      const dist = Math.abs(pj.pos[2]) || 4.5;
+                      const beamW = dist / tr;
+                      const centerX = pj.target[0] + halfW;
+                      const startX = Math.max(0, centerX - beamW / 2);
+                      const endX = Math.min(surfaceConfig.widthM, centerX + beamW / 2);
+
+                      let overlapInfo = '— (Kenar)';
+                      if (idx < activeProjectors.length - 1) {
+                        const nextPj = activeProjectors[idx + 1];
+                        const nextTr = nextPj.throwRatio || 0.8;
+                        const nextDist = Math.abs(nextPj.pos[2]) || 4.5;
+                        const nextBeamW = nextDist / nextTr;
+                        const nextCenterX = nextPj.target[0] + halfW;
+                        const nextStartX = Math.max(0, nextCenterX - nextBeamW / 2);
+                        const ovW = endX - nextStartX;
+                        if (ovW > 0) {
+                          const ovPct = Math.round((ovW / beamW) * 100);
+                          overlapInfo = `${ovW.toFixed(2)}m (%${ovPct} Blend PJ ${idx + 2} ile)`;
+                        }
+                      }
+
+                      return (
+                        <tr key={pj.id} className="hover:bg-slate-800/40">
+                          <td className="p-2 font-bold flex items-center gap-1.5" style={{ color: pj.color }}>
+                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pj.color }} />
+                            <span>PJ {idx + 1}: {pj.name.split('(')[0].trim()}</span>
+                          </td>
+                          <td className="p-2 font-mono text-slate-200">{startX.toFixed(2)} m</td>
+                          <td className="p-2 font-mono text-slate-200">{endX.toFixed(2)} m</td>
+                          <td className="p-2 font-mono text-emerald-400 font-semibold">{beamW.toFixed(2)} m</td>
+                          <td className="p-2 font-mono text-sky-400">{centerX.toFixed(2)} m</td>
+                          <td className="p-2 font-mono text-slate-300">D={dist.toFixed(2)}m (TR: {tr}:1)</td>
+                          <td className="p-2 font-mono text-amber-300">{overlapInfo}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* AÇIKLAYICI METRİK KARTLARI */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5">
               
               {/* ORTALAMA LUX */}
@@ -1227,7 +1639,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           </div>
         )}
 
-        {/* 🌟 YENİ REHBER: "NASIL YORUMLANIR & NE ANLAMA GELİR?" */}
+        {/* YENİ REHBER: "NASIL YORUMLANIR & NE ANLAMA GELİR?" */}
         {activeTab === 'guide' && (
           <div className="space-y-4 bg-slate-900 border border-slate-800 rounded-xl p-5 text-xs text-slate-300">
             <div>
@@ -1243,7 +1655,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               <div className="bg-slate-950 p-3.5 rounded-lg border border-slate-800 space-y-2">
                 <span className="font-bold text-sky-400 block text-sm">1. Lux (Aydınlık) Nedir?</span>
                 <p className="text-slate-300 leading-relaxed">
-                  Projektörden çıkan ışığın ekranın 1 metrekaresine düşen miktarıdır ($lm/m^2$).
+                  Projektörden çıkan ışığın ekranın 1 metrekaresine düşen miktarıdır (lm/m²).
                 </p>
                 <ul className="list-disc pl-4 space-y-1 text-slate-400">
                   <li><b>200 - 350 Lux:</b> Karartılmış tiyatro veya karanlık immersif oda için yeterli.</li>
