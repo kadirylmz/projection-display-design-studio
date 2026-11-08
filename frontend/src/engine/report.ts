@@ -206,8 +206,21 @@ export function buildReportHtml(p: ReportPayload): string {
 
   // 1. PROJE ÖZETİ
   if (p.sections.summary) {
+    let elAnalysis: ReturnType<typeof analyze> | null = null;
+    if (p.electrical) {
+      try {
+        elAnalysis = analyze(p.electrical.loads, p.electrical.circuits, p.electrical.supply);
+      } catch (err) {
+        console.warn('Report electrical analyze fallback:', err);
+      }
+    }
+
     const totalPj = p.interProjectorAnalysis?.totalProjectors ?? (p.mappingSlots?.length ?? 1);
-    const totalW = p.interProjectorAnalysis?.totalPowerW ?? (p.electrical ? analyze(p.electrical.loads, p.electrical.circuits, p.electrical.supply).totalW : 0);
+    const totalW = elAnalysis?.totalW ?? (p.interProjectorAnalysis?.totalPowerW ?? 0);
+    const demandW = elAnalysis?.demandW ?? totalW;
+    const totalIbA = elAnalysis?.totalIbA ?? (totalW > 0 ? (totalW / (230 * 0.95)) : 0);
+    const mainBrkA = elAnalysis?.mainBreakerA ?? (totalW > 9000 ? 63 : 40);
+    const phases = p.electrical?.supply.phases ?? (totalW > 9000 ? 3 : 1);
     const roomDims = p.interProjectorAnalysis?.roomDimensions;
 
     blocks.push(`<section class="report-section">
@@ -221,18 +234,45 @@ export function buildReportHtml(p: ReportPayload): string {
         </div>
         <div class="metric-card">
           <div class="metric-val text-amber">${(totalW / 1000).toFixed(2)} kW</div>
-          <div class="metric-lbl">Toplam Kurulu Güç</div>
+          <div class="metric-lbl">Toplam Kurulu Güç (${Math.round(totalW)} W)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val text-rose">${totalIbA.toFixed(1)} A</div>
+          <div class="metric-lbl">Toplam İşletme Akımı (Ib)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-val text-emerald">${mainBrkA} A (${phases === 3 ? '3 Faz 400V' : '1 Faz 230V'})</div>
+          <div class="metric-lbl">Şebeke & Ana Kesici</div>
         </div>
         ${roomDims ? `
         <div class="metric-card">
-          <div class="metric-val text-emerald">${roomDims.widthM}m × ${roomDims.lengthM}m × ${roomDims.heightM}m</div>
+          <div class="metric-val text-purple">${roomDims.widthM}m × ${roomDims.lengthM}m × ${roomDims.heightM}m</div>
           <div class="metric-lbl">Oda Ebatları (G × U × Y)</div>
         </div>` : ''}
-        <div class="metric-card">
-          <div class="metric-val text-purple">${p.interProjectorAnalysis?.surfaceStats.length ?? 0} Yüzey</div>
-          <div class="metric-lbl">Aktif Projeksiyon Alanı</div>
-        </div>
       </div>
+
+      <table class="compact-table" style="margin: 12px 0;">
+        <tbody>
+          <tr>
+            <th>Toplam Kurulu Güç (P<sub>top</sub>)</th>
+            <td><b class="text-amber">${(totalW / 1000).toFixed(2)} kW</b> (${Math.round(totalW).toLocaleString('tr-TR')} Watt)</td>
+            <th>Eşzamanlı Talep Gücü (P<sub>talep</sub>)</th>
+            <td><b class="text-amber">${(demandW / 1000).toFixed(2)} kW</b> (Talep Faktörü k=1.0)</td>
+          </tr>
+          <tr>
+            <th>Toplam Çekilen Akım (I<sub>b</sub>)</th>
+            <td><b class="text-rose">${totalIbA.toFixed(1)} Amper</b> ${phases === 3 ? `(Faz Başına Ortalama ~${(totalIbA / 3).toFixed(1)} A)` : '(@230V AC)'}</td>
+            <th>Şebeke Gerilimi & Frekans</th>
+            <td>${phases === 3 ? '3 Faz 400V AC (3P+N+PE) 50 Hz' : '1 Faz 230V AC (1P+N+PE) 50 Hz'}</td>
+          </tr>
+          <tr>
+            <th>Önerilen Ana Pano Sigortası</th>
+            <td><b>${mainBrkA} A</b> (30mA Kaçak Akım Koruma / RCD)</td>
+            <th>Gerekli Dağıtım Linyeleri</th>
+            <td>${elAnalysis?.circuits.length ?? (p.interProjectorAnalysis?.surfaceStats.length ?? 4)} Adet Linye (${phases === 3 ? 'L1, L2, L3 Dengeli Faz Yükü' : 'Monofaze Dağıtım'})</td>
+          </tr>
+        </tbody>
+      </table>
       
       ${m.notes ? `<div class="note-box"><b>${tr.notes}:</b> ${esc(m.notes)}</div>` : ''}
     </section>`);
@@ -702,6 +742,7 @@ export function buildReportHtml(p: ReportPayload): string {
   .text-amber { color: #d97706; }
   .text-emerald { color: #059669; }
   .text-purple { color: #7c3aed; }
+  .text-rose { color: #e11d48; }
   
   .three-d-card {
     background: #090e17;

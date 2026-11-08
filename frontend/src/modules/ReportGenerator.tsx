@@ -314,6 +314,7 @@ export default function ReportGenerator() {
           <div className="flex items-center gap-3">
             <span>Toplam Cihaz: <b className="text-sky-300">{interProjectorAnalysis.totalProjectors}</b></span>
             <span>Toplam Güç: <b className="text-amber-300">{(interProjectorAnalysis.totalPowerW / 1000).toFixed(2)} kW</b></span>
+            <span>Toplam Akım (Ib): <b className="text-rose-400">{(interProjectorAnalysis.totalPowerW / (230 * 0.95)).toFixed(1)} A</b></span>
           </div>
         </div>
         <iframe title="rapor-onizleme" srcDoc={html} className="w-full flex-1 bg-white" />
