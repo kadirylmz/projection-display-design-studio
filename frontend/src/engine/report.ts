@@ -897,21 +897,6 @@ export function buildReportHtml(p: ReportPayload): string {
       <h2>${tr.assumptions}</h2>
       ${wHtml}
       ${aHtml}
-
-      <div class="sign-block">
-        <div class="sign-box">
-          <div class="sign-title">HAZIRLAYAN AV & PROJEKSİYON MÜHENDİSİ</div>
-          <div class="sign-space"></div>
-          <div class="sign-name">İsim / Kaşe / İmza</div>
-          <div class="sign-date">Tarih: ${esc(m.date)}</div>
-        </div>
-        <div class="sign-box">
-          <div class="sign-title">MÜŞTERİ / PROJE ONAY MAKAMI</div>
-          <div class="sign-space"></div>
-          <div class="sign-name">${esc(m.customer)}</div>
-          <div class="sign-date">Tarih: ______ / ______ / 2026</div>
-        </div>
-      </div>
     </section>`);
   }
 
@@ -1321,40 +1306,7 @@ export function buildReportHtml(p: ReportPayload): string {
   .warning-list { color: #b45309; padding-left: 20px; }
   .assumption-list { color: #475569; padding-left: 20px; font-size: 11px; }
   
-  .sign-block {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-    margin-top: 36px;
-    padding-top: 16px;
-    border-top: 1px dashed #cbd5e1;
-  }
-  .sign-box {
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    padding: 14px;
-    background: #f8fafc;
-  }
-  .sign-title {
-    font-size: 11px;
-    font-weight: 700;
-    color: #334155;
-    text-transform: uppercase;
-    border-bottom: 1px solid #e2e8f0;
-    padding-bottom: 4px;
-  }
-  .sign-space {
-    height: 60px;
-  }
-  .sign-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: #0f172a;
-  }
-  .sign-date {
-    font-size: 11px;
-    color: #64748b;
-  }
+
   
   @media print {
     body { margin: 8mm; padding: 0; }

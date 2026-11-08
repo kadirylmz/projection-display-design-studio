@@ -61,6 +61,8 @@ describe('rapor üretici (kabul testi 10)', () => {
     expect(html).toContain('2000 × 1500 mm');
     expect(html).toContain('TestCo P1');
     expect((html.match(/<svg /g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(html).not.toContain('sign-block');
+    expect(html).not.toContain('İsim / Kaşe / İmza');
   });
 
   it('seçilmeyen bölümleri rapora dahil etmez ve İngilizce dil seçeneğini destekler', () => {

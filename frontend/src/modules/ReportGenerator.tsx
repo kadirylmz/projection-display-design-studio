@@ -391,7 +391,7 @@ export default function ReportGenerator() {
             ['electrical', '9. Elektrik Yük & Tek Hat Dağıtım Şeması'],
             ['drawings2d', '10. 2B CAD Teknik Çizimler'],
             ['equipmentList', '11. Ekipman Listesi (BOM)'],
-            ['assumptionsAndWarnings', '12. Şantiye Standartları & Onay İmzaları'],
+            ['assumptionsAndWarnings', '12. Şantiye Standartları & Teknik Uyarılar'],
           ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
             <div key={k} className="space-y-1">
               <label className="flex items-center gap-2 cursor-pointer hover:text-white transition">
