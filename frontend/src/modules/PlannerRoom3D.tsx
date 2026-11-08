@@ -1261,59 +1261,8 @@ export default function PlannerRoom3D({
     gl.render(scene, camera);
     const srcCanvas = gl.domElement;
 
-    const outCanvas = document.createElement('canvas');
-    const bannerH = includeHudOnExport ? 115 : 0;
-    outCanvas.width = srcCanvas.width;
-    outCanvas.height = srcCanvas.height + bannerH;
-
-    const ctx = outCanvas.getContext('2d');
-    if (!ctx) return;
-    ctx.fillStyle = '#070b14';
-    ctx.fillRect(0, 0, outCanvas.width, outCanvas.height);
-
-    ctx.drawImage(srcCanvas, 0, 0);
-
-    if (includeHudOnExport && activeSurf && coverageStats) {
-      const y0 = srcCanvas.height;
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(0, y0, outCanvas.width, bannerH);
-
-      ctx.strokeStyle = '#0ea5e9';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(0, y0);
-      ctx.lineTo(outCanvas.width, y0);
-      ctx.stroke();
-
-      const fsTitle = Math.max(15, Math.round(outCanvas.width / 72));
-      const fsSub = Math.max(12, Math.round(outCanvas.width / 94));
-
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold ' + fsTitle + 'px sans-serif';
-      ctx.fillText(
-        '3B ODA, DOLULUK & GÖLGE SİMÜLASYONU — ' + activeSurf.name.toUpperCase() + ' (' + activeSurf.effectiveWidthM + 'm × ' + activeSurf.effectiveHeightM + 'm)',
-        24,
-        y0 + 32
-      );
-
-      ctx.fillStyle = '#4ade80';
-      ctx.font = 'bold ' + fsSub + 'px monospace';
-      ctx.fillText(
-        'İçerik: ' + activeSurf.netW + '×' + activeSurf.netH + ' px  |  Piksel: ' + activeSurf.avgMmPerPx + ' mm/px (' + activeSurf.ppi + ' PPI)  |  Yüzey Doluluk: Yatay %' + coverageStats.covPctW + ' (' + activeSurf.totalOpticalWidthM + 'm / ' + activeSurf.effectiveWidthM + 'm) · Dikey %' + coverageStats.covPctH,
-        24,
-        y0 + 62
-      );
-
-      ctx.fillStyle = coverageStats.hasShadowRisk ? '#f87171' : '#facc15';
-      ctx.font = fsSub + 'px monospace';
-      ctx.fillText(
-        'PJ Uzaklık: D=' + activeSurf.throwDistM + 'm · PJ Yükseklik: H=' + coverageStats.projHeight.toFixed(2) + 'm  |  ' + (coverageStats.hasShadowRisk ? '⚠ DUVARDA İNSAN GÖLGESİ OLUŞUYOR (' + coverageStats.shadowHeightOnWall + 'm)' : '✓ Gölge Yok'),
-        24,
-        y0 + 92
-      );
-    }
-
-    const dataUrl = outCanvas.toDataURL('image/png');
+    // Saf 3B sahne görüntüsü (altında banner, oda simülasyonu veya duvar uzunluğu yazısı olmaksızın)
+    const dataUrl = srcCanvas.toDataURL('image/png');
     const prevMeta = useProjectStore.getState().meta;
     const existingSnapshots = prevMeta.room3dSnapshots && prevMeta.room3dSnapshots.length > 0
       ? prevMeta.room3dSnapshots

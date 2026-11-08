@@ -58,6 +58,7 @@ export default function ElectricalDrawingStudio() {
 
   const [elColumnSpacing, setElColumnSpacing] = useState<number>(145);
   const [elTextShiftY, setElTextShiftY] = useState<number>(0);
+  const [reportCadToast, setReportCadToast] = useState<boolean>(false);
 
   const { loads, circuits, supply } = electrical;
 
@@ -666,6 +667,34 @@ export default function ElectricalDrawingStudio() {
                 onClick={async () => download(`${sheet}-cizim.png`, await svgToPng(toSvg(activeDrawing, { pixelWidth: 2600 }), 2600))}
               >
                 PNG
+              </button>
+              <button
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded font-bold text-white shadow flex items-center gap-1 transition"
+                onClick={async () => {
+                  try {
+                    const blob = await svgToPng(toSvg(activeDrawing, { pixelWidth: 2600, background: '#0b1220' }), 2600);
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const dataUrl = reader.result as string;
+                      const prevMeta = useProjectStore.getState().meta;
+                      const existing = prevMeta.room3dSnapshots && prevMeta.room3dSnapshots.length > 0
+                        ? prevMeta.room3dSnapshots
+                        : (prevMeta.room3dSnapshotUrl ? [prevMeta.room3dSnapshotUrl] : []);
+                      useProjectStore.getState().setMeta({
+                        room3dSnapshotUrl: dataUrl,
+                        room3dSnapshots: [...existing, dataUrl],
+                      });
+                      setReportCadToast(true);
+                      setTimeout(() => setReportCadToast(false), 3000);
+                    };
+                    reader.readAsDataURL(blob);
+                  } catch (err) {
+                    console.error('CAD çizimini rapora aktarma hatası:', err);
+                  }
+                }}
+                title="Mevcut CAD Çizimini Müşteri Raporu Görsel Simülasyon Galerisine Ekler"
+              >
+                <span>{reportCadToast ? '✓ Rapora Eklendi!' : '📋 Çizimi Rapora Ekle'}</span>
               </button>
             </div>
           )}

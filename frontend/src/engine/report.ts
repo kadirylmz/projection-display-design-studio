@@ -122,7 +122,7 @@ const T: Record<ReportLang, Record<string, string>> = {
     drawings: '7. 2B Teknik Çizimler',
     equipment: '8. Ekipman Listesi',
     assumptions: '9. Teknik Varsayımlar, Uyarılar ve Sınırlamalar',
-    room3d: '3B İmmersive Simülasyon & Mekansal Görünüş',
+    room3d: '3B Simülasyon & 2B Görsel Paftalar',
     archPlan: 'Mimari Yerleşim & CAD Paftası',
     interProjector: 'Projeksiyonlar Arası Montaj, Eksen ve Aralık Cetveli',
     projector: 'Projektör',
@@ -167,7 +167,7 @@ const T: Record<ReportLang, Record<string, string>> = {
     drawings: '7. 2D Technical Drawings',
     equipment: '8. Equipment List',
     assumptions: '9. Technical Assumptions, Warnings & Limitations',
-    room3d: '3D Immersive Simulation & Spatial View',
+    room3d: '3D Simulation & 2D Visual Layouts',
     archPlan: 'Architectural Layout & CAD Plan',
     interProjector: 'Inter-Projector Spacing & Mechanical Installation Schedule',
     projector: 'Projector',
@@ -292,7 +292,7 @@ export function buildReportHtml(p: ReportPayload): string {
         </div>
       ` : `
         <div class="empty-3d-box">
-          <p>📸 <b>3B Sahne Görünümü:</b> <i>İçerik Çözünürlüğü Planlayıcı / 3D Oda sekmesinden "3B Açıyı Rapora Ekle" butonuna tıklayarak istediğiniz kamera açısından yüksek çözünürlüklü 3B simülasyon görüntüsünü buraya aktarabilirsiniz.</i></p>
+          <p>📸 <b>3B & 2B Görsel Simülasyonlar:</b> <i>"3D Oda", "2B Açınım" veya "CAD Çizim" sekmelerinden "📋 Rapora Ekle" butonuna tıklayarak istediğiniz kamera açısından 3B simülasyonları ve 2B açınım paftalarını buraya aktarabilirsiniz.</i></p>
         </div>
       `}
     </section>`);

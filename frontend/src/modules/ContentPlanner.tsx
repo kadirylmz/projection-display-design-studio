@@ -3,6 +3,7 @@ import { pctToPx } from '../engine/multiproj';
 import { LengthUnit, round } from '../engine/units';
 import { download } from '../util';
 import { usePlannerStore } from '../plannerStore';
+import { useProjectStore } from '../projectStore';
 
 const PlannerRoom3D = lazy(() => import('./PlannerRoom3D'));
 
@@ -300,6 +301,52 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
+  const [report2dToast, setReport2dToast] = useState(false);
+  const svg2dRef = useRef<SVGSVGElement | null>(null);
+
+  const capture2DViewToReport = () => {
+    const svgEl = svg2dRef.current;
+    if (!svgEl) return;
+    try {
+      const xml = new XMLSerializer().serializeToString(svgEl);
+      const svgBlob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
+      const URL = window.URL || window.webkitURL || window;
+      const blobUrl = URL.createObjectURL(svgBlob);
+
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = 2;
+        const w = (svgEl.clientWidth || 1200) * scale;
+        const h = (svgEl.clientHeight || 700) * scale;
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#060911';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/png');
+
+          const prevMeta = useProjectStore.getState().meta;
+          const existing = prevMeta.room3dSnapshots && prevMeta.room3dSnapshots.length > 0
+            ? prevMeta.room3dSnapshots
+            : (prevMeta.room3dSnapshotUrl ? [prevMeta.room3dSnapshotUrl] : []);
+          const updated = [...existing, dataUrl];
+          useProjectStore.getState().setMeta({
+            room3dSnapshotUrl: dataUrl,
+            room3dSnapshots: updated,
+          });
+          setReport2dToast(true);
+          setTimeout(() => setReport2dToast(false), 3000);
+        }
+        URL.revokeObjectURL(blobUrl);
+      };
+      img.src = blobUrl;
+    } catch (err) {
+      console.error('2B Açınım Çizimini Rapora Aktarma Hatası:', err);
+    }
+  };
 
   // 2B Açınım Çiziminde Yazı Gruplarını ve Seçilen Metinleri Bağımsız Sürükleme / Kaydırma
   type TextItemKey = 'name' | 'resolution' | 'density' | 'dimensions';
@@ -2204,6 +2251,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 1:1 PNG Şablon İndir
               </button>
               <button
+                onClick={capture2DViewToReport}
+                className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded shadow flex items-center gap-1 transition"
+                title="Mevcut 2B Açınım Çizimini Müşteri Raporu Görsel Galerisine Ekler"
+              >
+                <span>{report2dToast ? '✓ Rapora Eklendi!' : '📋 2B Açınımı Rapora Ekle'}</span>
+              </button>
+              <button
                 onClick={copySpecsToClipboard}
                 className="px-2.5 py-1 bg-sky-700 hover:bg-sky-600 text-white font-semibold rounded"
               >
@@ -2320,6 +2374,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   return (
                     <div className="m-auto shrink-0" style={{ width: `${scaledWidthPx}px`, height: `${scaledHeightPx}px` }}>
                       <svg
+                        ref={svg2dRef}
                         viewBox={`0 0 ${vbW} ${vbH}`}
                         width={scaledWidthPx}
                         height={scaledHeightPx}

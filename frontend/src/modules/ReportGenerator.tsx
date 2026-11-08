@@ -163,10 +163,10 @@ export default function ReportGenerator() {
           </label>
         </div>
 
-        {/* 3B SİMÜLASYON GÖRÜNÜMÜ KARTI */}
+        {/* 3B & 2B GÖRSEL SİMÜLASYON VE PAFTA KARTI */}
         <div className="p-2.5 rounded bg-slate-950 border border-slate-800 space-y-2">
           <div className="flex justify-between items-center">
-            <b className="text-amber-400 text-[11px]">📸 3B Sahne Simülasyonu ({snapshots.length})</b>
+            <b className="text-amber-400 text-[11px]">📸 3B & 2B Görsel Galerisi ({snapshots.length})</b>
             {snapshots.length > 0 && (
               <button
                 className="text-[10px] text-red-400 hover:text-red-300 underline"
@@ -184,14 +184,14 @@ export default function ReportGenerator() {
                   <div key={idx} className="relative group rounded border border-sky-900/60 overflow-hidden bg-slate-900">
                     <img
                       src={url}
-                      alt={`3B Önizleme #${idx + 1}`}
+                      alt={`Görsel #${idx + 1}`}
                       className="w-full h-20 object-cover"
                     />
                     <div className="absolute top-1 left-1 bg-black/75 text-[9px] text-white px-1.5 py-0.5 rounded font-mono">
                       #{idx + 1}
                     </div>
                     <button
-                      title="Bu Açıyı Sil"
+                      title="Bu Görseli Sil"
                       onClick={() => {
                         const updated = snapshots.filter((_, i) => i !== idx);
                         setMeta({
@@ -207,17 +207,17 @@ export default function ReportGenerator() {
                 ))}
               </div>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1">
-                <span>✓ Toplam {snapshots.length} adet 3B açı rapora dahil edildi</span>
+                <span>✓ Toplam {snapshots.length} adet 3B/2B görsel rapora dahil edildi</span>
               </div>
             </div>
           ) : (
             <div className="text-[10.5px] text-slate-400 leading-relaxed bg-slate-900/80 p-2 rounded border border-slate-800">
-              💡 <b>3B Görünüşü Eklemek İçin:</b> <i>"İçerik Çözünürlüğü Planlayıcı / 3D Oda"</i> sekmesine gidip dilediğiniz açılardan <b>"📋 3B Açıyı Rapora Ekle"</b> butonuna basabilir veya aşağıdan dosya yükleyebilirsiniz.
+              💡 <b>Görsel Eklemek İçin:</b> <i>"3D Oda"</i>, <i>"2B Açınım"</i> veya <i>"CAD Çizim"</i> sekmelerindeki <b>"📋 Rapora Ekle"</b> butonlarına basarak dilediğiniz kadar 3B ve 2B açınım görseli ekleyebilir veya aşağıdan dosya yükleyebilirsiniz.
             </div>
           )}
 
           <label className="block">
-            <span className="text-[10px] text-slate-400">+ Harici 3B Render / Fotoğraf Ekle</span>
+            <span className="text-[10px] text-slate-400">+ Harici 3B/2B Render veya Görsel Ekle</span>
             <input
               type="file"
               accept="image/*"
@@ -284,7 +284,7 @@ export default function ReportGenerator() {
           </div>
           {([
             ['summary', '1. Proje Özeti & Metrikler'],
-            ['room3d', '2. 3B Simülasyon & Mekansal Görünüş'],
+            ['room3d', '2. 3B Simülasyon & 2B Görsel Paftalar'],
             ['interProjector', '3. Projeksiyonlar Arası Eksen & Mesafe Cetveli'],
             ['architecturalPlan', '4. 2B Mimari Yerleşim & CAD Paftası'],
             ['projection', '5. Projektör & Lens Hesapları'],
