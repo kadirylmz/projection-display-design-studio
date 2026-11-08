@@ -80,18 +80,24 @@ export function roomPlan(room: { w: number; l: number; h: number }, projectors: 
   return d;
 }
 
+export interface ContentPlannerRoomPlanOptions {
+  customProjectorQty?: number;
+  perProjectorWatt?: number;
+}
+
 /**
- * İÇERİK VE PROJEKSİYON PLANLAYICI (CONTENT PLANNER) VERİLERİNDEN DOĞRUDAN ÜRETİLEN
- * MİMARİ ODA VE PROJEKSİYON CAD (DXF/SVG) ÜST GÖRÜNÜŞ PLANI
- * - Fiziksel Oda Duvarları, Tavan Yüksekliği ve Kolonlar
- * - Her Yüzeyin Gerçek Projektör Yerleşimi ve Işık Konisi (Frustum)
- * - Ölçülendirme Çizgileri ve Teknik Antet
+ * ELEKTRİKÇİ VE SAHA MONTAJ EKİBİ İÇİN NET CAD MİMARİ PROJEKSİYON YERLEŞİM PLANI (DXF / SVG)
+ * - Her projektörün duvara olan dik montaj mesafesi (Throw Distance D) ve referans duvara uzaklık kotları
+ * - Elektrik priz / besleme linye noktası (230V Priz Sembolü)
+ * - Tavan askı kotu / yüksekliği (H)
+ * - Her cihazın net koordinatları (X, Z) ve güç etiketi
  */
 export function contentPlannerRoomPlan(
   physicalRoom: PhysicalRoomConfig,
-  surfaces: (SurfaceItem | CalculatedSurface)[]
+  surfaces: (SurfaceItem | CalculatedSurface)[],
+  options: ContentPlannerRoomPlanOptions = {}
 ): Drawing {
-  const d = newDrawing('İçerik & Projeksiyon CAD Planı (Üstten Görünüş)', 'mm');
+  const d = newDrawing('Mimari Projeksiyon & Elektrik Yerleşim Planı (CAD)', 'mm');
   const mm = 1000; // Metre -> Milimetre
 
   const walls = surfaces.filter(s => s.type === 'wall');
@@ -109,9 +115,10 @@ export function contentPlannerRoomPlan(
 
   const hw = (roomW / 2) * mm;
   const hl = (roomL / 2) * mm;
-  const t = Math.max(roomW, roomL) * mm / 50;
+  const t = Math.max(roomW, roomL) * mm / 55;
+  const pWatt = options.perProjectorWatt || 450;
 
-  // 1. FİZİKSEL ODA DUVARLARI VE KABUĞU
+  // 1. FİZİKSEL ODA DUVARLARI VE MİMARİ KABUK
   d.prims.push({
     t: 'rect',
     x: -hw,
@@ -121,7 +128,7 @@ export function contentPlannerRoomPlan(
     layer: 'GEOMETRI',
   });
 
-  // Köşe Kolonları (50x50 cm)
+  // Köşe Kolonları (500x500 mm)
   const colSize = 500;
   [
     [-hw, -hl],
@@ -132,12 +139,7 @@ export function contentPlannerRoomPlan(
     d.prims.push({ t: 'rect', x: cx, y: cy, w: colSize, h: colSize, layer: 'GEOMETRI' });
   });
 
-  // 2. DUVAR PROJEKSİYON YÜZEYLERİ VE PROJEKTÖRLER
-  // Standart Kutu / U-Oda Koordinatları:
-  // idx 0: Sol Duvar (X = -hw, Z boyu boyunca)
-  // idx 1: Ön Duvar (Z = -hl, X genişliği boyunca)
-  // idx 2: Sağ Duvar (X = +hw, Z boyu boyunca)
-  // idx 3: Arka Duvar (Z = +hl, X genişliği boyunca)
+  // 2. HER YÜZEYİN PROJEKTÖR YERLEŞİMİ, KOTLARI VE ELEKTRİK BESLEME NOKTALARI
   let totalPjCount = 0;
 
   walls.forEach((w, wIdx) => {
@@ -145,16 +147,18 @@ export function contentPlannerRoomPlan(
     const stepW = singleW * 0.85; // %15 overlap
     const totalOptW = w.cols === 1 ? singleW : singleW + (w.cols - 1) * stepW;
     const throwM = w.throwDistM;
+    const mountH = (w.projMountHeightM && w.projMountHeightM > 0)
+      ? w.projMountHeightM
+      : Math.max(2.2, w.heightM - 0.2);
 
-    // Duvar Çizgisi ve Projektör Frustumları
     if (wIdx === 0) {
-      // SOL DUVAR
+      // SOL UZUN DUVAR (X = -hw)
       const wallLen = Math.min(roomL, w.widthM) * mm;
       d.prims.push({
         t: 'line',
-        x1: -hw + 20,
+        x1: -hw + 15,
         y1: -wallLen / 2,
-        x2: -hw + 20,
+        x2: -hw + 15,
         y2: wallLen / 2,
         layer: 'IMAJ',
       });
@@ -167,9 +171,36 @@ export function contentPlannerRoomPlan(
         const pjX = (-hw + throwM * mm);
         const pjZ = targetZ;
 
-        // Projektör Sembolü (500x400 mm)
-        d.prims.push({ t: 'rect', x: pjX - 200, y: pjZ - 250, w: 400, h: 500, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'text', x: pjX + 250, y: pjZ - 100, h: t * 0.65, text: `PJ-Sol.${c + 1} (D=${throwM}m)`, layer: 'METIN' });
+        // Projektör Şasisi (500x420 mm)
+        d.prims.push({ t: 'rect', x: pjX - 210, y: pjZ - 250, w: 420, h: 500, layer: 'PROJEKTOR' });
+        // Elektrik Prizi / Besleme Sembolü (Kırmızı Daire + 230V Soket)
+        d.prims.push({ t: 'circle', cx: pjX, cy: pjZ + 320, r: 90, layer: 'ELEKTRIK' });
+        d.prims.push({ t: 'line', x1: pjX - 60, y1: pjZ + 320, x2: pjX + 60, y2: pjZ + 320, layer: 'ELEKTRIK' });
+        d.prims.push({ t: 'line', x1: pjX, y1: pjZ + 260, x2: pjX, y2: pjZ + 380, layer: 'ELEKTRIK' });
+
+        // Montaj ve Elektrik Etiketi
+        d.prims.push({
+          t: 'text',
+          x: pjX + 260,
+          y: pjZ - 50,
+          h: t * 0.65,
+          text: `PJ-Sol.${c + 1} | H=${mountH.toFixed(2)}m | ${pWatt}W (230V)`,
+          layer: 'METIN',
+        });
+
+        // Duvara Dik Atım Mesafesi (Throw Distance) Ölçülendirme Çizgisi
+        d.prims.push({ t: 'line', x1: targetX, y1: pjZ, x2: pjX, y2: pjZ, layer: 'OLCU' });
+        d.prims.push({ t: 'line', x1: targetX, y1: pjZ - 120, x2: targetX, y2: pjZ + 120, layer: 'OLCU' });
+        d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
+        d.prims.push({
+          t: 'text',
+          x: (targetX + pjX) / 2,
+          y: pjZ + 80,
+          h: t * 0.6,
+          text: `D = ${throwM.toFixed(2)} m (${Math.round(throwM * mm)} mm)`,
+          layer: 'OLCU',
+          anchor: 'middle',
+        });
 
         // Işık Atım Konisi (Frustum Üst Görünüş Üçgeni)
         const halfSpanMm = (singleW * mm) / 2;
@@ -178,14 +209,14 @@ export function contentPlannerRoomPlan(
         d.prims.push({ t: 'line', x1: targetX, y1: targetZ - halfSpanMm, x2: targetX, y2: targetZ + halfSpanMm, layer: 'IMAJ' });
       }
     } else if (wIdx === 1) {
-      // ÖN DUVAR
+      // ÖN KISA DUVAR (Z = -hl)
       const wallLen = Math.min(roomW, w.widthM) * mm;
       d.prims.push({
         t: 'line',
         x1: -wallLen / 2,
-        y1: -hl + 20,
+        y1: -hl + 15,
         x2: wallLen / 2,
-        y2: -hl + 20,
+        y2: -hl + 15,
         layer: 'IMAJ',
       });
 
@@ -197,8 +228,32 @@ export function contentPlannerRoomPlan(
         const pjX = targetX;
         const pjZ = (-hl + throwM * mm);
 
-        d.prims.push({ t: 'rect', x: pjX - 250, y: pjZ - 200, w: 500, h: 400, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'text', x: pjX - 200, y: pjZ + 250, h: t * 0.65, text: `PJ-Ön.${c + 1} (D=${throwM}m)`, layer: 'METIN' });
+        d.prims.push({ t: 'rect', x: pjX - 250, y: pjZ - 210, w: 500, h: 420, layer: 'PROJEKTOR' });
+        d.prims.push({ t: 'circle', cx: pjX + 320, cy: pjZ, r: 90, layer: 'ELEKTRIK' });
+        d.prims.push({ t: 'line', x1: pjX + 260, y1: pjZ, x2: pjX + 380, y2: pjZ, layer: 'ELEKTRIK' });
+        d.prims.push({ t: 'line', x1: pjX + 320, y1: pjZ - 60, x2: pjX + 320, y2: pjZ + 60, layer: 'ELEKTRIK' });
+
+        d.prims.push({
+          t: 'text',
+          x: pjX - 240,
+          y: pjZ + 280,
+          h: t * 0.65,
+          text: `PJ-Ön.${c + 1} | H=${mountH.toFixed(2)}m | ${pWatt}W (230V)`,
+          layer: 'METIN',
+        });
+
+        // Ölçü Çizgisi
+        d.prims.push({ t: 'line', x1: pjX, y1: targetZ, x2: pjX, y2: pjZ, layer: 'OLCU' });
+        d.prims.push({ t: 'line', x1: pjX - 120, y1: targetZ, x2: pjX + 120, y2: targetZ, layer: 'OLCU' });
+        d.prims.push({ t: 'line', x1: pjX - 120, y1: pjZ, x2: pjX + 120, y2: pjZ, layer: 'OLCU' });
+        d.prims.push({
+          t: 'text',
+          x: pjX + 80,
+          y: (targetZ + pjZ) / 2,
+          h: t * 0.6,
+          text: `D = ${throwM.toFixed(2)} m`,
+          layer: 'OLCU',
+        });
 
         const halfSpanMm = (singleW * mm) / 2;
         d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX - halfSpanMm, y2: targetZ, layer: 'PROJEKTOR' });
@@ -206,13 +261,13 @@ export function contentPlannerRoomPlan(
         d.prims.push({ t: 'line', x1: targetX - halfSpanMm, y1: targetZ, x2: targetX + halfSpanMm, y2: targetZ, layer: 'IMAJ' });
       }
     } else if (wIdx === 2) {
-      // SAĞ DUVAR
+      // SAĞ UZUN DUVAR (X = +hw)
       const wallLen = Math.min(roomL, w.widthM) * mm;
       d.prims.push({
         t: 'line',
-        x1: hw - 20,
+        x1: hw - 15,
         y1: -wallLen / 2,
-        x2: hw - 20,
+        x2: hw - 15,
         y2: wallLen / 2,
         layer: 'IMAJ',
       });
@@ -225,8 +280,33 @@ export function contentPlannerRoomPlan(
         const pjX = (hw - throwM * mm);
         const pjZ = targetZ;
 
-        d.prims.push({ t: 'rect', x: pjX - 200, y: pjZ - 250, w: 400, h: 500, layer: 'PROJEKTOR' });
-        d.prims.push({ t: 'text', x: pjX - 1800, y: pjZ - 100, h: t * 0.65, text: `PJ-Sağ.${c + 1} (D=${throwM}m)`, layer: 'METIN' });
+        d.prims.push({ t: 'rect', x: pjX - 210, y: pjZ - 250, w: 420, h: 500, layer: 'PROJEKTOR' });
+        d.prims.push({ t: 'circle', cx: pjX, cy: pjZ + 320, r: 90, layer: 'ELEKTRIK' });
+        d.prims.push({ t: 'line', x1: pjX - 60, y1: pjZ + 320, x2: pjX + 60, y2: pjZ + 320, layer: 'ELEKTRIK' });
+        d.prims.push({ t: 'line', x1: pjX, y1: pjZ + 260, x2: pjX, y2: pjZ + 380, layer: 'ELEKTRIK' });
+
+        d.prims.push({
+          t: 'text',
+          x: pjX - 2000,
+          y: pjZ - 50,
+          h: t * 0.65,
+          text: `PJ-Sağ.${c + 1} | H=${mountH.toFixed(2)}m | ${pWatt}W (230V)`,
+          layer: 'METIN',
+        });
+
+        // Ölçü Çizgisi
+        d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: pjZ, layer: 'OLCU' });
+        d.prims.push({ t: 'line', x1: targetX, y1: pjZ - 120, x2: targetX, y2: pjZ + 120, layer: 'OLCU' });
+        d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
+        d.prims.push({
+          t: 'text',
+          x: (targetX + pjX) / 2,
+          y: pjZ + 80,
+          h: t * 0.6,
+          text: `D = ${throwM.toFixed(2)} m`,
+          layer: 'OLCU',
+          anchor: 'middle',
+        });
 
         const halfSpanMm = (singleW * mm) / 2;
         d.prims.push({ t: 'line', x1: pjX, y1: pjZ, x2: targetX, y2: targetZ - halfSpanMm, layer: 'PROJEKTOR' });
@@ -236,7 +316,7 @@ export function contentPlannerRoomPlan(
     }
   });
 
-  // ZEMİN PROJEKTÖRLERİ VARSA (Tavandan Aşağı Yansıtan)
+  // ZEMİN PROJEKTÖRLERİ VARSA
   if (floor) {
     const singleW = ('singleProjWidthM' in floor && floor.singleProjWidthM) ? floor.singleProjWidthM : 6.0;
     const singleH = ('singleProjHeightM' in floor && floor.singleProjHeightM) ? floor.singleProjHeightM : 3.75;
@@ -246,33 +326,44 @@ export function contentPlannerRoomPlan(
         const tz = floor.cols === 1 ? 0 : -hl + (c + 0.5) * (roomL * mm / floor.cols);
         const tx = floor.rows === 1 ? 0 : -hw + (r + 0.5) * (roomW * mm / floor.rows);
         d.prims.push({ t: 'circle', cx: tx, cy: tz, r: 280, layer: 'PROJEKTOR' });
+        d.prims.push({ t: 'circle', cx: tx, cy: tz + 380, r: 90, layer: 'ELEKTRIK' });
         d.prims.push({ t: 'rect', x: tx - (singleH * mm) / 2, y: tz - (singleW * mm) / 2, w: singleH * mm, h: singleW * mm, layer: 'IMAJ' });
-        d.prims.push({ t: 'text', x: tx + 320, y: tz - 80, h: t * 0.55, text: `Zemin-PJ.${c + 1}.${r + 1}`, layer: 'METIN' });
+        d.prims.push({
+          t: 'text',
+          x: tx + 330,
+          y: tz - 60,
+          h: t * 0.55,
+          text: `Zemin-PJ.${c + 1}.${r + 1} | D=${floor.throwDistM}m | ${pWatt}W`,
+          layer: 'METIN',
+        });
       }
     }
   }
 
-  // 3. DIŞ ÖLÇÜLENDİRME ÇİZGİLERİ (DIMENSION LINES)
+  // Kullanıcı özel adet girdiyse başlıkta göster
+  const displayQty = options.customProjectorQty ?? totalPjCount;
+
+  // 3. DIŞ ODA ÖLÇÜLENDİRME ÇİZGİLERİ (MİMARİ KOTLAR)
   const dimOffset = 1500;
-  // Yatay Oda Genişliği Ölçüsü
+  // Yatay Oda Genişliği
   d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset, x2: hw, y2: hl + dimOffset, layer: 'OLCU' });
   d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset * 0.8, x2: -hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
   d.prims.push({ t: 'line', x1: hw, y1: hl + dimOffset * 0.8, x2: hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
-  d.prims.push({ t: 'text', x: 0, y: hl + dimOffset + t * 0.4, h: t * 0.9, text: `ODA ENİ: ${roomW.toFixed(2)} m (${roomW * mm} mm)`, layer: 'OLCU', anchor: 'middle' });
+  d.prims.push({ t: 'text', x: 0, y: hl + dimOffset + t * 0.4, h: t * 0.85, text: `ODA GENİŞLİĞİ: ${roomW.toFixed(2)} m (${Math.round(roomW * mm)} mm)`, layer: 'OLCU', anchor: 'middle' });
 
-  // Dikey Oda Uzunluğu Ölçüsü
+  // Dikey Oda Uzunluğu
   d.prims.push({ t: 'line', x1: hw + dimOffset, y1: -hl, x2: hw + dimOffset, y2: hl, layer: 'OLCU' });
   d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: -hl, x2: hw + dimOffset * 1.2, y2: -hl, layer: 'OLCU' });
   d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: hl, x2: hw + dimOffset * 1.2, y2: hl, layer: 'OLCU' });
-  d.prims.push({ t: 'text', x: hw + dimOffset + t * 0.4, y: 0, h: t * 0.9, text: `ODA BOYU: ${roomL.toFixed(2)} m (${roomL * mm} mm)`, layer: 'OLCU' });
+  d.prims.push({ t: 'text', x: hw + dimOffset + t * 0.4, y: 0, h: t * 0.85, text: `ODA UZUNLUĞU: ${roomL.toFixed(2)} m (${Math.round(roomL * mm)} mm)`, layer: 'OLCU' });
 
-  // 4. BAŞLIK VE TEKNİK ANTET BİLGİSİ
+  // 4. ELEKTRİKÇİ VE MONTAJ EKİBİ İÇİN TEKNİK ANTET VE LEJANT
   d.prims.push({
     t: 'text',
     x: -hw,
     y: -hl - dimOffset - t * 0.5,
     h: t * 1.1,
-    text: `PROJEKSİYON YERLEŞİM VE ODA CAD PLANI — TOPLAM ${totalPjCount} ADET PROJEKTÖR`,
+    text: `MİMARİ PROJEKSİYON VE ELEKTRİK YERLEŞİM PLANI — TOPLAM ${displayQty} ADET PROJEKTÖR`,
     layer: 'METIN',
   });
   d.prims.push({
@@ -280,7 +371,15 @@ export function contentPlannerRoomPlan(
     x: -hw,
     y: -hl - dimOffset - t * 1.8,
     h: t * 0.75,
-    text: `Mimari Oda Ölçüleri: ${roomW}m × ${roomL}m × Tavan: ${roomH}m | AC1009 AutoCAD R12 DXF Uyumlu Çizim`,
+    text: `Mimari Ölçüler: ${roomW}m × ${roomL}m × Tavan: ${roomH}m | Birim Projektör: ${pWatt}W | Toplam Yük: ${displayQty * pWatt}W`,
+    layer: 'METIN',
+  });
+  d.prims.push({
+    t: 'text',
+    x: -hw,
+    y: -hl - dimOffset - t * 2.9,
+    h: t * 0.65,
+    text: `LEJANT: [Kırmızı Daire]: 230V 16A Priz / Besleme Linye Noktası  |  [Mavi Kutu]: Projektör Askı Noktası  |  D: Duvardan Atım Mesafesi (m)  |  H: Yerden Askı Yüksekliği (m)`,
     layer: 'METIN',
   });
 

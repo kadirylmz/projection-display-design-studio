@@ -14,42 +14,44 @@ export default function ElectricalDrawingStudio() {
   const { physicalRoom, surfaces, totalProjectors } = usePlannerStore();
   const [sheet, setSheet] = useState<Sheet>('room');
 
-  // 1 Adet Projektör İçin Referans Güç ve Model Bilgisi
+  // 1 Adet Referans Projektör Gücü (W) ve Özel Manuel Adet Girişi
   const [singleProjWatt, setSingleProjWatt] = useState<number>(450);
   const [singleProjPf, setSingleProjPf] = useState<number>(0.95);
   const [singleProjModel, setSingleProjModel] = useState<string>('Lazer Projektör (WUXGA / 4K)');
+  // Kullanıcının doğrudan bu ekrandan adet değiştirebilmesi için state:
+  const [projectorQty, setProjectorQty] = useState<number>(totalProjectors || 10);
 
   const { loads, circuits, supply } = electrical;
 
-  // İçerik Planlayıcıdaki Toplam Projektör Adedine Göre Elektrik Yükünü Otomatik Güncelle
-  const syncPlannerToElectrical = () => {
-    const projQty = Math.max(1, totalProjectors);
+  // Girilen Projektör Adedi ve Birim Güce Göre Elektrik Yüklerini & Linyeleri Otomatik Dağıt
+  const applyElectricalCalculation = (qtyToApply = projectorQty) => {
+    const qty = Math.max(1, qtyToApply);
     const existingPjLoad = loads.find(l => l.id === 'PJ-MAIN' || l.name.includes('Projektör'));
-    
+
     let updatedLoads: Load[];
     if (existingPjLoad) {
       updatedLoads = loads.map(l =>
         l.id === existingPjLoad.id
-          ? { ...l, name: singleProjModel, qty: projQty, powerW: singleProjWatt, pf: singleProjPf }
+          ? { ...l, name: singleProjModel, qty, powerW: singleProjWatt, pf: singleProjPf }
           : l
       );
     } else {
       updatedLoads = [
-        { id: 'PJ-MAIN', name: singleProjModel, qty: projQty, powerW: singleProjWatt, pf: singleProjPf },
+        { id: 'PJ-MAIN', name: singleProjModel, qty, powerW: singleProjWatt, pf: singleProjPf },
         ...loads,
       ];
     }
 
-    // 16A sigorta başına maks 6 projektör dağıtımı
-    const maxPerCircuit = 6;
-    const neededCircuits = Math.ceil(projQty / maxPerCircuit);
+    // Elektrikçi kuralı: 16A sigorta ve 3x2.5mm² linyede gerilim düşümü & güvenlik için linye başına maks 4-6 projektör (maks 2500W)
+    const maxPerCircuit = 5;
+    const neededCircuits = Math.ceil(qty / maxPerCircuit);
     const newCircuits: Circuit[] = [];
     const phases: ('L1' | 'L2' | 'L3')[] = ['L1', 'L2', 'L3'];
 
     for (let i = 0; i < neededCircuits; i++) {
       newCircuits.push({
         id: `C-PJ-${i + 1}`,
-        name: `Linye-${i + 1} (PJ Grup ${i + 1})`,
+        name: `Linye-${i + 1} (Projeksiyon ${i * maxPerCircuit + 1}–${Math.min(qty, (i + 1) * maxPerCircuit)})`,
         loadIds: ['PJ-MAIN'],
         phase: supply.phases === 3 ? phases[i % 3] : 'L1',
         cableMm2: 2.5,
@@ -72,11 +74,14 @@ export default function ElectricalDrawingStudio() {
     }
   }, [loads, circuits, supply]);
 
-  // CAD Paftası Üretimi (Doğrudan İçerik Planlayıcıdan Çekilir)
+  // CAD Paftası Üretimi (Ölçülendirmeler, Prizler ve Frustumlar ile)
   const activeDrawing = useMemo(() => {
     try {
       if (sheet === 'room') {
-        return contentPlannerRoomPlan(physicalRoom, surfaces);
+        return contentPlannerRoomPlan(physicalRoom, surfaces, {
+          customProjectorQty: projectorQty,
+          perProjectorWatt: singleProjWatt,
+        });
       }
       if (sheet === 'electrical' && elRes.r) {
         return electricalSingleLine(loads, circuits, supply, elRes.r);
@@ -86,7 +91,7 @@ export default function ElectricalDrawingStudio() {
       console.error('CAD Drawing Error:', e);
       return null;
     }
-  }, [sheet, physicalRoom, surfaces, loads, circuits, supply, elRes.r]);
+  }, [sheet, physicalRoom, surfaces, loads, circuits, supply, elRes.r, projectorQty, singleProjWatt]);
 
   const svg = useMemo(
     () => (activeDrawing ? toSvg(activeDrawing, { background: '#0b1220' }) : ''),
@@ -98,7 +103,7 @@ export default function ElectricalDrawingStudio() {
     setElectrical({
       loads: [
         ...loads,
-        { id, name: `Ek Cihaz (Amfi/Sunucu) ${loads.length + 1}`, qty: 1, powerW: 350, pf: 0.95 },
+        { id, name: `Ek Cihaz (Medya Sunucusu/Ses) ${loads.length + 1}`, qty: 1, powerW: 350, pf: 0.95 },
       ],
     });
   };
@@ -137,117 +142,132 @@ export default function ElectricalDrawingStudio() {
     setElectrical({ circuits: circuits.filter(c => c.id !== id) });
 
   return (
-    <div className="grid lg:grid-cols-[430px_1fr] gap-4 h-full">
-      {/* SOL PANEL: İÇERİK PLANLAYICIDAN GELEN ODA & PROJEKSİYON REFERANSI VE ELEKTRİK */}
+    <div className="grid lg:grid-cols-[440px_1fr] gap-4 h-full">
+      {/* SOL PANEL: PROJEKTÖR ADET & WATT GİRİŞİ, ELEKTRİK HESAPLARI VE LİNYELER */}
       <div className="space-y-3 p-3 rounded border border-slate-700 bg-slate-900 overflow-auto text-xs" style={{ maxHeight: '88vh' }}>
-        <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-          <div>
-            <h2 className="text-sm font-bold text-sky-400">CAD (DXF/AutoCAD) & Projeksiyon Planı</h2>
-            <p className="text-[11px] text-slate-400">
-              İçerik Planlayıcı mimari oda ölçüleri ve ışık atımları ile tam entegre.
-            </p>
-          </div>
+        <div className="border-b border-slate-700 pb-2">
+          <h2 className="text-sm font-bold text-sky-400">CAD (AutoCAD DXF) & Elektrik Şeması</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Elektrikçinin şantiyede tek bakışta anlayacağı net mesafeler, askı kotları ve 230V priz yerleşimi.
+          </p>
         </div>
 
-        {/* 1. İÇERİK PLANLAYICIDAN OTOMATİK GELEN BİLGİLER */}
-        <div className="p-2.5 rounded bg-slate-950 border border-sky-800/80 space-y-2">
+        {/* 1. DOĞRUDAN PROJEKTÖR ADET VE WATT GİRİŞİ (TEK KARTTA HEPSİ) */}
+        <div className="p-3 rounded bg-slate-950 border border-emerald-700/80 space-y-2.5">
           <div className="flex justify-between items-center border-b border-slate-800 pb-1">
-            <b className="text-sky-300">🏛️ İçerik Planlayıcı Oda & Cihaz Verileri:</b>
-            <span className="px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-700 font-bold font-mono text-[10px]">
-              {totalProjectors} Projektör
+            <span className="font-bold text-emerald-300 uppercase tracking-wide text-[11px]">
+              ⚡ Projektör Adet & Güç Girişi
+            </span>
+            <button
+              onClick={() => {
+                setProjectorQty(totalProjectors);
+                applyElectricalCalculation(totalProjectors);
+              }}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 font-semibold text-[10px] border border-slate-700"
+              title="İçerik planlayıcıdaki yüzey toplamını al"
+            >
+              Planlayıcıdan Al ({totalProjectors} Adet)
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label>
+              Projektör Adedi (Adet)
+              <input
+                className="inp font-bold text-amber-300 text-sm"
+                type="number"
+                min="1"
+                max="100"
+                value={projectorQty}
+                onChange={e => {
+                  const val = Math.max(1, Math.round(+e.target.value));
+                  setProjectorQty(val);
+                }}
+              />
+            </label>
+
+            <label>
+              1 Adet Projektör Gücü (W)
+              <input
+                className="inp font-bold text-emerald-300 text-sm"
+                type="number"
+                step="25"
+                min="50"
+                max="5000"
+                value={singleProjWatt}
+                onChange={e => setSingleProjWatt(Math.max(50, +e.target.value))}
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label>
+              Projektör Cihaz Modeli
+              <input
+                className="inp font-medium text-slate-200"
+                value={singleProjModel}
+                onChange={e => setSingleProjModel(e.target.value)}
+              />
+            </label>
+            <label>
+              Güç Faktörü (cos φ)
+              <input
+                className="inp font-semibold text-slate-300"
+                type="number"
+                step="0.01"
+                min="0.5"
+                max="1"
+                value={singleProjPf}
+                onChange={e => setSingleProjPf(Math.min(1, Math.max(0.5, +e.target.value)))}
+              />
+            </label>
+          </div>
+
+          <div className="p-2 rounded bg-slate-900 border border-emerald-900/60 font-mono text-[11px] space-y-1">
+            <div className="flex justify-between items-center text-slate-200">
+              <span>Toplam Projeksiyon Gücü:</span>
+              <b className="text-amber-300 text-xs">
+                {projectorQty} Adet × {singleProjWatt}W = {projectorQty * singleProjWatt} W ({(projectorQty * singleProjWatt / 1000).toFixed(2)} kW)
+              </b>
+            </div>
+            <div className="flex justify-between items-center text-slate-400 text-[10px]">
+              <span>Gerekli Linye Sayısı:</span>
+              <b className="text-emerald-400">
+                {Math.ceil(projectorQty / 5)} Adet Linye (16A Sigorta, 3x2.5mm² Kablo)
+              </b>
+            </div>
+          </div>
+
+          <button
+            onClick={() => applyElectricalCalculation(projectorQty)}
+            className="w-full py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs shadow flex justify-center items-center gap-1.5"
+          >
+            <span>⚡ Çizim ve Elektrik Linyelerini Güncelle</span>
+          </button>
+        </div>
+
+        {/* 2. İÇERİK PLANLAYICIDAN GELEN ODA ÖLÇÜLERİ */}
+        <div className="p-2.5 rounded bg-slate-950 border border-sky-800/80 space-y-1.5">
+          <div className="flex justify-between items-center border-b border-slate-800 pb-1">
+            <b className="text-sky-300">🏛️ Mimari Oda Kabuğu (Çizim Alanı):</b>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {physicalRoom.widthM}m × {physicalRoom.lengthM}m × Tavan: {physicalRoom.heightM}m
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-1.5 font-mono text-center">
-            <div className="p-1 rounded bg-slate-900 border border-slate-800">
-              <span className="text-[9.5px] text-slate-400 block">Oda Eni (X)</span>
-              <b className="text-amber-300 text-xs">{physicalRoom.widthM} m</b>
-            </div>
-            <div className="p-1 rounded bg-slate-900 border border-slate-800">
-              <span className="text-[9.5px] text-slate-400 block">Oda Boyu (Z)</span>
-              <b className="text-amber-300 text-xs">{physicalRoom.lengthM} m</b>
-            </div>
-            <div className="p-1 rounded bg-slate-900 border border-slate-800">
-              <span className="text-[9.5px] text-slate-400 block">Tavan (H)</span>
-              <b className="text-amber-300 text-xs">{physicalRoom.heightM} m</b>
-            </div>
-          </div>
-
-          <div className="text-[10px] text-slate-300 space-y-0.5 pt-1">
+          <div className="text-[10px] text-slate-300 space-y-0.5 font-mono">
             {surfaces.map(s => (
               <div key={s.id} className="flex justify-between border-b border-slate-900 pb-0.5">
                 <span>{s.name}:</span>
-                <b className="text-emerald-400 font-mono">
-                  {s.cols * s.rows} PJ (@D={s.throwDistM}m, TR {s.throwRatio}:1)
-                </b>
+                <span className="text-emerald-400">
+                  {s.cols * s.rows} PJ (@D={s.throwDistM}m, Lens {s.throwRatio}:1)
+                </span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* 2. 1 ADET REFERANS PROJEKTÖR GİRİŞİ (TEK GİRİŞLE TÜM HESAPLAMA) */}
-        <div className="p-2.5 rounded bg-slate-950 border border-emerald-800/80 space-y-2">
-          <div className="flex justify-between items-center border-b border-slate-800 pb-1">
-            <b className="text-emerald-300">⚡ 1 Adet Referans Projektör Güç Girişi:</b>
-            <button
-              onClick={syncPlannerToElectrical}
-              className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[10px] shadow"
-              title="İçerik planlayıcıdaki toplam projektör sayısına göre tüm yük ve linye dağılımını otomatik uygula"
-            >
-              Otomatik Uygula ({totalProjectors} PJ)
-            </button>
-          </div>
-
-          <div className="space-y-1.5">
-            <label>
-              Projektör Cihaz Modeli
-              <input
-                className="inp font-semibold text-white"
-                value={singleProjModel}
-                onChange={e => setSingleProjModel(e.target.value)}
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <label>
-                1 Adet Güç Tüketimi (W)
-                <input
-                  className="inp font-bold text-amber-300"
-                  type="number"
-                  step="10"
-                  min="50"
-                  value={singleProjWatt}
-                  onChange={e => setSingleProjWatt(Math.max(50, +e.target.value))}
-                />
-              </label>
-              <label>
-                Güç Faktörü (cos φ)
-                <input
-                  className="inp font-bold text-emerald-300"
-                  type="number"
-                  step="0.01"
-                  min="0.5"
-                  max="1"
-                  value={singleProjPf}
-                  onChange={e => setSingleProjPf(Math.min(1, Math.max(0.5, +e.target.value)))}
-                />
-              </label>
-            </div>
-
-            <div className="p-2 rounded bg-slate-900 border border-emerald-900/60 font-mono text-[10.5px] space-y-0.5">
-              <div className="flex justify-between text-slate-300">
-                <span>Toplam Projeksiyon Gücü:</span>
-                <b className="text-amber-300">{totalProjectors} × {singleProjWatt}W = {totalProjectors * singleProjWatt} W</b>
-              </div>
-              <div className="flex justify-between text-slate-400 text-[10px]">
-                <span>Tavsiye Edilen Dağıtım:</span>
-                <span>~{Math.ceil(totalProjectors / 6)} Linye (16A Sigorta, 3x2.5mm²)</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 3. ŞEBEKE BESLEME PARAMETRELERİ */}
+        {/* 3. ŞEBEKE BESLEMESİ */}
         <div className="space-y-1 border-t border-slate-700 pt-2">
           <b className="text-slate-200">Elektrik Şebekesi & Besleme:</b>
           <div className="grid grid-cols-3 gap-2">
@@ -286,7 +306,7 @@ export default function ElectricalDrawingStudio() {
           </div>
         </div>
 
-        {/* 4. YÜKLER VE LİNYELER LİSTESİ */}
+        {/* 4. YÜKLER VE LİNYELER */}
         <div className="space-y-2 border-t border-slate-700 pt-2">
           <div className="flex justify-between items-center">
             <b className="text-slate-200">Yük Listesi ({loads.length})</b>
@@ -320,7 +340,7 @@ export default function ElectricalDrawingStudio() {
 
         <div className="space-y-2 border-t border-slate-700 pt-2">
           <div className="flex justify-between items-center">
-            <b className="text-slate-200">Linyeler ({circuits.length})</b>
+            <b className="text-slate-200">Linyeler / Devreler ({circuits.length})</b>
             <button className="px-2 py-0.5 bg-sky-700 rounded text-white text-[10px]" onClick={addCircuit}>
               + Linye
             </button>
@@ -336,14 +356,14 @@ export default function ElectricalDrawingStudio() {
               </div>
               <div className="grid grid-cols-2 gap-1 text-[10px]">
                 <label>Kablo (mm²)<input className="inp !mt-0" type="number" step="0.5" value={c.cableMm2 ?? 2.5} onChange={e => updCircuit(c.id, { cableMm2: +e.target.value || 2.5 })} /></label>
-                <label>Mesafe (m)<input className="inp !mt-0" type="number" value={c.lengthM ?? 20} onChange={e => updCircuit(c.id, { lengthM: +e.target.value || 20 })} /></label>
+                <label>Mesafe (m)<input className="inp !mt-0" type="number" value={c.lengthM ?? 25} onChange={e => updCircuit(c.id, { lengthM: +e.target.value || 25 })} /></label>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* SAĞ PANEL: CAD ÇİZİM ÖNİZLEME, TEKNİK PAFTA BUTONLARI VE DXF İNDİRME */}
+      {/* SAĞ PANEL: CAD ÇİZİM ÖNİZLEME, ÖLÇÜ KOTLARI VE ELEKTRİKÇİ ÇIKTILARI */}
       <div className="space-y-3 min-w-0 flex flex-col">
         {elRes.err && <p className="text-red-400 text-sm">⚠ {elRes.err}</p>}
         {elRes.r && (
@@ -367,7 +387,7 @@ export default function ElectricalDrawingStudio() {
           </div>
         )}
 
-        {/* CAD PAFTASI SEÇİM BARI (Sadece İlgili 2 Pafta: Oda & Projeksiyon Planı ve Elektrik Tek Hat) */}
+        {/* CAD PAFTASI SEÇİM BARI */}
         <div className="flex flex-wrap gap-2 items-center text-xs p-2.5 rounded bg-slate-900 border border-slate-800">
           <span className="font-bold text-slate-300">CAD Paftası:</span>
           <button
