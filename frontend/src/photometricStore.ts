@@ -66,8 +66,8 @@ const DEFAULT_PROJECTORS: Projector3DConfig[] = [
     model: '12K ANSI Laser',
     ansiLumens: 10000,
     efficiency: 0.90,
-    pos: [2.5, 2.0, 4.5],
-    target: [2.5, 2.0, 0],
+    pos: [-2.0, 2.0, 4.5],
+    target: [-2.0, 2.0, 0],
     yawDeg: 0,
     pitchDeg: 0,
     rollDeg: 0,
@@ -85,8 +85,8 @@ const DEFAULT_PROJECTORS: Projector3DConfig[] = [
     model: '12K ANSI Laser',
     ansiLumens: 10000,
     efficiency: 0.90,
-    pos: [5.5, 2.0, 4.5],
-    target: [5.5, 2.0, 0],
+    pos: [2.0, 2.0, 4.5],
+    target: [2.0, 2.0, 0],
     yawDeg: 0,
     pitchDeg: 0,
     rollDeg: 0,
@@ -169,6 +169,9 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
     const ovRatioX = surface.overlapX ? surface.overlapX / 100 : 0.15;
     const ovRatioY = surface.overlapY ? surface.overlapY / 100 : 0.10;
 
+    const halfW = wM / 2;
+    const halfH = hM / 2;
+
     const singleW = wM / Math.max(1, (cols - (cols - 1) * ovRatioX));
     const stepW = cols > 1 ? singleW * (1 - ovRatioX) : singleW;
     const singleH = hM / Math.max(1, (rows - (rows - 1) * ovRatioY));
@@ -180,10 +183,29 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
         const id = `proj-surf-${surface.id}-${projCounter}`;
         const name = `${surface.name} - PJ ${projCounter} (${c + 1}.${r + 1})`;
         
-        // Merkez koordinatları
-        const posX = +(c * stepW + singleW / 2).toFixed(2);
-        const posY = +(r * stepH + singleH / 2).toFixed(2);
-        const posZ = +throwDist.toFixed(2);
+        // Merkez koordinatları: Yüzeyin sol kenarından sağına (-halfW to +halfW) tam ortalanmış
+        const posX = +(-halfW + c * stepW + singleW / 2).toFixed(2);
+        
+        let posY = +(r * stepH + singleH / 2).toFixed(2);
+        let posZ = +throwDist.toFixed(2);
+        let targetX = posX;
+        let targetY = posY;
+        let targetZ = 0;
+
+        if (geom === 'floor') {
+          // Zemin: X yatay (-halfW to +halfW), Z derinlik (-halfH to +halfH), Projektör tavanda (+throwDist)
+          const localZ = +(-halfH + r * stepH + singleH / 2).toFixed(2);
+          posY = +throwDist.toFixed(2);
+          posZ = localZ;
+          targetY = 0;
+          targetZ = localZ;
+        } else if (geom === 'ceiling') {
+          const localZ = +(-halfH + r * stepH + singleH / 2).toFixed(2);
+          posY = 0;
+          posZ = localZ;
+          targetY = hM;
+          targetZ = localZ;
+        }
 
         newProjectors.push({
           id,
@@ -192,7 +214,7 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
           ansiLumens: lm,
           efficiency: 0.90,
           pos: [posX, posY, posZ],
-          target: [posX, posY, 0],
+          target: [targetX, targetY, targetZ],
           yawDeg: 0,
           pitchDeg: 0,
           rollDeg: 0,
@@ -239,8 +261,8 @@ export const usePhotometricStore = create<PhotometricStoreState>((set, get) => (
       model: '12K ANSI Laser',
       ansiLumens: state.defaultProjectorLumens || 10000,
       efficiency: 0.90,
-      pos: [+(newIdx * 1.5).toFixed(2), +(state.screenH / 2).toFixed(2), 4.5],
-      target: [+(newIdx * 1.5).toFixed(2), +(state.screenH / 2).toFixed(2), 0],
+      pos: [0, +(state.screenH / 2).toFixed(2), 4.5],
+      target: [0, +(state.screenH / 2).toFixed(2), 0],
       yawDeg: 0,
       pitchDeg: 0,
       rollDeg: 0,

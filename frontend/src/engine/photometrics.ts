@@ -238,14 +238,16 @@ export function getCandelaFromApproximate(
   thetaRad: number,
   cornerUniformity: number
 ): number {
-  if (thetaRad > halfAngleRad * 1.05) return 0; // Işık konisi dışı
+  // 16:9 / 16:10 formatındaki projeksiyonun köşegen yayılımını kapsayan açı eşiği
+  const maxAngle = halfAngleRad * 1.35;
+  if (thetaRad > maxAngle) return 0; // Işık konisi dışı
 
   const effectiveLumens = ansiLumens * Math.max(0.1, efficiency);
   // Katı açı yaklaşımı: Ω = 2π(1 - cos(θ_half))
   const solidAngle = Math.max(0.05, 2 * Math.PI * (1 - Math.cos(halfAngleRad)));
   const centerCandela = effectiveLumens / solidAngle;
 
-  const rRatio = Math.min(1.0, thetaRad / Math.max(0.001, halfAngleRad));
+  const rRatio = Math.min(1.0, thetaRad / Math.max(0.001, maxAngle));
   const u = Math.max(0.4, Math.min(1.0, cornerUniformity));
 
   // Kuadratik lens düşüş modeli: f(r) = 1 - (1 - u) · r²
@@ -414,8 +416,8 @@ export function simulatePhotometricLux(
 
         let luxContribution = 0;
 
-        // Işın projektörün atım konisinin sınırları içinde mi?
-        if (thetaRad <= halfAngleRad * 1.08 && cosAlpha > 0.001) {
+        // Işın projektörün atım konisinin sınırları içinde mi? (16:9 / 16:10 format köşegen açısı 1.35x)
+        if (thetaRad <= halfAngleRad * 1.35 && cosAlpha > 0.001) {
           let candela = 0;
 
           if (pj.photometricSource === 'ies' && pj.iesData) {

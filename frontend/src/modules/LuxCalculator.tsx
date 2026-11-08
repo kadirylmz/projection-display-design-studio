@@ -134,130 +134,145 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     );
   }, [surfaceConfig, projectors, cols, rows, blendOverlap]);
 
-  // Canvas Çizimi (Heatmap)
+  // Canvas Çizimi (Heatmap) - activeTab değiştiğinde ve simülasyon güncellendiğinde anında çizilir
   useEffect(() => {
-    const canvas = heatmapCanvasRef.current;
-    if (!canvas || !simResult) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (activeTab !== 'heatmap') return;
 
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
+    const render = () => {
+      const canvas = heatmapCanvasRef.current;
+      if (!canvas || !simResult) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    const cellW = w / simResult.cols;
-    const cellH = h / simResult.rows;
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
 
-    const min = simResult.minLux;
-    const max = simResult.maxLux;
+      const cellW = w / simResult.cols;
+      const cellH = h / simResult.rows;
 
-    // Grid Hücrelerini Çiz
-    for (let r = 0; r < simResult.rows; r++) {
-      for (let c = 0; c < simResult.cols; c++) {
-        const idx = r * simResult.cols + c;
-        const cell = simResult.grid[idx];
-        if (!cell) continue;
+      const min = simResult.minLux;
+      const max = simResult.maxLux;
 
-        const [red, green, blue] = getLuxColorRGB(cell.totalLux, min, max);
-        ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
-        ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
+      // Grid Hücrelerini Çiz
+      for (let r = 0; r < simResult.rows; r++) {
+        for (let c = 0; c < simResult.cols; c++) {
+          const idx = r * simResult.cols + c;
+          const cell = simResult.grid[idx];
+          if (!cell) continue;
+
+          const [red, green, blue] = getLuxColorRGB(cell.totalLux, min, max);
+          ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+          ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
+        }
       }
-    }
 
-    // Iso Contour çizgileri
-    if (showIsoContours && max > min) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.lineWidth = 1;
-      const numSteps = 5;
-      for (let s = 1; s < numSteps; s++) {
-        const threshold = min + (s / numSteps) * (max - min);
-        ctx.fillStyle = 'rgba(255,255,255,0.7)';
-        ctx.font = '9px monospace';
-        ctx.fillText(`${Math.round(threshold)} lx`, 8, (s / numSteps) * h);
+      // Iso Contour çizgileri
+      if (showIsoContours && max > min) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        const numSteps = 5;
+        for (let s = 1; s < numSteps; s++) {
+          const threshold = min + (s / numSteps) * (max - min);
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.font = '9px monospace';
+          ctx.fillText(`${Math.round(threshold)} lx`, 8, (s / numSteps) * h);
+        }
       }
-    }
 
-    // Hotspot & Darkspot Göstergeleri
-    if (showHotDarkSpots && simResult.hotspot && simResult.darkspot) {
-      // Hotspot (Maksimum)
-      const hotNormX = simResult.hotspot.xM / surfaceConfig.widthM;
-      const hotNormY = simResult.hotspot.yM / surfaceConfig.heightM;
-      const hx = hotNormX * w;
-      const hy = hotNormY * h;
+      // Hotspot & Darkspot Göstergeleri
+      if (showHotDarkSpots && simResult.hotspot && simResult.darkspot) {
+        // Hotspot (Maksimum)
+        const hotNormX = simResult.hotspot.xM / surfaceConfig.widthM;
+        const hotNormY = simResult.hotspot.yM / surfaceConfig.heightM;
+        const hx = hotNormX * w;
+        const hy = hotNormY * h;
 
-      ctx.save();
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(hx, hy, 8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = '#ef4444';
-      ctx.beginPath();
-      ctx.arc(hx, hy, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px sans-serif';
-      ctx.shadowColor = '#000000';
-      ctx.shadowBlur = 4;
-      ctx.fillText(`HOT ${Math.round(simResult.hotspot.lux)} lx`, hx + 10, hy + 4);
-      ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(hx, hy, 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(hx, hy, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.shadowColor = '#000000';
+        ctx.shadowBlur = 4;
+        ctx.fillText(`HOT ${Math.round(simResult.hotspot.lux)} lx`, hx + 10, hy + 4);
+        ctx.restore();
 
-      // Darkspot (Minimum)
-      const darkNormX = simResult.darkspot.xM / surfaceConfig.widthM;
-      const darkNormY = simResult.darkspot.yM / surfaceConfig.heightM;
-      const dx = darkNormX * w;
-      const dy = darkNormY * h;
+        // Darkspot (Minimum)
+        const darkNormX = simResult.darkspot.xM / surfaceConfig.widthM;
+        const darkNormY = simResult.darkspot.yM / surfaceConfig.heightM;
+        const dx = darkNormX * w;
+        const dy = darkNormY * h;
 
-      ctx.save();
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(dx, dy, 8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = '#38bdf8';
-      ctx.beginPath();
-      ctx.arc(dx, dy, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px sans-serif';
-      ctx.shadowColor = '#000000';
-      ctx.shadowBlur = 4;
-      ctx.fillText(`MIN ${Math.round(simResult.darkspot.lux)} lx`, dx + 10, dy + 4);
-      ctx.restore();
-    }
-  }, [simResult, showHotDarkSpots, showIsoContours, surfaceConfig.widthM, surfaceConfig.heightM]);
+        ctx.save();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.shadowColor = '#000000';
+        ctx.shadowBlur = 4;
+        ctx.fillText(`MIN ${Math.round(simResult.darkspot.lux)} lx`, dx + 10, dy + 4);
+        ctx.restore();
+      }
+    };
+
+    render();
+    const animId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animId);
+  }, [simResult, activeTab, showHotDarkSpots, showIsoContours, surfaceConfig.widthM, surfaceConfig.heightM]);
 
   // Canvas Çizimi (Overlap Görselleştirmesi)
   useEffect(() => {
     if (activeTab !== 'overlap') return;
-    const canvas = overlapCanvasRef.current;
-    if (!canvas || !simResult) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
+    const renderOverlap = () => {
+      const canvas = overlapCanvasRef.current;
+      if (!canvas || !simResult) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    const cellW = w / simResult.cols;
-    const cellH = h / simResult.rows;
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
 
-    for (let r = 0; r < simResult.rows; r++) {
-      for (let c = 0; c < simResult.cols; c++) {
-        const idx = r * simResult.cols + c;
-        const cell = simResult.grid[idx];
-        if (!cell) continue;
+      const cellW = w / simResult.cols;
+      const cellH = h / simResult.rows;
 
-        if (cell.overlapCount > 1) {
-          ctx.fillStyle = 'rgba(217, 70, 239, 0.75)';
-        } else if (cell.overlapCount === 1) {
-          ctx.fillStyle = 'rgba(14, 165, 233, 0.45)';
-        } else {
-          ctx.fillStyle = '#0f172a';
+      for (let r = 0; r < simResult.rows; r++) {
+        for (let c = 0; c < simResult.cols; c++) {
+          const idx = r * simResult.cols + c;
+          const cell = simResult.grid[idx];
+          if (!cell) continue;
+
+          if (cell.overlapCount > 1) {
+            ctx.fillStyle = 'rgba(217, 70, 239, 0.75)';
+          } else if (cell.overlapCount === 1) {
+            ctx.fillStyle = 'rgba(14, 165, 233, 0.45)';
+          } else {
+            ctx.fillStyle = '#0f172a';
+          }
+          ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
         }
-        ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
       }
-    }
+    };
+
+    renderOverlap();
+    const animId = requestAnimationFrame(renderOverlap);
+    return () => cancelAnimationFrame(animId);
   }, [simResult, activeTab]);
 
   // Canvas Üzerinde Fare Hareketi (Hover Tooltip)
