@@ -484,6 +484,7 @@ function ProjectorFrustum3D({
   detailText,
   showLabels,
   showShadowLabels = true,
+  showShadows = true,
   showSurfaceFill = true,
   isCurvedSurface = false,
   isSelected = false,
@@ -504,6 +505,7 @@ function ProjectorFrustum3D({
   detailText: string;
   showLabels: boolean;
   showShadowLabels?: boolean;
+  showShadows?: boolean;
   showSurfaceFill?: boolean;
   isCurvedSurface?: boolean;
   isSelected?: boolean;
@@ -921,7 +923,7 @@ function ProjectorFrustum3D({
       )}
 
       {/* DUVARDA OLUŞAN CİHAZ (IŞIK YOLUNA GİREN DİĞER PROJEKTÖR) GÖLGESİ */}
-      {deviceShadows.map(sh => (
+      {showShadows && deviceShadows.map(sh => (
         <group key={`devsh-${sh.deviceId}`}>
           <group position={sh.pos} quaternion={sh.quat}>
             {/* Projektör Şasi Koyu Silüet Gölgesi */}
@@ -998,7 +1000,7 @@ function ProjectorFrustum3D({
       ))}
 
       {/* 1. DUVARDA OLUŞAN GERÇEK ZAMANLI İNSAN GÖLGELERİ (Silüet + Kırmızı Uyarı + Gölge Işını) */}
-      {wallShadows.map(sh => (
+      {showShadows && wallShadows.map(sh => (
         <group key={`wsh-${sh.actorId}`}>
           <group position={sh.pos} quaternion={sh.quat}>
             {/* Gölge Gövde Silüeti */}
@@ -1056,7 +1058,7 @@ function ProjectorFrustum3D({
       ))}
 
       {/* 2. ZEMİNDE OLUŞAN UZUN PROJEKTÖR GÖLGELERİ */}
-      {floorShadows.map(fsh => (
+      {showShadows && floorShadows.map(fsh => (
         <group key={`fsh-${fsh.actorId}`} position={fsh.pos} rotation={[0, fsh.rotY, 0]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]}>
             <planeGeometry args={[fsh.width, fsh.len]} />
@@ -1125,6 +1127,7 @@ export default function PlannerRoom3D({
   onUpdateSurface,
 }: PlannerRoom3DProps) {
   const [showBeams, setShowBeams] = useState(true);
+  const [showShadows, setShowShadows] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [showRoomLabels, setShowRoomLabels] = useState(true);
   const [showSurfaceLabels, setShowSurfaceLabels] = useState(true);
@@ -1795,7 +1798,16 @@ export default function PlannerRoom3D({
           </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showBeams} onChange={e => setShowBeams(e.target.checked)} />
-            <span>Işık Konileri & Gölgeler</span>
+            <span>🔦 Işık Konileri</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer text-amber-300 font-medium px-2 py-0.5 rounded bg-slate-950 border border-slate-800 hover:border-amber-500/50 transition" title="Duvarda ve zeminde oluşan karşı projektör ve insan gölgelerini açıp kapatır">
+            <input
+              type="checkbox"
+              checked={showShadows}
+              onChange={e => setShowShadows(e.target.checked)}
+              className="accent-amber-500 rounded"
+            />
+            <span>🌑 Gölgeler {showShadows ? '(Açık)' : '(Kapalı)'}</span>
           </label>
           <div className="flex flex-wrap items-center gap-2 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[10.5px]">
             <span className="font-bold text-amber-300">✍️ Yazılar:</span>
@@ -2086,7 +2098,7 @@ export default function PlannerRoom3D({
         onPointerLeave={handleStopDragHuman}
       >
         <Canvas
-          shadows
+          shadows={showShadows}
           camera={{ position: [18, 14, 22], fov: 48, near: 0.1, far: 500 }}
           gl={{ preserveDrawingBuffer: true, antialias: true }}
           dpr={[1, 2]}
@@ -2101,7 +2113,7 @@ export default function PlannerRoom3D({
           <directionalLight
             position={[8, 22, 10]}
             intensity={1.0}
-            castShadow
+            castShadow={showShadows}
             shadow-mapSize-width={1024}
             shadow-mapSize-height={1024}
           />
@@ -2162,6 +2174,7 @@ export default function PlannerRoom3D({
                 showLabels={showSurfaceLabels}
                 showProjLabels={showProjLabels}
                 showHumanLabels={showHumanLabels}
+                showShadows={showShadows}
                 onSelect={onSelect}
               />
             ) : (
@@ -2177,6 +2190,7 @@ export default function PlannerRoom3D({
                 showLabels={showSurfaceLabels}
                 showProjLabels={showProjLabels}
                 showHumanLabels={showHumanLabels}
+                showShadows={showShadows}
                 onSelect={onSelect}
                 selectedPjId={selectedPj?.id || selectedPjId}
                 onSelectProjector={setSelectedPjId}
@@ -2228,6 +2242,7 @@ function RoomBoxScene({
   showLabels,
   showProjLabels = true,
   showHumanLabels = true,
+  showShadows = true,
   onSelect,
   selectedPjId,
   onSelectProjector,
@@ -2245,6 +2260,7 @@ function RoomBoxScene({
   showLabels: boolean;
   showProjLabels?: boolean;
   showHumanLabels?: boolean;
+  showShadows?: boolean;
   onSelect: (id: string) => void;
   selectedPjId?: string | null;
   onSelectProjector?: (id: string) => void;
@@ -2494,6 +2510,7 @@ function RoomBoxScene({
                 detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
                 showLabels={showProjLabels}
                 showShadowLabels={showHumanLabels}
+                showShadows={showShadows}
                 showSurfaceFill={true}
                 isSelected={item.id === selectedPjId}
                 onSelectProjector={() => {
@@ -2578,6 +2595,7 @@ function RoomBoxScene({
                     label={`Zemin PJ ${c + 1}.${r + 1}`}
                     detailText={`${singleW}m×${singleH}m`}
                     showLabels={showLabels}
+                    showShadows={showShadows}
                     showSurfaceFill={true}
                     isSelected={floorPjId === selectedPjId}
                     onSelectProjector={() => {
@@ -2607,6 +2625,7 @@ function SpecialGeometryScene({
   showLabels,
   showProjLabels = true,
   showHumanLabels = true,
+  showShadows = true,
   onSelect,
 }: {
   surf: CalculatedSurface;
@@ -2616,6 +2635,7 @@ function SpecialGeometryScene({
   showLabels: boolean;
   showProjLabels?: boolean;
   showHumanLabels?: boolean;
+  showShadows?: boolean;
   onSelect: (id: string) => void;
 }) {
   const r = surf.radiusM;
@@ -2747,6 +2767,7 @@ function SpecialGeometryScene({
                     label={`PJ #${idx + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
                     detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
                     showLabels={showLabels}
+                    showShadows={showShadows}
                     showSurfaceFill={true}
                   />
                 );
@@ -2935,6 +2956,7 @@ function SpecialGeometryScene({
                     label={`Zemin PJ ${cIdx + 1}.${rIdx + 1}`}
                     detailText={`${singleW}m×${singleH}m`}
                     showLabels={showLabels}
+                    showShadows={showShadows}
                     showSurfaceFill={true}
                   />
                 );
