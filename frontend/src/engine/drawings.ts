@@ -89,6 +89,9 @@ export interface ContentPlannerRoomPlanOptions {
   showElectricalLabels?: boolean;    // Kırmızı 230V priz sembolleri ve watt etiketleri
   showFrustums?: boolean;            // Işık atım konileri (üçgen ışın çizgileri)
   showTitleBlock?: boolean;          // Sağ alt teknik antet ve lejant
+  labelShiftX?: number;              // Projektör & Elektrik etiketlerini X yönünde kaydırma (mm)
+  labelShiftY?: number;              // Projektör & Elektrik etiketlerini Y yönünde kaydırma (mm)
+  dimShiftY?: number;                // Atım mesafesi ölçü yazılarını kaydırma (mm)
 }
 
 /**
@@ -113,6 +116,9 @@ export function contentPlannerRoomPlan(
     showElectricalLabels = true,
     showFrustums = true,
     showTitleBlock = true,
+    labelShiftX = 0,
+    labelShiftY = 0,
+    dimShiftY = 0,
   } = options;
 
   const walls = surfaces.filter(s => s.type === 'wall');
@@ -203,8 +209,8 @@ export function contentPlannerRoomPlan(
           if (showElectricalLabels) parts.push(`${pWatt}W (230V)`);
           d.prims.push({
             t: 'text',
-            x: pjX + 260,
-            y: pjZ - 50,
+            x: pjX + 260 + labelShiftX,
+            y: pjZ - 50 + labelShiftY,
             h: t * 0.65,
             text: parts.join(' | '),
             layer: 'METIN',
@@ -219,7 +225,7 @@ export function contentPlannerRoomPlan(
           d.prims.push({
             t: 'text',
             x: (targetX + pjX) / 2,
-            y: pjZ + 80,
+            y: pjZ + 80 + dimShiftY,
             h: t * 0.6,
             text: `D = ${throwM.toFixed(2)} m (${Math.round(throwM * mm)} mm)`,
             layer: 'OLCU',
@@ -269,8 +275,8 @@ export function contentPlannerRoomPlan(
           if (showElectricalLabels) parts.push(`${pWatt}W (230V)`);
           d.prims.push({
             t: 'text',
-            x: pjX - 240,
-            y: pjZ + 280,
+            x: pjX - 240 + labelShiftX,
+            y: pjZ + 280 + labelShiftY,
             h: t * 0.65,
             text: parts.join(' | '),
             layer: 'METIN',
@@ -285,7 +291,7 @@ export function contentPlannerRoomPlan(
           d.prims.push({
             t: 'text',
             x: pjX + 80,
-            y: (targetZ + pjZ) / 2,
+            y: (targetZ + pjZ) / 2 + dimShiftY,
             h: t * 0.6,
             text: `D = ${throwM.toFixed(2)} m`,
             layer: 'OLCU',
@@ -333,8 +339,8 @@ export function contentPlannerRoomPlan(
           if (showElectricalLabels) parts.push(`${pWatt}W (230V)`);
           d.prims.push({
             t: 'text',
-            x: pjX - 2000,
-            y: pjZ - 50,
+            x: pjX - 2000 + labelShiftX,
+            y: pjZ - 50 + labelShiftY,
             h: t * 0.65,
             text: parts.join(' | '),
             layer: 'METIN',
@@ -349,7 +355,7 @@ export function contentPlannerRoomPlan(
           d.prims.push({
             t: 'text',
             x: (targetX + pjX) / 2,
-            y: pjZ + 80,
+            y: pjZ + 80 + dimShiftY,
             h: t * 0.6,
             text: `D = ${throwM.toFixed(2)} m`,
             layer: 'OLCU',
@@ -389,8 +395,8 @@ export function contentPlannerRoomPlan(
           if (showElectricalLabels) parts.push(`${pWatt}W`);
           d.prims.push({
             t: 'text',
-            x: tx + 330,
-            y: tz - 60,
+            x: tx + 330 + labelShiftX,
+            y: tz - 60 + labelShiftY,
             h: t * 0.55,
             text: parts.join(' | '),
             layer: 'METIN',
@@ -457,6 +463,8 @@ export interface ElectricalSingleLineOptions {
   showCableSpecs?: boolean;      // Kablo kesiti ve mesafesi (3x2.5mm² / 25m / dU)
   showPhaseAndCurrent?: boolean; // Faz ve linye akımı (L1 | Ib: 9.8A)
   showLoadDetails?: boolean;     // Yük kutusu ve watt detayları
+  columnSpacing?: number;        // Linye sütunları arası ferahlık mesafesi (varsayılan 145mm)
+  textShiftY?: number;           // Metin dikey kaydırma mesafesi
 }
 
 /**
@@ -481,8 +489,9 @@ export function electricalSingleLine(
     showLoadDetails = true,
   } = options;
 
-  // Ferah kolon genişliği: 145 birim (yazıların ve kutuların üst üste binmesini önler)
-  const sp = 145;
+  // Ferah kolon genişliği: varsayılan 145 birim (ayarlanabilir)
+  const sp = Math.max(90, options.columnSpacing || 145);
+  const dy = options.textShiftY || 0;
   const h = 4.2;
   const n = Math.max(1, circuits.length);
   const busY = 0;
@@ -543,7 +552,7 @@ export function electricalSingleLine(
     d.prims.push({
       t: 'text',
       x,
-      y: -48,
+      y: -48 + dy,
       h: h * 1.15,
       text: c.name,
       layer: 'METIN',
@@ -560,7 +569,7 @@ export function electricalSingleLine(
       d.prims.push({
         t: 'text',
         x,
-        y: -64,
+        y: -64 + dy,
         h: h * 0.95,
         text: cableSize,
         layer: 'METIN',
@@ -569,7 +578,7 @@ export function electricalSingleLine(
       d.prims.push({
         t: 'text',
         x,
-        y: -74,
+        y: -74 + dy,
         h: h * 0.88,
         text: `Mesafe: ${c.lengthM ?? 25} m | Gerilim Düşümü: %${cr?.dropPct?.toFixed(2) ?? '0.4'}`,
         layer: 'METIN',
@@ -582,7 +591,7 @@ export function electricalSingleLine(
       d.prims.push({
         t: 'text',
         x,
-        y: -86,
+        y: -86 + dy,
         h: h * 0.92,
         text: `Faz: ${c.phase} | Akım Ib: ${cr?.ibA.toFixed(1) ?? '-'} A`,
         layer: 'METIN',

@@ -40,6 +40,14 @@ export default function ElectricalDrawingStudio() {
   const [elShowPhaseCurrent, setElShowPhaseCurrent] = useState<boolean>(true);
   const [elShowLoadDetails, setElShowLoadDetails] = useState<boolean>(true);
 
+  // 3) Metin ve Etiket Konumlarını Kaydırma (Üst Üste Binmeyi Önleme):
+  const [roomLabelShiftX, setRoomLabelShiftX] = useState<number>(0);
+  const [roomLabelShiftY, setRoomLabelShiftY] = useState<number>(0);
+  const [roomDimShiftY, setRoomDimShiftY] = useState<number>(0);
+
+  const [elColumnSpacing, setElColumnSpacing] = useState<number>(145);
+  const [elTextShiftY, setElTextShiftY] = useState<number>(0);
+
   const { loads, circuits, supply } = electrical;
 
   // Sigorta seçimine göre kablo kesiti ve standart akım taşıma kapasitesi (Iz)
@@ -211,6 +219,9 @@ export default function ElectricalDrawingStudio() {
           showElectricalLabels: roomShowElLabels,
           showFrustums: roomShowFrustums,
           showTitleBlock: roomShowTitleBlock,
+          labelShiftX: roomLabelShiftX,
+          labelShiftY: roomLabelShiftY,
+          dimShiftY: roomDimShiftY,
         });
       }
       if (sheet === 'electrical' && elRes.r) {
@@ -220,6 +231,8 @@ export default function ElectricalDrawingStudio() {
           showCableSpecs: elShowCableSpecs,
           showPhaseAndCurrent: elShowPhaseCurrent,
           showLoadDetails: elShowLoadDetails,
+          columnSpacing: elColumnSpacing,
+          textShiftY: elTextShiftY,
         });
       }
       return null;
@@ -243,11 +256,16 @@ export default function ElectricalDrawingStudio() {
     roomShowElLabels,
     roomShowFrustums,
     roomShowTitleBlock,
+    roomLabelShiftX,
+    roomLabelShiftY,
+    roomDimShiftY,
     elShowBusSpecs,
     elShowBreakerSpecs,
     elShowCableSpecs,
     elShowPhaseCurrent,
     elShowLoadDetails,
+    elColumnSpacing,
+    elTextShiftY,
   ]);
 
   const svg = useMemo(
@@ -744,6 +762,147 @@ export default function ElectricalDrawingStudio() {
               Sade Görünüm
             </button>
           </div>
+        </div>
+
+        {/* YAZILARI VE ETİKETLERİ KAYDIRMA / ARALIK AYARLAMA KONTROL BARI */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-900/95 px-3 py-1.5 rounded border border-sky-900/60 text-[11px] shadow">
+          <div className="flex items-center gap-1.5 font-bold text-sky-400">
+            <span>↔️ Yazıları Kaydır:</span>
+          </div>
+
+          {sheet === 'room' ? (
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span className="text-slate-400 text-[10px]">Yatay (X):</span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setRoomLabelShiftX(v => v - 100)}
+                  title="Metinleri 100mm sola kaydır"
+                >
+                  ◀
+                </button>
+                <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
+                  {roomLabelShiftX > 0 ? `+${roomLabelShiftX}` : roomLabelShiftX} mm
+                </span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setRoomLabelShiftX(v => v + 100)}
+                  title="Metinleri 100mm sağa kaydır"
+                >
+                  ▶
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span className="text-slate-400 text-[10px]">Dikey (Y):</span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setRoomLabelShiftY(v => v - 50)}
+                  title="Metinleri 50mm yukarı kaydır"
+                >
+                  ▲
+                </button>
+                <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
+                  {roomLabelShiftY > 0 ? `+${roomLabelShiftY}` : roomLabelShiftY} mm
+                </span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setRoomLabelShiftY(v => v + 50)}
+                  title="Metinleri 50mm aşağı kaydır"
+                >
+                  ▼
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span className="text-slate-400 text-[10px]">Ölçü (D) Yazısı:</span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setRoomDimShiftY(v => v - 50)}
+                  title="Atım ölçü metnini yukarı kaydır"
+                >
+                  ▲
+                </button>
+                <span className="font-mono text-sky-300 w-14 text-center text-[10.5px]">
+                  {roomDimShiftY > 0 ? `+${roomDimShiftY}` : roomDimShiftY} mm
+                </span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setRoomDimShiftY(v => v + 50)}
+                  title="Atım ölçü metnini aşağı kaydır"
+                >
+                  ▼
+                </button>
+              </div>
+
+              {(roomLabelShiftX !== 0 || roomLabelShiftY !== 0 || roomDimShiftY !== 0) && (
+                <button
+                  className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
+                  onClick={() => {
+                    setRoomLabelShiftX(0);
+                    setRoomLabelShiftY(0);
+                    setRoomDimShiftY(0);
+                  }}
+                >
+                  ⟲ Sıfırla
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span className="text-slate-400 text-[10px]">Linye Sütun Genişliği (Aralık):</span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setElColumnSpacing(v => Math.max(90, v - 15))}
+                  title="Linyeleri birbirine yaklaştır"
+                >
+                  ◀ Daralt
+                </button>
+                <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
+                  {elColumnSpacing} mm
+                </span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setElColumnSpacing(v => Math.min(260, v + 15))}
+                  title="Linyeleri birbirinden uzaklaştırarak yazıları ferahlat"
+                >
+                  Genişlet ▶
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span className="text-slate-400 text-[10px]">Metin Dikey Boşluğu:</span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setElTextShiftY(v => v - 5)}
+                >
+                  ▲
+                </button>
+                <span className="font-mono text-sky-300 w-10 text-center text-[10.5px]">
+                  {elTextShiftY}
+                </span>
+                <button
+                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
+                  onClick={() => setElTextShiftY(v => v + 5)}
+                >
+                  ▼
+                </button>
+              </div>
+
+              {(elColumnSpacing !== 145 || elTextShiftY !== 0) && (
+                <button
+                  className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
+                  onClick={() => {
+                    setElColumnSpacing(145);
+                    setElTextShiftY(0);
+                  }}
+                >
+                  ⟲ Standart Aralığa Dön
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* CAD ÇİZİM GÖRSELLEŞTİRME PENCERESİ */}

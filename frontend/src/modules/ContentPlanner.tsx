@@ -1,4 +1,4 @@
-import { useState, useMemo, lazy, Suspense, useEffect } from 'react';
+import { useState, useMemo, lazy, Suspense, useEffect, useRef } from 'react';
 import { pctToPx } from '../engine/multiproj';
 import { LengthUnit, round } from '../engine/units';
 import { download } from '../util';
@@ -53,6 +53,8 @@ export interface SurfaceItem {
   projMountHeightM?: number; // Projektörün yerden montaj yüksekliği (m) (örn: 4.1m)
   projShiftXM?: number;      // Projektör dizisini ve görüntüyü yatay sağa/sola kaydırma (m) (- sol, + sağ)
   projShiftYM?: number;      // Görüntü hedef merkezini dikey yukarı/aşağı kaydırma (m)
+  textOffsetX?: number;      // 2B şemada yazı etiketlerini X yönünde kaydırma (px)
+  textOffsetY?: number;      // 2B şemada yazı etiketlerini Y yönünde kaydırma (px)
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -292,6 +294,55 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
+
+  // 2B Açınım Çiziminde Yazı Gruplarını Mouse ile Serbestçe Sürükleme / Kaydırma
+  const [draggingTextSurfaceId, setDraggingTextSurfaceId] = useState<string | null>(null);
+  const dragTextStartRef = useRef<{ startX: number; startY: number; initOffsetX: number; initOffsetY: number; scale: number } | null>(null);
+
+  const handleStartDragText = (surfaceId: string, e: React.PointerEvent, scaledWidthPx: number, vbW: number) => {
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    const surf = surfaces.find(s => s.id === surfaceId);
+    const scale = vbW / Math.max(1, scaledWidthPx);
+    setDraggingTextSurfaceId(surfaceId);
+    dragTextStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initOffsetX: surf?.textOffsetX || 0,
+      initOffsetY: surf?.textOffsetY || 0,
+      scale,
+    };
+  };
+
+  const handlePointerMoveText = (e: React.PointerEvent) => {
+    if (!draggingTextSurfaceId || !dragTextStartRef.current) return;
+    const { startX, startY, initOffsetX, initOffsetY, scale } = dragTextStartRef.current;
+    const dx = (e.clientX - startX) * scale;
+    const dy = (e.clientY - startY) * scale;
+    setSurfaces(prev =>
+      prev.map(s =>
+        s.id === draggingTextSurfaceId
+          ? { ...s, textOffsetX: Math.round(initOffsetX + dx), textOffsetY: Math.round(initOffsetY + dy) }
+          : s
+      )
+    );
+  };
+
+  const handlePointerUpText = (e: React.PointerEvent) => {
+    if (draggingTextSurfaceId) {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      setDraggingTextSurfaceId(null);
+      dragTextStartRef.current = null;
+    }
+  };
+
+  const resetAllTextOffsets = () => {
+    setSurfaces(prev => prev.map(s => ({ ...s, textOffsetX: 0, textOffsetY: 0 })));
+  };
 
   // Değişiklikleri CAD & Elektrik modülünün okuduğu ortak plannerStore'a yaz
   useEffect(() => {
@@ -2116,6 +2167,18 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     <input type="checkbox" checked={showSlices} onChange={e => setShowSlices(e.target.checked)} />
                     <span>Projektörler</span>
                   </label>
+                  <span className="text-[10px] text-sky-400 font-medium px-1.5 py-0.5 rounded bg-sky-950/70 border border-sky-850" title="Yazıların üzerine tıklayıp basılı tutarak dilediğiniz konuma kaydırabilirsiniz">
+                    ✋ Yazıları Sürükle
+                  </span>
+                  {surfaces.some(s => (s.textOffsetX && s.textOffsetX !== 0) || (s.textOffsetY && s.textOffsetY !== 0)) && (
+                    <button
+                      onClick={resetAllTextOffsets}
+                      className="px-1.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
+                      title="Kaydırılan tüm yazıları varsayılan merkez konumuna döndürür"
+                    >
+                      ⟲ Sıfırla
+                    </button>
+                  )}
                 </div>
               )}
               <button
@@ -2245,6 +2308,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         width={scaledWidthPx}
                         height={scaledHeightPx}
                         className="select-none drop-shadow block"
+                        onPointerMove={handlePointerMoveText}
+                        onPointerUp={handlePointerUpText}
                       >
                     <defs>
                       {calculation.surfaces.map(s => (
@@ -2504,8 +2569,20 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               </g>
                             )}
 
-                            {/* Merkez Bilgi Yazıları */}
-                            <g transform={isVerticalBox ? `rotate(-90 ${cx} ${cy})` : undefined}>
+                            {/* Merkez Bilgi Yazıları - Mouse ile Serbestçe Sürüklenebilir & Kaydırılabilir */}
+                            <g
+                              transform={`${isVerticalBox ? `rotate(-90 ${cx} ${cy}) ` : ''}translate(${s.textOffsetX || 0}, ${s.textOffsetY || 0})`}
+                              className="cursor-move group"
+                              onPointerDown={e => handleStartDragText(s.id, e, scaledWidthPx, vbW)}
+                            >
+                              <rect
+                                x={cx - Math.max(160, surfFont * 12)}
+                                y={cy - surfFont * 2.2}
+                                width={Math.max(320, surfFont * 24)}
+                                height={surfFont * 4.4}
+                                fill="transparent"
+                                className="group-hover:stroke-sky-400/50 group-hover:stroke-2 group-hover:stroke-dasharray-4 rounded"
+                              />
                               {show2dName && (
                                 <text
                                   x={cx}
