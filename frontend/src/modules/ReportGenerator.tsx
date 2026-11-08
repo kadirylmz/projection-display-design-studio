@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { buildReportHtml, DEFAULT_SECTIONS, ReportLang, ReportSectionFlags } from '../engine/report';
 import { useProjectStore } from '../projectStore';
 import { usePlannerStore } from '../plannerStore';
@@ -19,6 +19,13 @@ export default function ReportGenerator() {
     led: false, // Projeksiyon mekanlarında varsayılan olarak kapalı; kullanıcı dilediğinde kutucuktan tek tıkla ekler/çıkarır
   }));
   const [presentation, setPresentation] = useState(false);
+  const [archRotation, setArchRotation] = useState<0 | 90 | 180 | 270>((meta.archPlanRotation as (0 | 90 | 180 | 270)) || 0);
+
+  useEffect(() => {
+    if (meta.archPlanRotation !== undefined && meta.archPlanRotation !== archRotation) {
+      setArchRotation(meta.archPlanRotation);
+    }
+  }, [meta.archPlanRotation]);
 
   // 1. PROJEKSİYONLAR ARASI MONTAJ, EKSEN VE MESAFE MATRİSİ HESABI
   const ipSurfaces = useMemo(() => {
@@ -55,12 +62,12 @@ export default function ReportGenerator() {
           showTitleBlock: true,
         }
       );
-      return toSvg(planDrawing, { background: '#090e17' });
+      return toSvg(planDrawing, { background: '#090e17', rotationDeg: archRotation });
     } catch (err) {
       console.warn('Room plan SVG generation fallback:', err);
       return undefined;
     }
-  }, [physicalRoom, ipSurfaces]);
+  }, [physicalRoom, ipSurfaces, archRotation]);
 
   const snapshots = useMemo(() => {
     return (meta.room3dSnapshots && meta.room3dSnapshots.length > 0)
@@ -296,10 +303,34 @@ export default function ReportGenerator() {
             ['equipmentList', '11. Ekipman Listesi (BOM)'],
             ['assumptionsAndWarnings', '12. Şantiye Standartları & Onay İmzaları'],
           ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
-            <label key={k} className="flex items-center gap-2 cursor-pointer hover:text-white transition">
-              <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
-              <span className={k === 'led' ? (sections.led ? 'text-amber-300 font-bold' : 'text-slate-400') : ''}>{label}</span>
-            </label>
+            <div key={k} className="space-y-1">
+              <label className="flex items-center gap-2 cursor-pointer hover:text-white transition">
+                <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
+                <span className={k === 'led' ? (sections.led ? 'text-amber-300 font-bold' : 'text-slate-400') : ''}>{label}</span>
+              </label>
+              {k === 'architecturalPlan' && sections.architecturalPlan && (
+                <div className="flex items-center gap-1.5 ml-6 py-1 px-2 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-300">
+                  <span className="text-slate-400 font-medium">🔄 Pafta Yönü:</span>
+                  {([0, 90, 180, 270] as const).map(deg => (
+                    <button
+                      key={deg}
+                      type="button"
+                      onClick={() => {
+                        setArchRotation(deg);
+                        setMeta({ archPlanRotation: deg });
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
+                        archRotation === deg
+                          ? 'bg-sky-500 text-white shadow'
+                          : 'bg-slate-800 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {deg}°
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </div>
 

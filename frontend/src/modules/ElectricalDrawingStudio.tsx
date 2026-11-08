@@ -10,9 +10,10 @@ import { download, svgToPng } from '../util';
 type Sheet = 'room' | 'electrical';
 
 export default function ElectricalDrawingStudio() {
-  const { electrical, setElectrical } = useProjectStore();
+  const { electrical, setElectrical, meta, setMeta } = useProjectStore();
   const { physicalRoom, surfaces, totalProjectors } = usePlannerStore();
   const [sheet, setSheet] = useState<Sheet>('room');
+  const [cadRotation, setCadRotation] = useState<0 | 90 | 180 | 270>((meta.archPlanRotation as (0 | 90 | 180 | 270)) || 0);
 
   // 1 Adet Referans Projektör Gücü (W) ve Özel Manuel Adet Girişi
   const [singleProjWatt, setSingleProjWatt] = useState<number>(450);
@@ -284,8 +285,8 @@ export default function ElectricalDrawingStudio() {
   ]);
 
   const svg = useMemo(
-    () => (activeDrawing ? toSvg(activeDrawing, { background: '#0b1220' }) : ''),
-    [activeDrawing]
+    () => (activeDrawing ? toSvg(activeDrawing, { background: '#0b1220', rotationDeg: cadRotation }) : ''),
+    [activeDrawing, cadRotation]
   );
 
   const addLoad = () => {
@@ -650,6 +651,26 @@ export default function ElectricalDrawingStudio() {
 
           {activeDrawing && (
             <div className="ml-auto flex items-center gap-1.5">
+              <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs">
+                <span className="text-slate-400 font-semibold text-[11px]">🔄 Çevir:</span>
+                {([0, 90, 180, 270] as const).map(deg => (
+                  <button
+                    key={deg}
+                    type="button"
+                    onClick={() => {
+                      setCadRotation(deg);
+                      setMeta({ archPlanRotation: deg });
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition ${
+                      cadRotation === deg
+                        ? 'bg-sky-500 text-white shadow'
+                        : 'bg-slate-800 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {deg}°
+                  </button>
+                ))}
+              </div>
               <button
                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded font-bold text-white shadow flex items-center gap-1"
                 onClick={() => download(`${sheet === 'room' ? 'oda-projeksiyon-plani' : 'elektrik-semasi'}.dxf`, toDxf(activeDrawing), 'application/dxf')}
@@ -664,7 +685,7 @@ export default function ElectricalDrawingStudio() {
               </button>
               <button
                 className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200"
-                onClick={async () => download(`${sheet}-cizim.png`, await svgToPng(toSvg(activeDrawing, { pixelWidth: 2600 }), 2600))}
+                onClick={async () => download(`${sheet}-cizim.png`, await svgToPng(toSvg(activeDrawing, { pixelWidth: 2600, rotationDeg: cadRotation }), 2600))}
               >
                 PNG
               </button>
@@ -672,7 +693,7 @@ export default function ElectricalDrawingStudio() {
                 className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded font-bold text-white shadow flex items-center gap-1 transition"
                 onClick={async () => {
                   try {
-                    const blob = await svgToPng(toSvg(activeDrawing, { pixelWidth: 2600, background: '#0b1220' }), 2600);
+                    const blob = await svgToPng(toSvg(activeDrawing, { pixelWidth: 2600, background: '#0b1220', rotationDeg: cadRotation }), 2600);
                     const reader = new FileReader();
                     reader.onload = () => {
                       const dataUrl = reader.result as string;
@@ -681,6 +702,7 @@ export default function ElectricalDrawingStudio() {
                         ? prevMeta.room3dSnapshots
                         : (prevMeta.room3dSnapshotUrl ? [prevMeta.room3dSnapshotUrl] : []);
                       useProjectStore.getState().setMeta({
+                        archPlanRotation: cadRotation,
                         room3dSnapshotUrl: dataUrl,
                         room3dSnapshots: [...existing, dataUrl],
                       });
@@ -692,7 +714,7 @@ export default function ElectricalDrawingStudio() {
                     console.error('CAD çizimini rapora aktarma hatası:', err);
                   }
                 }}
-                title="Mevcut CAD Çizimini Müşteri Raporu Görsel Simülasyon Galerisine Ekler"
+                title="Mevcut CAD Çizimini Müşteri Raporu Görsel Simülasyon Galerisine Ekler (Seçilen Çevirme Açısıyla)"
               >
                 <span>{reportCadToast ? '✓ Rapora Eklendi!' : '📋 Çizimi Rapora Ekle'}</span>
               </button>

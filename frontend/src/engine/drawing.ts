@@ -41,7 +41,7 @@ export function bounds(d: Drawing) {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
-export function toSvg(d: Drawing, o: { pixelWidth?: number; background?: string } = {}): string {
+export function toSvg(d: Drawing, o: { pixelWidth?: number; background?: string; rotationDeg?: 0 | 90 | 180 | 270 | number } = {}): string {
   const b = bounds(d), m = Math.max(b.x1 - b.x0, b.y1 - b.y0) * 0.04;
   const W = b.x1 - b.x0 + 2 * m, H = b.y1 - b.y0 + 2 * m;
   const sx = (x: number) => +(x - b.x0 + m).toFixed(4), sy = (y: number) => +(b.y1 - y + m).toFixed(4);
@@ -56,8 +56,28 @@ export function toSvg(d: Drawing, o: { pixelWidth?: number; background?: string 
     const halo = (p.h * 0.18).toFixed(2);
     return `<text x="${sx(p.x)}" y="${sy(p.y)}" font-size="${p.h}" fill="${c}" paint-order="stroke fill" stroke="${bg}" stroke-width="${halo}" stroke-linejoin="round" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600" text-anchor="${p.anchor ?? 'start'}">${esc(p.text)}</text>`;
   });
-  const size = o.pixelWidth ? ` width="${o.pixelWidth}" height="${Math.round(o.pixelWidth * H / W)}"` : '';
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${+W.toFixed(4)} ${+H.toFixed(4)}"${size}><rect width="100%" height="100%" fill="${bg}"/>${out.join('')}</svg>`;
+
+  const rot = ((o.rotationDeg ?? 0) % 360 + 360) % 360;
+  let finalW = W;
+  let finalH = H;
+  let content = out.join('');
+
+  if (rot === 90) {
+    finalW = H;
+    finalH = W;
+    content = `<g transform="translate(${+finalW.toFixed(4)}, 0) rotate(90)">${content}</g>`;
+  } else if (rot === 180) {
+    finalW = W;
+    finalH = H;
+    content = `<g transform="translate(${+finalW.toFixed(4)}, ${+finalH.toFixed(4)}) rotate(180)">${content}</g>`;
+  } else if (rot === 270) {
+    finalW = H;
+    finalH = W;
+    content = `<g transform="translate(0, ${+finalH.toFixed(4)}) rotate(270)">${content}</g>`;
+  }
+
+  const size = o.pixelWidth ? ` width="${o.pixelWidth}" height="${Math.round(o.pixelWidth * finalH / finalW)}"` : '';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${+finalW.toFixed(4)} ${+finalH.toFixed(4)}"${size}><rect width="100%" height="100%" fill="${bg}"/>${content}</svg>`;
 }
 
 const dxfText = (s: string) => [...s].map(ch => ch.charCodeAt(0) > 126 ? `\\U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` : ch).join('');

@@ -59,6 +59,7 @@ export interface ReportProjectMeta {
   notes?: string;
   room3dSnapshotUrl?: string;
   room3dSnapshots?: string[];
+  archPlanRotation?: 0 | 90 | 180 | 270;
 }
 
 export interface ReportPayload {

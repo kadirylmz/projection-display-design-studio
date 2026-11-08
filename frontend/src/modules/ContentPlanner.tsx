@@ -298,6 +298,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [show2dDensity, setShow2dDensity] = useState<boolean>(true);
   const [show2dDimensions, setShow2dDimensions] = useState<boolean>(true);
   const [zoomPct, setZoomPct] = useState<number>(100);
+  const [canvasRotation, setCanvasRotation] = useState<0 | 90 | 180 | 270>(0);
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
@@ -375,8 +376,20 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const handlePointerMoveText = (e: React.PointerEvent) => {
     if (!draggingText || !dragTextStartRef.current) return;
     const { startX, startY, initX, initY, scale } = dragTextStartRef.current;
-    const dx = (e.clientX - startX) * scale;
-    const dy = (e.clientY - startY) * scale;
+    const rawDx = (e.clientX - startX) * scale;
+    const rawDy = (e.clientY - startY) * scale;
+    let dx = rawDx;
+    let dy = rawDy;
+    if (canvasRotation === 90) {
+      dx = rawDy;
+      dy = -rawDx;
+    } else if (canvasRotation === 180) {
+      dx = -rawDx;
+      dy = -rawDy;
+    } else if (canvasRotation === 270) {
+      dx = -rawDy;
+      dy = rawDx;
+    }
     const { surfaceId, key } = draggingText;
     setSurfaces(prev =>
       prev.map(s => {
@@ -2318,6 +2331,23 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     >
                       Sığdır (%100)
                     </button>
+                    <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+                      <span className="text-slate-400 text-[10px]">🔄 Çevir:</span>
+                      {([0, 90, 180, 270] as const).map(deg => (
+                        <button
+                          key={deg}
+                          type="button"
+                          onClick={() => setCanvasRotation(deg)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition ${
+                            canvasRotation === deg
+                              ? 'bg-sky-500 text-white shadow'
+                              : 'bg-slate-800 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          {deg}°
+                        </button>
+                      ))}
+                    </div>
                   </>
                 )}
                 <button
@@ -2362,14 +2392,26 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   const padTop = 90;
                   const padRight = 110;
                   const padBottom = 90;
-                  const vbW = calculation.totalCanvasW + padLeft + padRight;
-                  const vbH = calculation.totalCanvasH + padTop + padBottom;
-                  const baseFont = Math.max(32, Math.round(Math.max(calculation.totalCanvasW, calculation.totalCanvasH) / 44));
+                  const rawVbW = calculation.totalCanvasW + padLeft + padRight;
+                  const rawVbH = calculation.totalCanvasH + padTop + padBottom;
+                  const isRotated90or270 = canvasRotation === 90 || canvasRotation === 270;
+                  const vbW = isRotated90or270 ? rawVbH : rawVbW;
+                  const vbH = isRotated90or270 ? rawVbW : rawVbH;
+                  const baseFont = Math.max(32, Math.round(Math.max(rawVbW, rawVbH) / 44));
                   const aspect = vbW / Math.max(1, vbH);
                   const baseHeightPx = isExpandedView ? 760 : 500;
                   const baseWidthPx = Math.min(isExpandedView ? 1500 : 940, Math.round(baseHeightPx * aspect));
                   const scaledWidthPx = Math.round((baseWidthPx * zoomPct) / 100);
                   const scaledHeightPx = Math.round((scaledWidthPx / aspect));
+
+                  let transformGroup = '';
+                  if (canvasRotation === 90) {
+                    transformGroup = `translate(${rawVbH}, 0) rotate(90)`;
+                  } else if (canvasRotation === 180) {
+                    transformGroup = `translate(${rawVbW}, ${rawVbH}) rotate(180)`;
+                  } else if (canvasRotation === 270) {
+                    transformGroup = `translate(0, ${rawVbW}) rotate(270)`;
+                  }
 
                   return (
                     <div className="m-auto shrink-0" style={{ width: `${scaledWidthPx}px`, height: `${scaledHeightPx}px` }}>
@@ -2382,7 +2424,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         onPointerMove={handlePointerMoveText}
                         onPointerUp={handlePointerUpText}
                       >
-                    <defs>
+                        <rect width="100%" height="100%" fill="#060911" />
+                        <g transform={transformGroup || undefined}>
+                          <defs>
                       {calculation.surfaces.map(s => (
                         <clipPath key={`clip-${s.id}`} id={`clip-${s.id}`}>
                           <rect
@@ -2772,6 +2816,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         </g>
                       );
                     })}
+                        </g>
                       </svg>
                     </div>
                   );
