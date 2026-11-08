@@ -91,7 +91,12 @@ export interface ContentPlannerRoomPlanOptions {
   showTitleBlock?: boolean;          // Sağ alt teknik antet ve lejant
   labelShiftX?: number;              // Projektör & Elektrik etiketlerini X yönünde kaydırma (mm)
   labelShiftY?: number;              // Projektör & Elektrik etiketlerini Y yönünde kaydırma (mm)
-  dimShiftY?: number;                // Atım mesafesi ölçü yazılarını kaydırma (mm)
+  dimShiftX?: number;                // Atım mesafesi ölçü yazılarını X yönünde kaydırma (mm)
+  dimShiftY?: number;                // Atım mesafesi ölçü yazılarını Y yönünde kaydırma (mm)
+  roomDimShiftX?: number;            // Dış oda ölçü yazılarını X yönünde kaydırma (mm)
+  roomDimShiftY?: number;            // Dış oda ölçü yazılarını Y yönünde kaydırma (mm)
+  titleBlockShiftX?: number;         // Antet X kaydırma (mm)
+  titleBlockShiftY?: number;         // Antet Y kaydırma (mm)
 }
 
 /**
@@ -118,7 +123,12 @@ export function contentPlannerRoomPlan(
     showTitleBlock = true,
     labelShiftX = 0,
     labelShiftY = 0,
+    dimShiftX = 0,
     dimShiftY = 0,
+    roomDimShiftX = 0,
+    roomDimShiftY = 0,
+    titleBlockShiftX = 0,
+    titleBlockShiftY = 0,
   } = options;
 
   const walls = surfaces.filter(s => s.type === 'wall');
@@ -224,7 +234,7 @@ export function contentPlannerRoomPlan(
           d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
           d.prims.push({
             t: 'text',
-            x: (targetX + pjX) / 2,
+            x: (targetX + pjX) / 2 + dimShiftX,
             y: pjZ + 80 + dimShiftY,
             h: t * 0.6,
             text: `D = ${throwM.toFixed(2)} m (${Math.round(throwM * mm)} mm)`,
@@ -290,7 +300,7 @@ export function contentPlannerRoomPlan(
           d.prims.push({ t: 'line', x1: pjX - 120, y1: pjZ, x2: pjX + 120, y2: pjZ, layer: 'OLCU' });
           d.prims.push({
             t: 'text',
-            x: pjX + 80,
+            x: pjX + 80 + dimShiftX,
             y: (targetZ + pjZ) / 2 + dimShiftY,
             h: t * 0.6,
             text: `D = ${throwM.toFixed(2)} m`,
@@ -354,7 +364,7 @@ export function contentPlannerRoomPlan(
           d.prims.push({ t: 'line', x1: pjX, y1: pjZ - 120, x2: pjX, y2: pjZ + 120, layer: 'OLCU' });
           d.prims.push({
             t: 'text',
-            x: (targetX + pjX) / 2,
+            x: (targetX + pjX) / 2 + dimShiftX,
             y: pjZ + 80 + dimShiftY,
             h: t * 0.6,
             text: `D = ${throwM.toFixed(2)} m`,
@@ -416,13 +426,13 @@ export function contentPlannerRoomPlan(
     d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset, x2: hw, y2: hl + dimOffset, layer: 'OLCU' });
     d.prims.push({ t: 'line', x1: -hw, y1: hl + dimOffset * 0.8, x2: -hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
     d.prims.push({ t: 'line', x1: hw, y1: hl + dimOffset * 0.8, x2: hw, y2: hl + dimOffset * 1.2, layer: 'OLCU' });
-    d.prims.push({ t: 'text', x: 0, y: hl + dimOffset + t * 0.4, h: t * 0.85, text: `ODA GENİŞLİĞİ: ${roomW.toFixed(2)} m (${Math.round(roomW * mm)} mm)`, layer: 'OLCU', anchor: 'middle' });
+    d.prims.push({ t: 'text', x: 0 + roomDimShiftX, y: hl + dimOffset + t * 0.4 + roomDimShiftY, h: t * 0.85, text: `ODA GENİŞLİĞİ: ${roomW.toFixed(2)} m (${Math.round(roomW * mm)} mm)`, layer: 'OLCU', anchor: 'middle' });
 
     // Dikey Oda Uzunluğu
     d.prims.push({ t: 'line', x1: hw + dimOffset, y1: -hl, x2: hw + dimOffset, y2: hl, layer: 'OLCU' });
     d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: -hl, x2: hw + dimOffset * 1.2, y2: -hl, layer: 'OLCU' });
     d.prims.push({ t: 'line', x1: hw + dimOffset * 0.8, y1: hl, x2: hw + dimOffset * 1.2, y2: hl, layer: 'OLCU' });
-    d.prims.push({ t: 'text', x: hw + dimOffset + t * 0.4, y: 0, h: t * 0.85, text: `ODA UZUNLUĞU: ${roomL.toFixed(2)} m (${Math.round(roomL * mm)} mm)`, layer: 'OLCU' });
+    d.prims.push({ t: 'text', x: hw + dimOffset + t * 0.4 + roomDimShiftX, y: 0 + roomDimShiftY, h: t * 0.85, text: `ODA UZUNLUĞU: ${roomL.toFixed(2)} m (${Math.round(roomL * mm)} mm)`, layer: 'OLCU' });
   }
 
   // 4. ELEKTRİKÇİ VE MONTAJ EKİBİ İÇİN TEKNİK ANTET VE LEJANT
@@ -430,24 +440,24 @@ export function contentPlannerRoomPlan(
     const dimOffset = 1500;
     d.prims.push({
       t: 'text',
-      x: -hw,
-      y: -hl - dimOffset - t * 0.5,
+      x: -hw + titleBlockShiftX,
+      y: -hl - dimOffset - t * 0.5 + titleBlockShiftY,
       h: t * 1.1,
       text: `MİMARİ PROJEKSİYON VE ELEKTRİK YERLEŞİM PLANI — TOPLAM ${displayQty} ADET PROJEKTÖR`,
       layer: 'METIN',
     });
     d.prims.push({
       t: 'text',
-      x: -hw,
-      y: -hl - dimOffset - t * 1.8,
+      x: -hw + titleBlockShiftX,
+      y: -hl - dimOffset - t * 1.8 + titleBlockShiftY,
       h: t * 0.75,
       text: `Mimari Ölçüler: ${roomW}m × ${roomL}m × Tavan: ${roomH}m | Birim Projektör: ${pWatt}W | Toplam Yük: ${displayQty * pWatt}W`,
       layer: 'METIN',
     });
     d.prims.push({
       t: 'text',
-      x: -hw,
-      y: -hl - dimOffset - t * 2.9,
+      x: -hw + titleBlockShiftX,
+      y: -hl - dimOffset - t * 2.9 + titleBlockShiftY,
       h: t * 0.65,
       text: `LEJANT: [Kırmızı Daire]: 230V 16A Priz / Besleme Linye Noktası  |  [Mavi Kutu]: Projektör Askı Noktası  |  D: Duvardan Atım Mesafesi (m)  |  H: Yerden Askı Yüksekliği (m)`,
       layer: 'METIN',

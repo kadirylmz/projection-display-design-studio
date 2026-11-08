@@ -242,10 +242,6 @@ export function buildReportHtml(p: ReportPayload): string {
           <div class="metric-val text-rose">${totalIbA.toFixed(1)} A</div>
           <div class="metric-lbl">Toplam İşletme Akımı (Ib)</div>
         </div>
-        <div class="metric-card">
-          <div class="metric-val text-emerald">${mainBrkA} A (${phases === 3 ? '3 Faz 400V' : '1 Faz 230V'})</div>
-          <div class="metric-lbl">Şebeke & Ana Kesici</div>
-        </div>
         ${roomDims ? `
         <div class="metric-card">
           <div class="metric-val text-purple">${roomDims.widthM}m × ${roomDims.lengthM}m × ${roomDims.heightM}m</div>
@@ -264,15 +260,11 @@ export function buildReportHtml(p: ReportPayload): string {
           <tr>
             <th>Toplam Çekilen Akım (I<sub>b</sub>)</th>
             <td><b class="text-rose">${totalIbA.toFixed(1)} Amper</b> ${phases === 3 ? `(Faz Başına Ortalama ~${(totalIbA / 3).toFixed(1)} A)` : '(@230V AC)'}</td>
-            <th>Şebeke Gerilimi & Frekans</th>
-            <td>${phases === 3 ? '3 Faz 400V AC (3P+N+PE) 50 Hz' : '1 Faz 230V AC (1P+N+PE) 50 Hz'}</td>
-          </tr>
-          <tr>
-            <th>Önerilen Ana Pano Sigortası</th>
-            <td><b>${mainBrkA} A</b> (30mA Kaçak Akım Koruma / RCD)</td>
             <th>Gerekli Dağıtım Linyeleri</th>
-            <td>${elAnalysis?.circuits.length ?? (p.interProjectorAnalysis?.surfaceStats.length ?? 4)} Adet Linye (${phases === 3 ? 'L1, L2, L3 Dengeli Faz Yükü' : 'Monofaze Dağıtım'})</td>
+            <td>${elAnalysis?.circuits.length ?? (p.interProjectorAnalysis?.surfaceStats.length ?? 4)} Adet Linye (${phases === 3 ? 'L1, L2, L3 Dengeli Dağıtım' : 'Monofaze Dağıtım'})</td>
           </tr>
+        </tbody>
+      </table>
         </tbody>
       </table>
       

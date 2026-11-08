@@ -41,9 +41,20 @@ export default function ElectricalDrawingStudio() {
   const [elShowLoadDetails, setElShowLoadDetails] = useState<boolean>(true);
 
   // 3) Metin ve Etiket Konumlarını Kaydırma (Üst Üste Binmeyi Önleme):
-  const [roomLabelShiftX, setRoomLabelShiftX] = useState<number>(0);
-  const [roomLabelShiftY, setRoomLabelShiftY] = useState<number>(0);
-  const [roomDimShiftY, setRoomDimShiftY] = useState<number>(0);
+  type ShiftTarget = 'proj' | 'dim' | 'roomDim' | 'titleBlock';
+  const [activeShiftTarget, setActiveShiftTarget] = useState<ShiftTarget>('proj');
+
+  const [shifts, setShifts] = useState<{
+    proj: { x: number; y: number };
+    dim: { x: number; y: number };
+    roomDim: { x: number; y: number };
+    titleBlock: { x: number; y: number };
+  }>({
+    proj: { x: 0, y: 0 },
+    dim: { x: 0, y: 0 },
+    roomDim: { x: 0, y: 0 },
+    titleBlock: { x: 0, y: 0 },
+  });
 
   const [elColumnSpacing, setElColumnSpacing] = useState<number>(145);
   const [elTextShiftY, setElTextShiftY] = useState<number>(0);
@@ -219,9 +230,14 @@ export default function ElectricalDrawingStudio() {
           showElectricalLabels: roomShowElLabels,
           showFrustums: roomShowFrustums,
           showTitleBlock: roomShowTitleBlock,
-          labelShiftX: roomLabelShiftX,
-          labelShiftY: roomLabelShiftY,
-          dimShiftY: roomDimShiftY,
+          labelShiftX: shifts.proj.x,
+          labelShiftY: shifts.proj.y,
+          dimShiftX: shifts.dim.x,
+          dimShiftY: shifts.dim.y,
+          roomDimShiftX: shifts.roomDim.x,
+          roomDimShiftY: shifts.roomDim.y,
+          titleBlockShiftX: shifts.titleBlock.x,
+          titleBlockShiftY: shifts.titleBlock.y,
         });
       }
       if (sheet === 'electrical' && elRes.r) {
@@ -256,9 +272,7 @@ export default function ElectricalDrawingStudio() {
     roomShowElLabels,
     roomShowFrustums,
     roomShowTitleBlock,
-    roomLabelShiftX,
-    roomLabelShiftY,
-    roomDimShiftY,
+    shifts,
     elShowBusSpecs,
     elShowBreakerSpecs,
     elShowCableSpecs,
@@ -767,84 +781,133 @@ export default function ElectricalDrawingStudio() {
         {/* YAZILARI VE ETİKETLERİ KAYDIRMA / ARALIK AYARLAMA KONTROL BARI */}
         <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-900/95 px-3 py-1.5 rounded border border-sky-900/60 text-[11px] shadow">
           <div className="flex items-center gap-1.5 font-bold text-sky-400">
-            <span>↔️ Yazıları Kaydır:</span>
+            <span>↔️ Seçtiğin Yazıyı Kaydır:</span>
           </div>
 
           {sheet === 'room' ? (
             <div className="flex flex-wrap items-center gap-2.5">
+              {/* Kaydırılacak Yazıyı Seç */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-400 text-[10px]">Yazı Seçimi:</span>
+                <select
+                  value={activeShiftTarget}
+                  onChange={e => setActiveShiftTarget(e.target.value as ShiftTarget)}
+                  className="bg-slate-950 border border-sky-700 text-sky-300 font-semibold text-[10.5px] rounded px-2 py-0.5"
+                >
+                  <option value="proj">📌 Projektör & Montaj Etiketleri (PJ / H / Watt)</option>
+                  <option value="dim">📏 Atım Mesafesi (D) Ölçü Yazısı</option>
+                  <option value="roomDim">📐 Dış Oda Ölçüleri (Genişlik / Boy)</option>
+                  <option value="titleBlock">📋 Teknik Çizim Anteti & Lejant</option>
+                </select>
+              </div>
+
+              {/* Yatay X Kaydırma */}
               <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
                 <span className="text-slate-400 text-[10px]">Yatay (X):</span>
                 <button
                   className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setRoomLabelShiftX(v => v - 100)}
-                  title="Metinleri 100mm sola kaydır"
+                  onClick={() =>
+                    setShifts(prev => ({
+                      ...prev,
+                      [activeShiftTarget]: {
+                        ...prev[activeShiftTarget],
+                        x: prev[activeShiftTarget].x - 50,
+                      },
+                    }))
+                  }
+                  title="Seçili metni 50mm sola kaydır"
                 >
                   ◀
                 </button>
                 <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
-                  {roomLabelShiftX > 0 ? `+${roomLabelShiftX}` : roomLabelShiftX} mm
+                  {shifts[activeShiftTarget].x > 0 ? `+${shifts[activeShiftTarget].x}` : shifts[activeShiftTarget].x} mm
                 </span>
                 <button
                   className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setRoomLabelShiftX(v => v + 100)}
-                  title="Metinleri 100mm sağa kaydır"
+                  onClick={() =>
+                    setShifts(prev => ({
+                      ...prev,
+                      [activeShiftTarget]: {
+                        ...prev[activeShiftTarget],
+                        x: prev[activeShiftTarget].x + 50,
+                      },
+                    }))
+                  }
+                  title="Seçili metni 50mm sağa kaydır"
                 >
                   ▶
                 </button>
               </div>
 
+              {/* Dikey Y Kaydırma */}
               <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
                 <span className="text-slate-400 text-[10px]">Dikey (Y):</span>
                 <button
                   className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setRoomLabelShiftY(v => v - 50)}
-                  title="Metinleri 50mm yukarı kaydır"
+                  onClick={() =>
+                    setShifts(prev => ({
+                      ...prev,
+                      [activeShiftTarget]: {
+                        ...prev[activeShiftTarget],
+                        y: prev[activeShiftTarget].y - 50,
+                      },
+                    }))
+                  }
+                  title="Seçili metni 50mm yukarı kaydır"
                 >
                   ▲
                 </button>
                 <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
-                  {roomLabelShiftY > 0 ? `+${roomLabelShiftY}` : roomLabelShiftY} mm
+                  {shifts[activeShiftTarget].y > 0 ? `+${shifts[activeShiftTarget].y}` : shifts[activeShiftTarget].y} mm
                 </span>
                 <button
                   className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setRoomLabelShiftY(v => v + 50)}
-                  title="Metinleri 50mm aşağı kaydır"
+                  onClick={() =>
+                    setShifts(prev => ({
+                      ...prev,
+                      [activeShiftTarget]: {
+                        ...prev[activeShiftTarget],
+                        y: prev[activeShiftTarget].y + 50,
+                      },
+                    }))
+                  }
+                  title="Seçili metni 50mm aşağı kaydır"
                 >
                   ▼
                 </button>
               </div>
 
-              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">Ölçü (D) Yazısı:</span>
+              {/* Seçileni Sıfırla */}
+              {(shifts[activeShiftTarget].x !== 0 || shifts[activeShiftTarget].y !== 0) && (
                 <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setRoomDimShiftY(v => v - 50)}
-                  title="Atım ölçü metnini yukarı kaydır"
+                  className="px-2 py-0.5 rounded bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 text-[10px] font-semibold"
+                  onClick={() =>
+                    setShifts(prev => ({
+                      ...prev,
+                      [activeShiftTarget]: { x: 0, y: 0 },
+                    }))
+                  }
+                  title="Seçili yazının konumunu sıfırla"
                 >
-                  ▲
+                  ⟲ Seçileni Sıfırla
                 </button>
-                <span className="font-mono text-sky-300 w-14 text-center text-[10.5px]">
-                  {roomDimShiftY > 0 ? `+${roomDimShiftY}` : roomDimShiftY} mm
-                </span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setRoomDimShiftY(v => v + 50)}
-                  title="Atım ölçü metnini aşağı kaydır"
-                >
-                  ▼
-                </button>
-              </div>
+              )}
 
-              {(roomLabelShiftX !== 0 || roomLabelShiftY !== 0 || roomDimShiftY !== 0) && (
+              {/* Tümünü Sıfırla */}
+              {(shifts.proj.x !== 0 || shifts.proj.y !== 0 || shifts.dim.x !== 0 || shifts.dim.y !== 0 || shifts.roomDim.x !== 0 || shifts.roomDim.y !== 0 || shifts.titleBlock.x !== 0 || shifts.titleBlock.y !== 0) && (
                 <button
                   className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
                   onClick={() => {
-                    setRoomLabelShiftX(0);
-                    setRoomLabelShiftY(0);
-                    setRoomDimShiftY(0);
+                    setShifts({
+                      proj: { x: 0, y: 0 },
+                      dim: { x: 0, y: 0 },
+                      roomDim: { x: 0, y: 0 },
+                      titleBlock: { x: 0, y: 0 },
+                    });
                   }}
+                  title="Tüm yazıların kaydırmasını sıfırla"
                 >
-                  ⟲ Sıfırla
+                  ⟲ Tümünü Sıfırla
                 </button>
               )}
             </div>

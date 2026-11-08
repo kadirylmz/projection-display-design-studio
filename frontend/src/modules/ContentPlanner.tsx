@@ -55,6 +55,12 @@ export interface SurfaceItem {
   projShiftYM?: number;      // Görüntü hedef merkezini dikey yukarı/aşağı kaydırma (m)
   textOffsetX?: number;      // 2B şemada yazı etiketlerini X yönünde kaydırma (px)
   textOffsetY?: number;      // 2B şemada yazı etiketlerini Y yönünde kaydırma (px)
+  textOffsets?: {
+    name?: { x: number; y: number };
+    resolution?: { x: number; y: number };
+    density?: { x: number; y: number };
+    dimensions?: { x: number; y: number };
+  };
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -295,53 +301,63 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
 
-  // 2B Açınım Çiziminde Yazı Gruplarını Mouse ile Serbestçe Sürükleme / Kaydırma
-  const [draggingTextSurfaceId, setDraggingTextSurfaceId] = useState<string | null>(null);
-  const dragTextStartRef = useRef<{ startX: number; startY: number; initOffsetX: number; initOffsetY: number; scale: number } | null>(null);
+  // 2B Açınım Çiziminde Yazı Gruplarını ve Seçilen Metinleri Bağımsız Sürükleme / Kaydırma
+  type TextItemKey = 'name' | 'resolution' | 'density' | 'dimensions';
+  const [draggingText, setDraggingText] = useState<{ surfaceId: string; key: TextItemKey } | null>(null);
+  const dragTextStartRef = useRef<{ startX: number; startY: number; initX: number; initY: number; scale: number } | null>(null);
 
-  const handleStartDragText = (surfaceId: string, e: React.PointerEvent, scaledWidthPx: number, vbW: number) => {
+  const handleStartDragText = (surfaceId: string, key: TextItemKey, e: React.PointerEvent, scaledWidthPx: number, vbW: number) => {
     e.stopPropagation();
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {}
     const surf = surfaces.find(s => s.id === surfaceId);
     const scale = vbW / Math.max(1, scaledWidthPx);
-    setDraggingTextSurfaceId(surfaceId);
+    const baseOffsetX = surf?.textOffsets?.[key]?.x ?? (surf?.textOffsetX || 0);
+    const baseOffsetY = surf?.textOffsets?.[key]?.y ?? (surf?.textOffsetY || 0);
+    setDraggingText({ surfaceId, key });
     dragTextStartRef.current = {
       startX: e.clientX,
       startY: e.clientY,
-      initOffsetX: surf?.textOffsetX || 0,
-      initOffsetY: surf?.textOffsetY || 0,
+      initX: baseOffsetX,
+      initY: baseOffsetY,
       scale,
     };
   };
 
   const handlePointerMoveText = (e: React.PointerEvent) => {
-    if (!draggingTextSurfaceId || !dragTextStartRef.current) return;
-    const { startX, startY, initOffsetX, initOffsetY, scale } = dragTextStartRef.current;
+    if (!draggingText || !dragTextStartRef.current) return;
+    const { startX, startY, initX, initY, scale } = dragTextStartRef.current;
     const dx = (e.clientX - startX) * scale;
     const dy = (e.clientY - startY) * scale;
+    const { surfaceId, key } = draggingText;
     setSurfaces(prev =>
-      prev.map(s =>
-        s.id === draggingTextSurfaceId
-          ? { ...s, textOffsetX: Math.round(initOffsetX + dx), textOffsetY: Math.round(initOffsetY + dy) }
-          : s
-      )
+      prev.map(s => {
+        if (s.id !== surfaceId) return s;
+        const currentOffsets = s.textOffsets || {};
+        return {
+          ...s,
+          textOffsets: {
+            ...currentOffsets,
+            [key]: { x: Math.round(initX + dx), y: Math.round(initY + dy) },
+          },
+        };
+      })
     );
   };
 
   const handlePointerUpText = (e: React.PointerEvent) => {
-    if (draggingTextSurfaceId) {
+    if (draggingText) {
       try {
         (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       } catch {}
-      setDraggingTextSurfaceId(null);
+      setDraggingText(null);
       dragTextStartRef.current = null;
     }
   };
 
   const resetAllTextOffsets = () => {
-    setSurfaces(prev => prev.map(s => ({ ...s, textOffsetX: 0, textOffsetY: 0 })));
+    setSurfaces(prev => prev.map(s => ({ ...s, textOffsetX: 0, textOffsetY: 0, textOffsets: undefined })));
   };
 
   // Değişiklikleri CAD & Elektrik modülünün okuduğu ortak plannerStore'a yaz
@@ -2569,73 +2585,133 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               </g>
                             )}
 
-                            {/* Merkez Bilgi Yazıları - Mouse ile Serbestçe Sürüklenebilir & Kaydırılabilir */}
-                            <g
-                              transform={`${isVerticalBox ? `rotate(-90 ${cx} ${cy}) ` : ''}translate(${s.textOffsetX || 0}, ${s.textOffsetY || 0})`}
-                              className="cursor-move group"
-                              onPointerDown={e => handleStartDragText(s.id, e, scaledWidthPx, vbW)}
-                            >
-                              <rect
-                                x={cx - Math.max(160, surfFont * 12)}
-                                y={cy - surfFont * 2.2}
-                                width={Math.max(320, surfFont * 24)}
-                                height={surfFont * 4.4}
-                                fill="transparent"
-                                className="group-hover:stroke-sky-400/50 group-hover:stroke-2 group-hover:stroke-dasharray-4 rounded"
-                              />
-                              {show2dName && (
-                                <text
-                                  x={cx}
-                                  y={cy - surfFont * 1.15}
-                                  fill="#f8fafc"
-                                  fontSize={surfFont * 0.92}
-                                  fontWeight="bold"
-                                  textAnchor="middle"
-                                >
-                                  {s.name}
-                                </text>
-                              )}
+                            {/* Merkez Bilgi Yazıları - Her Seçilen Metin Mouse ile Bağımsız Sürüklenebilir & Kaydırılabilir */}
+                            <g transform={isVerticalBox ? `rotate(-90 ${cx} ${cy})` : undefined}>
+                              {show2dName && (() => {
+                                const off = s.textOffsets?.name || { x: s.textOffsetX || 0, y: s.textOffsetY || 0 };
+                                return (
+                                  <g
+                                    transform={`translate(${off.x}, ${off.y})`}
+                                    className="cursor-move group"
+                                    onPointerDown={e => handleStartDragText(s.id, 'name', e, scaledWidthPx, vbW)}
+                                  >
+                                    <rect
+                                      x={cx - Math.max(120, surfFont * 9)}
+                                      y={cy - surfFont * 1.65}
+                                      width={Math.max(240, surfFont * 18)}
+                                      height={surfFont * 1.25}
+                                      fill="transparent"
+                                      className="group-hover:fill-sky-500/20 group-hover:stroke-sky-400/80 group-hover:stroke-1 rounded"
+                                    />
+                                    <text
+                                      x={cx}
+                                      y={cy - surfFont * 0.8}
+                                      fill="#f8fafc"
+                                      fontSize={surfFont * 0.95}
+                                      fontWeight="bold"
+                                      textAnchor="middle"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      {s.name}
+                                    </text>
+                                  </g>
+                                );
+                              })()}
 
-                              {show2dResolution && (
-                                <text
-                                  x={cx}
-                                  y={cy - surfFont * 0.1}
-                                  fill="#4ade80"
-                                  fontSize={surfFont * 1.05}
-                                  fontWeight="bold"
-                                  fontFamily="monospace"
-                                  textAnchor="middle"
-                                >
-                                  {s.netW} × {s.netH} pixel
-                                </text>
-                              )}
+                              {show2dResolution && (() => {
+                                const off = s.textOffsets?.resolution || { x: s.textOffsetX || 0, y: s.textOffsetY || 0 };
+                                return (
+                                  <g
+                                    transform={`translate(${off.x}, ${off.y})`}
+                                    className="cursor-move group"
+                                    onPointerDown={e => handleStartDragText(s.id, 'resolution', e, scaledWidthPx, vbW)}
+                                  >
+                                    <rect
+                                      x={cx - Math.max(140, surfFont * 9.5)}
+                                      y={cy - surfFont * 0.55}
+                                      width={Math.max(280, surfFont * 19)}
+                                      height={surfFont * 1.25}
+                                      fill="transparent"
+                                      className="group-hover:fill-emerald-500/20 group-hover:stroke-emerald-400/80 group-hover:stroke-1 rounded"
+                                    />
+                                    <text
+                                      x={cx}
+                                      y={cy + surfFont * 0.35}
+                                      fill="#4ade80"
+                                      fontSize={surfFont * 1.05}
+                                      fontWeight="bold"
+                                      fontFamily="monospace"
+                                      textAnchor="middle"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      {s.netW} × {s.netH} pixel
+                                    </text>
+                                  </g>
+                                );
+                              })()}
 
-                              {show2dDensity && (
-                                <text
-                                  x={cx}
-                                  y={cy + surfFont * 0.8}
-                                  fill="#38bdf8"
-                                  fontSize={surfFont * 0.7}
-                                  fontWeight="bold"
-                                  fontFamily="monospace"
-                                  textAnchor="middle"
-                                >
-                                  Piksel: {s.avgMmPerPx} mm/px (İdeal ≤{s.idealMuseumMmPerPx}mm) · Optik @{s.throwDistM}m: {s.distMmPerPx} mm/px
-                                </text>
-                              )}
+                              {show2dDensity && (() => {
+                                const off = s.textOffsets?.density || { x: s.textOffsetX || 0, y: s.textOffsetY || 0 };
+                                return (
+                                  <g
+                                    transform={`translate(${off.x}, ${off.y})`}
+                                    className="cursor-move group"
+                                    onPointerDown={e => handleStartDragText(s.id, 'density', e, scaledWidthPx, vbW)}
+                                  >
+                                    <rect
+                                      x={cx - Math.max(200, surfFont * 14)}
+                                      y={cy + surfFont * 0.55}
+                                      width={Math.max(400, surfFont * 28)}
+                                      height={surfFont * 1.15}
+                                      fill="transparent"
+                                      className="group-hover:fill-sky-500/20 group-hover:stroke-sky-400/80 group-hover:stroke-1 rounded"
+                                    />
+                                    <text
+                                      x={cx}
+                                      y={cy + surfFont * 1.3}
+                                      fill="#38bdf8"
+                                      fontSize={surfFont * 0.72}
+                                      fontWeight="bold"
+                                      fontFamily="monospace"
+                                      textAnchor="middle"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      Piksel: {s.avgMmPerPx} mm/px (İdeal ≤{s.idealMuseumMmPerPx}mm) · Optik @{s.throwDistM}m: {s.distMmPerPx} mm/px
+                                    </text>
+                                  </g>
+                                );
+                              })()}
 
-                              {show2dDimensions && (
-                                <text
-                                  x={cx}
-                                  y={cy + surfFont * 1.55}
-                                  fill="#cbd5e1"
-                                  fontSize={surfFont * 0.65}
-                                  fontFamily="monospace"
-                                  textAnchor="middle"
-                                >
-                                  Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m (Oran {s.aspectPhysical}:1 · {s.cols}×{s.rows} PJ)
-                                </text>
-                              )}
+                              {show2dDimensions && (() => {
+                                const off = s.textOffsets?.dimensions || { x: s.textOffsetX || 0, y: s.textOffsetY || 0 };
+                                return (
+                                  <g
+                                    transform={`translate(${off.x}, ${off.y})`}
+                                    className="cursor-move group"
+                                    onPointerDown={e => handleStartDragText(s.id, 'dimensions', e, scaledWidthPx, vbW)}
+                                  >
+                                    <rect
+                                      x={cx - Math.max(180, surfFont * 12)}
+                                      y={cy + surfFont * 1.55}
+                                      width={Math.max(360, surfFont * 24)}
+                                      height={surfFont * 1.15}
+                                      fill="transparent"
+                                      className="group-hover:fill-amber-500/20 group-hover:stroke-amber-400/80 group-hover:stroke-1 rounded"
+                                    />
+                                    <text
+                                      x={cx}
+                                      y={cy + surfFont * 2.3}
+                                      fill="#cbd5e1"
+                                      fontSize={surfFont * 0.68}
+                                      fontFamily="monospace"
+                                      textAnchor="middle"
+                                      className="pointer-events-none select-none"
+                                    >
+                                      Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m (Oran {s.aspectPhysical}:1 · {s.cols}×{s.rows} PJ)
+                                    </text>
+                                  </g>
+                                );
+                              })()}
                             </g>
                           </g>
                         </g>
