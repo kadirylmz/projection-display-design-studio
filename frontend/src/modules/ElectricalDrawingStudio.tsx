@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { analyze, Circuit, Load } from '../engine/electrical';
 import { toDxf, toSvg } from '../engine/drawing';
 import { electricalSingleLine, contentPlannerRoomPlan } from '../engine/drawings';
@@ -21,6 +21,9 @@ export default function ElectricalDrawingStudio() {
   // Kullanıcının doğrudan bu ekrandan adet değiştirebilmesi için state:
   const [projectorQty, setProjectorQty] = useState<number>(totalProjectors || 10);
 
+  // Sigorta ve Linye Tipi Seçimi (10A, 16A, 20A, 25A, 32A)
+  const [selectedBreakerA, setSelectedBreakerA] = useState<number>(16);
+
   // SEÇMELİ METİN VE KATMAN GÖRÜNÜM AYARLARI (KULLANICI İSTEDİĞİNİ AÇIP KAPATIR)
   // 1) Mimari Oda Planı Seçenekleri:
   const [roomShowRoomDim, setRoomShowRoomDim] = useState<boolean>(true);
@@ -39,46 +42,151 @@ export default function ElectricalDrawingStudio() {
 
   const { loads, circuits, supply } = electrical;
 
-  // Girilen Projektör Adedi ve Birim Güce Göre Elektrik Yüklerini & Linyeleri Otomatik Dağıt
-  const applyElectricalCalculation = (qtyToApply = projectorQty) => {
-    const qty = Math.max(1, qtyToApply);
-    const existingPjLoad = loads.find(l => l.id === 'PJ-MAIN' || l.name.includes('Projektör'));
+  // Sigorta seçimine göre kablo kesiti ve standart akım taşıma kapasitesi (Iz)
+  const breakerConfig = useMemo(() => {
+    switch (selectedBreakerA) {
+      case 10: return { cableMm2: 1.5, ampacityA: 18, label: '10A (3x1.5mm² Kablo)' };
+      case 20: return { cableMm2: 4.0, ampacityA: 32, label: '20A (3x4.0mm² Kablo)' };
+      case 25: return { cableMm2: 4.0, ampacityA: 32, label: '25A (3x4.0mm² Kablo)' };
+      case 32: return { cableMm2: 6.0, ampacityA: 42, label: '32A (3x6.0mm² Kablo)' };
+      case 16:
+      default: return { cableMm2: 2.5, ampacityA: 25, label: '16A (3x2.5mm² Kablo)' };
+    }
+  }, [selectedBreakerA]);
 
-    let updatedLoads: Load[];
-    if (existingPjLoad) {
-      updatedLoads = loads.map(l =>
-        l.id === existingPjLoad.id
-          ? { ...l, name: singleProjModel, qty, powerW: singleProjWatt, pf: singleProjPf }
-          : l
+  // IEC 60898 & NEC %80 sürekli çalışma kuralına göre 1 linyenin güvenli azami gücü (Watt)
+  const safeCapacityW = useMemo(() => {
+    const nominalW = selectedBreakerA * supply.voltage * singleProjPf;
+    return Math.round(nominalW * 0.80);
+  }, [selectedBreakerA, supply.voltage, singleProjPf]);
+
+  // Watt değerine göre 1 linyeye bağlanabilecek GÜVENLİ projektör sayısı
+  const maxPjPerCircuit = useMemo(() => {
+    if (singleProjWatt <= 0) return 1;
+    return Math.max(1, Math.floor(safeCapacityW / singleProjWatt));
+  }, [safeCapacityW, singleProjWatt]);
+
+  // Gerekli linye adedi
+  const neededCircuits = useMemo(() => {
+    return Math.ceil(projectorQty / maxPjPerCircuit);
+  }, [projectorQty, maxPjPerCircuit]);
+
+  // Girilen adet ve watt değerini linyelere doğru paylaştırarak circuits ve loads üretir (Sıfır çıkmasını engeller)
+  const buildProjectorCircuits = useCallback(
+    (
+      qty: number,
+      watt: number,
+      pf: number,
+      model: string,
+      brk: number,
+      phasesCount: 1 | 3,
+      currentLoads: Load[],
+      currentCircuits: Circuit[]
+    ) => {
+      const nomW = brk * supply.voltage * pf;
+      const safeW = nomW * 0.80;
+      const maxPerCir = Math.max(1, Math.floor(safeW / Math.max(1, watt)));
+      const nCircuits = Math.ceil(qty / maxPerCir);
+
+      const cfg = brk === 32
+        ? { cableMm2: 6.0, ampacityA: 42 }
+        : brk === 25 || brk === 20
+        ? { cableMm2: 4.0, ampacityA: 32 }
+        : brk === 10
+        ? { cableMm2: 1.5, ampacityA: 18 }
+        : { cableMm2: 2.5, ampacityA: 25 };
+
+      const newLoads: Load[] = [];
+      const newCircuits: Circuit[] = [];
+      const phaseList: ('L1' | 'L2' | 'L3')[] = ['L1', 'L2', 'L3'];
+
+      let remaining = qty;
+      for (let i = 0; i < nCircuits; i++) {
+        const countOnThisCircuit = Math.min(remaining, maxPerCir);
+        remaining -= countOnThisCircuit;
+        const loadId = `L-PJ-${i + 1}`;
+        const circuitId = `C-PJ-${i + 1}`;
+
+        newLoads.push({
+          id: loadId,
+          name: `${model} (Grup ${i + 1})`,
+          qty: countOnThisCircuit,
+          powerW: watt,
+          pf,
+        });
+
+        newCircuits.push({
+          id: circuitId,
+          name: `Linye-${i + 1} (${countOnThisCircuit}x Projektör)`,
+          loadIds: [loadId],
+          phase: phasesCount === 3 ? phaseList[i % 3] : 'L1',
+          cableMm2: cfg.cableMm2,
+          lengthM: 25,
+          ampacityA: cfg.ampacityA,
+        });
+      }
+
+      // Varsa kullanıcının manuel eklediği ek yükleri koru
+      const nonPjLoads = currentLoads.filter(
+        l => !l.id.startsWith('L-PJ-') && l.id !== 'PJ-MAIN' && !l.name.includes('Projektör')
       );
-    } else {
-      updatedLoads = [
-        { id: 'PJ-MAIN', name: singleProjModel, qty, powerW: singleProjWatt, pf: singleProjPf },
-        ...loads,
-      ];
-    }
+      const nonPjCircuits = currentCircuits.filter(
+        c => !c.id.startsWith('C-PJ-') && !c.name.includes('Projeksiyon') && !c.name.includes('Projektör')
+      );
 
-    // Elektrikçi kuralı: 16A sigorta ve 3x2.5mm² linyede gerilim düşümü & güvenlik için linye başına maks 4-6 projektör (maks 2500W)
-    const maxPerCircuit = 5;
-    const neededCircuits = Math.ceil(qty / maxPerCircuit);
-    const newCircuits: Circuit[] = [];
-    const phases: ('L1' | 'L2' | 'L3')[] = ['L1', 'L2', 'L3'];
+      return {
+        loads: [...newLoads, ...nonPjLoads],
+        circuits: [...newCircuits, ...nonPjCircuits],
+      };
+    },
+    [supply.voltage]
+  );
 
-    for (let i = 0; i < neededCircuits; i++) {
-      newCircuits.push({
-        id: `C-PJ-${i + 1}`,
-        name: `Linye-${i + 1} (Projeksiyon ${i * maxPerCircuit + 1}–${Math.min(qty, (i + 1) * maxPerCircuit)})`,
-        loadIds: ['PJ-MAIN'],
-        phase: supply.phases === 3 ? phases[i % 3] : 'L1',
-        cableMm2: 2.5,
-        lengthM: 25,
-        ampacityA: 25,
-      });
-    }
-
+  // Değerler her değiştiğinde elektriği otomatik güncelle ve sıfır yazmasını kesin olarak önle
+  useEffect(() => {
+    const res = buildProjectorCircuits(
+      projectorQty,
+      singleProjWatt,
+      singleProjPf,
+      singleProjModel,
+      selectedBreakerA,
+      supply.phases,
+      loads,
+      circuits
+    );
     setElectrical({
-      loads: updatedLoads,
-      circuits: newCircuits.length > 0 ? newCircuits : circuits,
+      loads: res.loads,
+      circuits: res.circuits,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    projectorQty,
+    singleProjWatt,
+    singleProjPf,
+    singleProjModel,
+    selectedBreakerA,
+    supply.phases,
+    supply.voltage,
+  ]);
+
+  const applyElectricalCalculation = (
+    qtyToApply = projectorQty,
+    wattToApply = singleProjWatt,
+    brkToApply = selectedBreakerA
+  ) => {
+    const res = buildProjectorCircuits(
+      qtyToApply,
+      wattToApply,
+      singleProjPf,
+      singleProjModel,
+      brkToApply,
+      supply.phases,
+      loads,
+      circuits
+    );
+    setElectrical({
+      loads: res.loads,
+      circuits: res.circuits,
     });
   };
 
@@ -272,26 +380,77 @@ export default function ElectricalDrawingStudio() {
             </label>
           </div>
 
-          <div className="p-2 rounded bg-slate-900 border border-emerald-900/60 font-mono text-[11px] space-y-1">
+          {/* SİGORTA ANMA AKIMI VE ŞEBEKE BESLEMESİ SEÇİMİ */}
+          <div className="grid grid-cols-2 gap-2">
+            <label>
+              Linye Sigortası (Amper)
+              <select
+                className="inp font-bold text-amber-300"
+                value={selectedBreakerA}
+                onChange={e => setSelectedBreakerA(+e.target.value)}
+              >
+                <option value={10}>10 A (3x1.5mm² - Düşük Güç)</option>
+                <option value={16}>16 A (3x2.5mm² - Standart Priz)</option>
+                <option value={20}>20 A (3x4.0mm² - Güçlü AV Hattı)</option>
+                <option value={25}>25 A (3x4.0mm² - Yüksek Güç)</option>
+                <option value={32}>32 A (3x6.0mm² - Ağır Yük Linyesi)</option>
+              </select>
+            </label>
+
+            <label>
+              Şebeke Beslemesi
+              <select
+                className="inp font-bold text-sky-300"
+                value={supply.phases}
+                onChange={e => setElectrical({ supply: { ...supply, phases: +e.target.value as 1 | 3 } })}
+              >
+                <option value={1}>1 Faz (230V Şebeke)</option>
+                <option value={3}>3 Faz (400V Sanayi / Bina)</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="p-2.5 rounded bg-slate-900 border border-emerald-800/80 font-mono text-[11px] space-y-1.5">
             <div className="flex justify-between items-center text-slate-200">
               <span>Toplam Projeksiyon Gücü:</span>
               <b className="text-amber-300 text-xs">
                 {projectorQty} Adet × {singleProjWatt}W = {projectorQty * singleProjWatt} W ({(projectorQty * singleProjWatt / 1000).toFixed(2)} kW)
               </b>
             </div>
-            <div className="flex justify-between items-center text-slate-400 text-[10px]">
-              <span>Gerekli Linye Sayısı:</span>
-              <b className="text-emerald-400">
-                {Math.ceil(projectorQty / 5)} Adet Linye (16A Sigorta, 3x2.5mm² Kablo)
+
+            <div className="flex justify-between items-center text-slate-300 text-[10px]">
+              <span>1 Linye Güvenli Kapasitesi:</span>
+              <span className="text-sky-300">
+                ~{safeCapacityW} W (%80 Güvenlik Sınırı @{selectedBreakerA}A)
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center text-slate-300 text-[10px]">
+              <span>Linye Başına Güvenli Cihaz:</span>
+              <b className="text-amber-200">
+                {maxPjPerCircuit} Adet Projektör ({maxPjPerCircuit * singleProjWatt} W / Linye)
               </b>
             </div>
+
+            <div className="flex justify-between items-center border-t border-slate-800 pt-1 text-emerald-300 font-bold">
+              <span>Gerekli Linye Sayısı:</span>
+              <span>
+                {neededCircuits} Adet Linye ({selectedBreakerA}A Sigorta, {breakerConfig.cableMm2}mm² Kablo)
+              </span>
+            </div>
+
+            {projectorQty * singleProjWatt > 9000 && supply.phases === 1 && (
+              <div className="text-[10px] text-amber-300 bg-amber-950/70 p-1.5 rounded border border-amber-800">
+                💡 <b>Mühendislik Tavsiyesi:</b> Toplam güç {((projectorQty * singleProjWatt) / 1000).toFixed(1)} kW olduğundan tek faza 98A aşırı yük binmemesi için <b>3 Faz (400V)</b> besleme seçilmiştir / önerilir.
+              </div>
+            )}
           </div>
 
           <button
-            onClick={() => applyElectricalCalculation(projectorQty)}
+            onClick={() => applyElectricalCalculation(projectorQty, singleProjWatt, selectedBreakerA)}
             className="w-full py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs shadow flex justify-center items-center gap-1.5"
           >
-            <span>⚡ Çizim ve Elektrik Linyelerini Güncelle</span>
+            <span>⚡ Çizim ve Elektrik Linyelerini Yeniden Dağıt</span>
           </button>
         </div>
 
