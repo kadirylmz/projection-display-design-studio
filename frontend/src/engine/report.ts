@@ -559,16 +559,16 @@ export function buildReportHtml(p: ReportPayload): string {
         const totalPjWatt = totalPj * 1350;
         const totalLumens = totalPj * 6000;
         return [
-          '<div class="surface-multi-card" style="margin-bottom: 26px; padding: 18px; background: #0b1120; border: 1px solid #1e293b; border-radius: 8px; page-break-inside: avoid;">',
-          '  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 14px;">',
-          '    <h3 style="margin: 0; color: #38bdf8; font-size: 16px;">',
+          '<div class="surface-multi-card">',
+          '  <div class="surface-multi-card-header">',
+          '    <h3 class="surface-multi-card-title">',
           '      ' + (sIdx + 1) + '. ' + esc(s.name) + ' — Çoklu Projeksiyon Yerleşimi',
           '    </h3>',
-          '    <span style="font-family: monospace; font-size: 13px; color: #fde047; font-weight: bold; background: #020617; padding: 4px 10px; border-radius: 4px; border: 1px solid #334155;">',
+          '    <span class="surface-multi-card-badge">',
           '      ' + s.cols + ' × ' + s.rows + ' = ' + totalPj + ' Projektör (' + (s.orient === 'portrait' ? 'Dikey/Portrait' : 'Yatay/Landscape') + ')',
           '    </span>',
           '  </div>',
-          '  <table class="report-table" style="margin-bottom: 14px;">',
+          '  <table>',
           '    <tbody>',
           '      <tr>',
           '        <th>Fiziksel Boyut & Alan</th>',
@@ -596,7 +596,7 @@ export function buildReportHtml(p: ReportPayload): string {
           '      </tr>',
           '    </tbody>',
           '  </table>',
-          '  <div class="diagram" style="margin-top: 10px; background: #070b14; border-radius: 6px; padding: 8px;">',
+          '  <div class="diagram" style="margin-top: 10px;">',
           '    ' + svg,
           '  </div>',
           '</div>'
@@ -1015,6 +1015,53 @@ export function buildReportHtml(p: ReportPayload): string {
   }
   .guideline-card li {
     margin-bottom: 4px;
+  }
+  .surface-multi-card {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .surface-multi-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  .surface-multi-card-title {
+    margin: 0;
+    color: #0284c7;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .surface-multi-card-badge {
+    font-family: monospace;
+    font-size: 12px;
+    color: #0369a1;
+    font-weight: bold;
+    background: #e0f2fe;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid #bae6fd;
+  }
+  .surface-multi-card table {
+    margin-bottom: 12px;
+    background: #ffffff;
+  }
+  .surface-multi-card th {
+    background: #f1f5f9;
+    color: #1e293b;
+    font-weight: 600;
+    width: 22%;
+  }
+  .surface-multi-card td {
+    background: #ffffff;
+    color: #1e293b;
   }
   .note-box {
     background: #fffbeb;
