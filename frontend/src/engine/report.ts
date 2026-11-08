@@ -103,6 +103,8 @@ export interface ReportPayload {
     supply: Supply;
   };
   equipmentList?: { category: string; manufacturer: string; model: string; qty: number; notes?: string }[];
+  plannerSurfaces?: any[];
+  enabledSurfaceIds?: string[];
 }
 
 const T: Record<ReportLang, Record<string, string>> = {
@@ -199,6 +201,84 @@ const T: Record<ReportLang, Record<string, string>> = {
 };
 
 const esc = (s: string) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+
+function generateSurfaceMultiSvg(s: any): string {
+  const wM = +(s.effectiveWidthM || s.widthM || 10).toFixed(2);
+  const hM = +(s.effectiveHeightM || s.heightM || 4).toFixed(2);
+  const cols = Math.max(1, s.cols || 1);
+  const rows = Math.max(1, s.rows || 1);
+  const singleW = +(s.singleProjWidthM || (wM / cols)).toFixed(2);
+  const singleH = +(s.singleProjHeightM || (hM / rows)).toFixed(2);
+  const ovX = s.overlapX || 15;
+  const ovY = s.overlapY || 10;
+
+  const pad = 42;
+  const canvasW = 920;
+  const aspect = wM / Math.max(0.4, hM);
+  const drawW = canvasW - pad * 2;
+  const drawH = Math.max(160, Math.min(380, Math.round(drawW / aspect)));
+  const canvasH = drawH + pad * 2 + 32;
+
+  const scaleX = drawW / wM;
+  const scaleY = drawH / hM;
+
+  const rects: string[] = [];
+  const overlaps: string[] = [];
+  const labels: string[] = [];
+
+  const ovRatioX = (s.projW && s.projW > 0 ? (s.ovPxX || 0) / s.projW : ovX / 100);
+  const stepW_M = cols > 1 ? singleW * (1 - ovRatioX) : singleW;
+  const stepH_M = rows > 1 ? singleH * 0.85 : singleH;
+
+  const bgRect = '<rect x="' + pad + '" y="' + pad + '" width="' + drawW + '" height="' + drawH + '" fill="#0f172a" stroke="#334155" stroke-width="2" stroke-dasharray="6 4"/>';
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const xM = cols === 1 ? 0 : c * stepW_M;
+      const yM = rows === 1 ? 0 : r * stepH_M;
+      const xPx = pad + xM * scaleX;
+      const yPx = pad + yM * scaleY;
+      const wPx = Math.min(drawW, singleW * scaleX);
+      const hPx = Math.min(drawH, singleH * scaleY);
+
+      rects.push('<rect x="' + xPx.toFixed(1) + '" y="' + yPx.toFixed(1) + '" width="' + wPx.toFixed(1) + '" height="' + hPx.toFixed(1) + '" fill="' + (s.color || '#38bdf8') + '" fill-opacity="0.18" stroke="' + (s.color || '#38bdf8') + '" stroke-width="2"/>');
+
+      const cx = xPx + wPx / 2;
+      const cy = yPx + hPx / 2;
+      labels.push(
+        '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="4.5" fill="#fde047" stroke="#020617" stroke-width="1.2"/>' +
+        '<line x1="' + (cx - 9).toFixed(1) + '" y1="' + cy.toFixed(1) + '" x2="' + (cx + 9).toFixed(1) + '" y2="' + cy.toFixed(1) + '" stroke="#fde047" stroke-width="1.4"/>' +
+        '<line x1="' + cx.toFixed(1) + '" y1="' + (cy - 9).toFixed(1) + '" x2="' + cx.toFixed(1) + '" y2="' + (cy + 9).toFixed(1) + '" stroke="#fde047" stroke-width="1.4"/>' +
+        '<text x="' + cx.toFixed(1) + '" y="' + (cy - 12).toFixed(1) + '" font-size="11.5" fill="#f8fafc" font-weight="bold" font-family="system-ui, sans-serif" text-anchor="middle">PJ ' + (c + 1) + (rows > 1 ? '.' + (r + 1) : '') + '</text>' +
+        '<text x="' + cx.toFixed(1) + '" y="' + (cy + 19).toFixed(1) + '" font-size="10" fill="#94a3b8" font-family="monospace" text-anchor="middle">' + (s.customW || 1920) + '×' + (s.customH || 1200) + ' px</text>'
+      );
+
+      if (c < cols - 1) {
+        const nextXPx = pad + (c + 1) * stepW_M * scaleX;
+        const ovWPx = (xPx + wPx) - nextXPx;
+        if (ovWPx > 0) {
+          overlaps.push(
+            '<rect x="' + nextXPx.toFixed(1) + '" y="' + yPx.toFixed(1) + '" width="' + ovWPx.toFixed(1) + '" height="' + hPx.toFixed(1) + '" fill="#22c55e" fill-opacity="0.35" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="3 3"/>' +
+            '<text x="' + (nextXPx + ovWPx / 2).toFixed(1) + '" y="' + (yPx + hPx - 8).toFixed(1) + '" font-size="9" fill="#4ade80" font-family="sans-serif" font-weight="bold" text-anchor="middle">%' + ovX + ' Blend</text>'
+          );
+        }
+      }
+    }
+  }
+
+  const dimTop = '<text x="' + (canvasW / 2).toFixed(1) + '" y="' + (pad - 14).toFixed(1) + '" font-size="11.5" fill="#cbd5e1" font-family="monospace" font-weight="bold" text-anchor="middle">Yüzey Açınım Genişliği: ' + wM + ' m | Yükseklik: ' + hM + ' m</text>';
+  const dimBot = '<text x="' + (canvasW / 2).toFixed(1) + '" y="' + (canvasH - 12).toFixed(1) + '" font-size="10.5" fill="#94a3b8" font-family="monospace" text-anchor="middle">Optik Lens Atımı: D = ' + s.throwDistM + 'm (TR: ' + s.throwRatio + ':1) · Çözünürlük: ' + (s.netW || '—') + '×' + (s.netH || '—') + ' px (' + (s.distMmPerPx || '—') + ' mm/px)</text>';
+
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + canvasW + ' ' + canvasH + '" width="100%" height="auto" style="max-height: 380px; display: block; margin: auto;">' +
+    '<rect width="100%" height="100%" fill="#070b14"/>' +
+    bgRect +
+    rects.join('') +
+    overlaps.join('') +
+    labels.join('') +
+    dimTop +
+    dimBot +
+  '</svg>';
+}
 
 export function buildReportHtml(p: ReportPayload): string {
   const tr = T[p.lang];
@@ -463,16 +543,79 @@ export function buildReportHtml(p: ReportPayload): string {
     </section>`);
   }
 
-  // 6. ÇOKLU PROJEKTÖR & KANVAS HARİTALAMA
-  if (p.sections.multiProjector && p.mappingSlots && p.mappingSlots.length > 0) {
-    const L = computeLayout(p.mappingSlots);
-    warnings.push(...L.warnings);
-    const svg = layoutToSvg(L, { gridStep: 200, showCoords: true });
-    blocks.push(`<section class="report-section">
-      <h2>${tr.multi}</h2>
-      <p><b>${tr.canvasRes}:</b> ${L.canvasW} × ${L.canvasH} px &nbsp;|&nbsp; <b>${tr.overlapCount}:</b> ${L.overlaps.length}</p>
-      <div class="diagram">${svg}</div>
-    </section>`);
+  // 6. ÇOKLU PROJEKTÖR & KANVAS HARİTALAMA (YÜZEY BAZLI AYRI PAFTALAR: ZEMİN, SAĞ DUVAR, SOL DUVAR VB.)
+  if (p.sections.multiProjector) {
+    const surfsToRender = p.plannerSurfaces && p.plannerSurfaces.length > 0
+      ? (p.enabledSurfaceIds && p.enabledSurfaceIds.length > 0
+          ? p.plannerSurfaces.filter((s: any) => p.enabledSurfaceIds!.includes(s.id))
+          : p.plannerSurfaces)
+      : [];
+
+    if (surfsToRender.length > 0) {
+      const surfaceCardsHtml = surfsToRender.map((s: any, sIdx: number) => {
+        const svg = generateSurfaceMultiSvg(s);
+        const area = round(s.areaM2 || (s.effectiveWidthM * s.effectiveHeightM), 2);
+        const totalPj = s.cols * s.rows;
+        const totalPjWatt = totalPj * 1350;
+        const totalLumens = totalPj * 6000;
+        return [
+          '<div class="surface-multi-card" style="margin-bottom: 26px; padding: 18px; background: #0b1120; border: 1px solid #1e293b; border-radius: 8px; page-break-inside: avoid;">',
+          '  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 14px;">',
+          '    <h3 style="margin: 0; color: #38bdf8; font-size: 16px;">',
+          '      ' + (sIdx + 1) + '. ' + esc(s.name) + ' — Çoklu Projeksiyon Yerleşimi',
+          '    </h3>',
+          '    <span style="font-family: monospace; font-size: 13px; color: #fde047; font-weight: bold; background: #020617; padding: 4px 10px; border-radius: 4px; border: 1px solid #334155;">',
+          '      ' + s.cols + ' × ' + s.rows + ' = ' + totalPj + ' Projektör (' + (s.orient === 'portrait' ? 'Dikey/Portrait' : 'Yatay/Landscape') + ')',
+          '    </span>',
+          '  </div>',
+          '  <table class="report-table" style="margin-bottom: 14px;">',
+          '    <tbody>',
+          '      <tr>',
+          '        <th>Fiziksel Boyut & Alan</th>',
+          '        <td><b>' + s.effectiveWidthM + 'm × ' + s.effectiveHeightM + 'm</b> (' + area + ' m²)</td>',
+          '        <th>Net İçerik Çözünürlüğü</th>',
+          '        <td><b>' + s.netW + ' × ' + s.netH + ' px</b> (' + round((s.netW * s.netH) / 1000000, 2) + ' MP)</td>',
+          '      </tr>',
+          '      <tr>',
+          '        <th>Projektör Başı Çözünürlük</th>',
+          '        <td>' + (s.customW || 1920) + ' × ' + (s.customH || 1200) + ' px</td>',
+          '        <th>Overlap (Bindirme) Oranı</th>',
+          '        <td>Yatay: <b>%' + s.overlapX + '</b> (' + (s.ovPxX || 0) + ' px) | Dikey: <b>%' + s.overlapY + '</b> (' + (s.ovPxY || 0) + ' px)</td>',
+          '      </tr>',
+          '      <tr>',
+          '        <th>Lens & Atım Mesafesi (D)</th>',
+          '        <td><b>D = ' + s.throwDistM + ' m</b> (Atım Oranı: <b>' + s.throwRatio + ':1</b>)</td>',
+          '        <th>Piksel Yoğunluğu & Kalite</th>',
+          '        <td><b>' + (s.distMmPerPx || s.avgMmPerPx || '—') + ' mm/px</b> (İzleme Mesafesi: ' + s.viewDistM + 'm)</td>',
+          '      </tr>',
+          '      <tr>',
+          '        <th>Kurulu Projektör Gücü</th>',
+          '        <td>' + totalPj + ' Adet × 1350W = <b>' + totalPjWatt + ' W</b> (' + round(totalPjWatt / 1000, 2) + ' kW)</td>',
+          '        <th>Tahmini Işık Akısı (Toplam)</th>',
+          '        <td><b>~' + totalLumens.toLocaleString('tr-TR') + ' ANSI Lümen</b></td>',
+          '      </tr>',
+          '    </tbody>',
+          '  </table>',
+          '  <div class="diagram" style="margin-top: 10px; background: #070b14; border-radius: 6px; padding: 8px;">',
+          '    ' + svg,
+          '  </div>',
+          '</div>'
+        ].join('\n');
+      }).join('\n');
+
+      blocks.push([
+        '<section class="report-section">',
+        '  <h2>' + tr.multi + ' (Yüzey Bazlı Ayrı Paftalar)</h2>',
+        '  <p class="section-intro">Mekandaki projeksiyon yüzeyleri aşağıda bağımsız paftalar halinde detaylandırılmıştır. Zemin ve duvarlar ayrı ayrı ele alınmış olup her yüzeyin matrisi, overlap oranları, net çözünürlükleri ve optik parametreleri sunulmuştur.</p>',
+        '  ' + surfaceCardsHtml,
+        '</section>'
+      ].join('\n'));
+    } else if (p.mappingSlots && p.mappingSlots.length > 0) {
+      const L = computeLayout(p.mappingSlots);
+      warnings.push(...L.warnings);
+      const svg = layoutToSvg(L, { gridStep: 200, showCoords: true });
+      blocks.push('<section class="report-section"><h2>' + tr.multi + '</h2><p><b>' + tr.canvasRes + ':</b> ' + L.canvasW + ' × ' + L.canvasH + ' px &nbsp;|&nbsp; <b>' + tr.overlapCount + ':</b> ' + L.overlaps.length + '</p><div class="diagram">' + svg + '</div></section>');
+    }
   }
 
   // 7. LED DUVAR SPESİFİKASYONLARI

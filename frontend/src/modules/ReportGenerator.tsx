@@ -19,18 +19,24 @@ export default function ReportGenerator() {
     led: false, // Projeksiyon mekanlarında varsayılan olarak kapalı; kullanıcı dilediğinde kutucuktan tek tıkla ekler/çıkarır
   }));
   const [presentation, setPresentation] = useState(false);
+  // 1. PROJEKSİYONLAR ARASI MONTAJ, EKSEN VE MESAFE MATRİSİ HESABI
+  const ipSurfaces = useMemo(() => {
+    return calculatedSurfaces && calculatedSurfaces.length > 0 ? calculatedSurfaces : surfaces;
+  }, [calculatedSurfaces, surfaces]);
   const [archRotation, setArchRotation] = useState<0 | 90 | 180 | 270>((meta.archPlanRotation as (0 | 90 | 180 | 270)) || 0);
+  const [enabledSurfaceIds, setEnabledSurfaceIds] = useState<string[]>(() => (calculatedSurfaces && calculatedSurfaces.length > 0 ? calculatedSurfaces : surfaces).map(s => s.id));
+
+  useEffect(() => {
+    if (ipSurfaces && ipSurfaces.length > 0 && enabledSurfaceIds.length === 0) {
+      setEnabledSurfaceIds(ipSurfaces.map(s => s.id));
+    }
+  }, [ipSurfaces]);
 
   useEffect(() => {
     if (meta.archPlanRotation !== undefined && meta.archPlanRotation !== archRotation) {
       setArchRotation(meta.archPlanRotation);
     }
   }, [meta.archPlanRotation]);
-
-  // 1. PROJEKSİYONLAR ARASI MONTAJ, EKSEN VE MESAFE MATRİSİ HESABI
-  const ipSurfaces = useMemo(() => {
-    return calculatedSurfaces && calculatedSurfaces.length > 0 ? calculatedSurfaces : surfaces;
-  }, [calculatedSurfaces, surfaces]);
 
   const interProjectorAnalysis = useMemo(() => {
     // Elektrik yüklerinden projektör gücünü al, yoksa 1350W varsay
@@ -90,6 +96,8 @@ export default function ReportGenerator() {
     led: ledSnap,
     electrical,
     equipmentList,
+    plannerSurfaces: ipSurfaces,
+    enabledSurfaceIds,
   }), [
     lang,
     meta,
@@ -103,6 +111,8 @@ export default function ReportGenerator() {
     ledSnap,
     electrical,
     equipmentList,
+    ipSurfaces,
+    enabledSurfaceIds,
   ]);
 
   const printPdf = () => {
@@ -328,6 +338,32 @@ export default function ReportGenerator() {
                       {deg}°
                     </button>
                   ))}
+                </div>
+              )}
+              {k === 'multiProjector' && sections.multiProjector && (
+                <div className="ml-6 mt-1 p-2 space-y-1.5 rounded bg-slate-900 border border-slate-800 text-[11px]">
+                  <span className="text-amber-300 font-bold block text-[10.5px]">Ayrı Eklenecek Yüzeyler:</span>
+                  {ipSurfaces.map(s => {
+                    const isChecked = enabledSurfaceIds.includes(s.id);
+                    return (
+                      <label key={s.id} className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setEnabledSurfaceIds(prev => [...prev, s.id]);
+                            } else {
+                              setEnabledSurfaceIds(prev => prev.filter(id => id !== s.id));
+                            }
+                          }}
+                        />
+                        <span className={isChecked ? 'text-sky-300 font-semibold' : 'text-slate-400'}>
+                          {s.name} ({s.cols}×{s.rows} PJ)
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </div>

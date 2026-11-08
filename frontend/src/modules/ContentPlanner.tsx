@@ -300,6 +300,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [show2dDimensions, setShow2dDimensions] = useState<boolean>(true);
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [canvasRotation, setCanvasRotation] = useState<0 | 90 | 180 | 270>(0);
+  const [surfaceViewFilter, setSurfaceViewFilter] = useState<string>('all');
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
@@ -2280,6 +2281,49 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
+          {/* YÜZEY BAZLI AYRI AÇINIM FİLTRESİ (ZEMİN, SAĞ DUVAR, SOL DUVAR AYRI AYRI İNCELENEBİLİR VE RAPORA EKLENEBİLİR) */}
+          {viewMode === '2d' && (
+            <div className="flex flex-wrap items-center gap-1.5 p-1.5 rounded bg-slate-900 border border-sky-900/70 text-[11px] mb-2">
+              <span className="font-bold text-amber-400 flex items-center gap-1">
+                <span>👁️ Yüzey Açınımı:</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSurfaceViewFilter('all')}
+                className={`px-2.5 py-1 rounded font-bold transition ${
+                  surfaceViewFilter === 'all'
+                    ? 'bg-sky-600 text-white shadow'
+                    : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800'
+                }`}
+              >
+                Tüm Oda (Birleşik Kanvas)
+              </button>
+              {(surfaceViewFilter === "all" ? calculation.surfaces : calculation.surfaces.filter(s => s.id === surfaceViewFilter)).map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    setSurfaceViewFilter(s.id);
+                    setSelectedId(s.id);
+                  }}
+                  className={`px-2 py-1 rounded font-semibold transition flex items-center gap-1 ${
+                    surfaceViewFilter === s.id
+                      ? 'bg-amber-600 text-white shadow border border-amber-400 font-bold'
+                      : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  <span>{s.name}</span>
+                  <span className="text-[9.5px] opacity-80 font-mono">({s.cols}×{s.rows} PJ)</span>
+                </button>
+              ))}
+              {surfaceViewFilter !== 'all' && (
+                <span className="text-emerald-400 text-[10px] ml-auto hidden sm:inline">
+                  ✓ Şu an yalnızca seçili yüzey görüntüleniyor ("📋 2B Açınımı Rapora Ekle" ile sadece bu yüzeyi rapora aktarabilirsiniz)
+                </span>
+              )}
+            </div>
+          )}
+
           {/* CANLI İNTERAKTİF 2B PIXEL MAP ÇİZİMİ VEYA 3B ODA PROJEKSİYON SİMÜLASYONU */}
           <div
             className={`border border-slate-700 rounded bg-slate-950 p-3 flex flex-col ${
@@ -2454,7 +2498,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                       strokeDasharray={`${baseFont * 0.4} ${baseFont * 0.25}`}
                     />
 
-                    {calculation.surfaces.map(s => {
+                    {(surfaceViewFilter === "all" ? calculation.surfaces : calculation.surfaces.filter(s => s.id === surfaceViewFilter)).map(s => {
                       const sx = padLeft + s.posX;
                       const sy = padTop + s.posY;
                       const isSel = s.id === activeSurface?.id;
