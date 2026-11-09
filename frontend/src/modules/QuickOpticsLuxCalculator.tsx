@@ -4,25 +4,56 @@ import { LengthUnit, toMeters, fromMeters, round } from '../engine/units';
 import { usePhotometricStore } from '../photometricStore';
 import { useProjectStore } from '../projectStore';
 
+const STORAGE_KEY = 'quick_lux_calculator_persist_v1';
+
+function loadStoredConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+}
+
 export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: LengthUnit }) {
-  // Bağımsız Proje Bilgileri
-  const [projectName, setProjectName] = useState('Sergi Alanı Projeksiyon Parlaklık & Lens Hesabı');
-  const [preparedBy, setPreparedBy] = useState('AV & Projeksiyon Tasarım Ekibi');
+  const initial = useMemo(() => loadStoredConfig(), []);
+
+  // Bağımsız Proje Bilgileri (Kalıcı State)
+  const [projectName, setProjectName] = useState<string>(initial?.projectName ?? 'Sergi Alanı Projeksiyon Parlaklık & Lens Hesabı');
+  const [preparedBy, setPreparedBy] = useState<string>(initial?.preparedBy ?? 'AV & Projeksiyon Tasarım Ekibi');
 
   // 1. Ekran Geometrisi
-  const [screenW, setScreenW] = useState<number>(12.0); // metre
-  const [screenH, setScreenH] = useState<number>(3.5);  // metre
+  const [screenW, setScreenW] = useState<number>(initial?.screenW ?? 12.0); // metre
+  const [screenH, setScreenH] = useState<number>(initial?.screenH ?? 3.5);  // metre
 
   // 2. Projektör & Lens
-  const [projCount, setProjCount] = useState<number>(3);
-  const [lumensPerProj, setLumensPerProj] = useState<number>(7000); // ANSI Lümen
-  const [throwDistM, setThrowDistM] = useState<number>(4.2);        // Atım mesafesi (m)
-  const [throwRatio, setThrowRatio] = useState<number>(0.80);       // Lens Throw Ratio (TR)
-  const [opticalEfficiency, setOpticalEfficiency] = useState<number>(90); // %90 Lens & motor verimi
+  const [projCount, setProjCount] = useState<number>(initial?.projCount ?? 3);
+  const [lumensPerProj, setLumensPerProj] = useState<number>(initial?.lumensPerProj ?? 7000); // ANSI Lümen
+  const [throwDistM, setThrowDistM] = useState<number>(initial?.throwDistM ?? 4.2);        // Atım mesafesi (m)
+  const [throwRatio, setThrowRatio] = useState<number>(initial?.throwRatio ?? 0.80);       // Lens Throw Ratio (TR)
+  const [opticalEfficiency, setOpticalEfficiency] = useState<number>(initial?.opticalEfficiency ?? 90); // %90 Lens & motor verimi
 
   // 3. Ekran ve Ortam Koşulları
-  const [screenGain, setScreenGain] = useState<number>(1.0);  // Kazanç
-  const [ambientLux, setAmbientLux] = useState<number>(50);   // Müze ortam ışığı (Lux)
+  const [screenGain, setScreenGain] = useState<number>(initial?.screenGain ?? 1.0);  // Kazanç
+  const [ambientLux, setAmbientLux] = useState<number>(initial?.ambientLux ?? 50);   // Müze ortam ışığı (Lux)
+
+  // Değerler değiştikçe LocalStorage'a kaydet (Asla başa dönmez!)
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        projectName,
+        preparedBy,
+        screenW,
+        screenH,
+        projCount,
+        lumensPerProj,
+        throwDistM,
+        throwRatio,
+        opticalEfficiency,
+        screenGain,
+        ambientLux,
+      }));
+    } catch (e) {}
+  }, [projectName, preparedBy, screenW, screenH, projCount, lumensPerProj, throwDistM, throwRatio, opticalEfficiency, screenGain, ambientLux]);
 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
@@ -193,39 +224,57 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     let calculatedMin = Infinity;
     let calculatedMax = -Infinity;
 
+    // Pürüzsüz Edge-Blend ve Doğal Lens Vinyet Isı Haritası Motoru
     for (let r = 0; r < rows; r++) {
       gridLux[r] = [];
       const yM = ((r + 0.5) / rows) * screenH;
+      const dy = (yM - screenH / 2) / (singleH / 2);
+      const isInsideY = Math.abs(dy) <= 1.02;
+
       for (let c = 0; c < cols; c++) {
         const xM = ((c + 0.5) / cols) * screenW;
 
         let totalCellFlux = 0;
+
         for (let p = 0; p < projCount; p++) {
-          const pjCenterX = projCount > 1 ? (p * step + singleW / 2) : screenW / 2;
-          const pjCenterY = screenH / 2;
+          const pjStartX = projCount > 1 ? (p * step) : (screenW - singleW) / 2;
+          const pjEndX = pjStartX + singleW;
+          const pjCenterX = (pjStartX + pjEndX) / 2;
 
-          const dx = (xM - pjCenterX) / (singleW / 2);
-          const dy = (yM - pjCenterY) / (singleH / 2);
+          // xM bu projektörün sınırları içinde ve yükseklik uygun mu?
+          if (xM >= pjStartX && xM <= pjEndX && isInsideY) {
+            // 1. Soft Edge-Blending Geçiş Katsayısı:
+            let blendFactor = 1.0;
+            if (projCount > 1 && calc.overlapM > 0) {
+              // Sol kenar örtüşme rampası
+              if (p > 0 && xM < pjStartX + calc.overlapM) {
+                const t = (xM - pjStartX) / calc.overlapM;
+                blendFactor = 0.5 * (1 - Math.cos(Math.PI * t)); // Pürüzsüz kosinüs S-eğrisi
+              }
+              // Sağ kenar örtüşme rampası
+              else if (p < projCount - 1 && xM > pjEndX - calc.overlapM) {
+                const t = (pjEndX - xM) / calc.overlapM;
+                blendFactor = 0.5 * (1 - Math.cos(Math.PI * t));
+              }
+            }
 
-          // Projektör dikdörtgen kapsama sınırları içindeyse
-          if (Math.abs(dx) <= 1.05 && Math.abs(dy) <= 1.05) {
-            // Merkezden radyal normalize mesafe (0 merkez, 1.41 en uç köşe)
-            const radDist = Math.sqrt(dx * dx + dy * dy) / 1.414;
-            // Gerçek lens optik düşüşü: Merkez 1.0 iken en uç köşe uniformity oranına göre dengelenir.
-            // Asla sıfıra düşmez! Merkez 600 lx ise köşe ~480 lx seviyesindedir.
-            const cornerDropRatio = 1.0 - (calc.uniformityU0 / 100);
-            const lensFactor = Math.max(0.4, 1.0 - radDist * cornerDropRatio * 1.15);
-            totalCellFlux += lensFactor;
+            // 2. Doğal Lens Vinyet Eğrisi (Köşelere doğru hafif optik düşüş)
+            const dx = (xM - pjCenterX) / (singleW / 2);
+            const distNorm = Math.sqrt(dx * dx + dy * dy) / 1.414;
+            const drop = (1.0 - (calc.uniformityU0 / 100)) * 0.9;
+            const lensFactor = Math.max(0.5, 1.0 - distNorm * drop);
+
+            totalCellFlux += lensFactor * blendFactor;
           }
         }
 
-        // Efektif hücre aydınlığı
         let cellLux = 0;
         if (totalCellFlux > 0) {
-          cellLux = Math.round((totalCellFlux * calc.avgLux) / Math.max(1, projCount > 1 ? 1.08 : 0.95));
+          // Hücre aydınlığı: ortalama lux ile kalibre edilir
+          cellLux = Math.round(totalCellFlux * calc.avgLux);
         } else {
-          // Projektör ışığının yetişmediği kör nokta
-          cellLux = Math.round(calc.avgLux * 0.15);
+          // Projektörün kaplayamadığı açıkta kalan kör nokta
+          cellLux = Math.round(calc.avgLux * 0.12);
         }
 
         gridLux[r][c] = cellLux;
@@ -234,9 +283,9 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       }
     }
 
-    // Renk skalası aralığı: perdenin gerçek min ve max lux sınırları
-    const minL = Math.min(calc.minLux, Math.max(30, calculatedMin));
-    const maxL = Math.max(calc.maxLux, calculatedMax, minL + 100);
+    // Renk skalası: Kontrastı dengeli, pürüzsüz ve gerçekçi termal aydınlık aralığı
+    const minL = Math.max(30, Math.min(calc.minLux * 0.92, calculatedMin));
+    const maxL = Math.max(minL + 50, Math.max(calc.maxLux * 1.04, calculatedMax));
 
     // Isı haritası boyama
     for (let r = 0; r < rows; r++) {

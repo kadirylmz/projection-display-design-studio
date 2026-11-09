@@ -322,7 +322,19 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
   }, [plannerSurfaces, selectedSurfaceId, importFromPlannerSurface, defaultProjectorLumens, projectors.length]);
 
   // Basit Hesaplama vs Detaylı Fotometrik Modu
-  const [calcMode, setCalcMode] = useState<'quick_report' | 'advanced'>('quick_report');
+  const [calcMode, setCalcMode] = useState<'quick_report' | 'advanced'>(() => {
+    try {
+      const saved = localStorage.getItem('lux_active_calc_mode');
+      if (saved === 'quick_report' || saved === 'advanced') return saved as 'quick_report' | 'advanced';
+    } catch (e) {}
+    return 'quick_report';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('lux_active_calc_mode', calcMode);
+    } catch (e) {}
+  }, [calcMode]);
 
   // Hover Durumu (Isı Haritası Tooltip)
   const [hoveredCell, setHoveredCell] = useState<{
