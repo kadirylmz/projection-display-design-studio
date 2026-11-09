@@ -62,7 +62,7 @@ export interface SurfaceItem {
     density?: { x: number; y: number };
     dimensions?: { x: number; y: number };
   };
-  customProjectorOffsets?: Record<string, { shiftX: number; shiftY: number; shiftZ?: number }>;
+  customProjectorOffsets?: Record<string, { shiftX: number; shiftY: number; shiftZ?: number; rotYaw?: number; rotPitch?: number; rotRoll?: number }>;
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -303,6 +303,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [surfaceViewFilter, setSurfaceViewFilter] = useState<string>('all');
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [plannerViewMode, setPlannerViewMode] = useState<'simple' | 'detailed'>('simple');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
   const [report2dToast, setReport2dToast] = useState(false);
   const svg2dRef = useRef<SVGSVGElement | null>(null);
@@ -1238,7 +1239,47 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   };
 
   return (
-    <div className="space-y-3 h-full flex flex-col text-xs">
+    <div className="space-y-2.5 h-full flex flex-col text-xs">
+      {/* 🌟 EN ÜST SADELEŞTİRME VE GÖRÜNÜM MODU BAR'I */}
+      <div className="bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 flex flex-wrap justify-between items-center gap-2 shadow-md">
+        <div className="flex items-center gap-2">
+          <span className="text-base text-sky-400">📐</span>
+          <div>
+            <span className="font-bold text-slate-100 text-xs sm:text-sm">İçerik & Çözünürlük Planlama</span>
+            <span className="text-[10px] text-slate-400 ml-2">
+              {plannerViewMode === 'simple'
+                ? '🟢 Sade Menü (En sık kullanılan temel yüzey ve projektör ayarları)'
+                : '🔬 Detaylı Ayarlar (Optik mm/px, overlap, oda kabuğu ve formül dökümleri)'}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center bg-slate-950 p-1 rounded-md border border-slate-800 gap-1">
+          <button
+            type="button"
+            onClick={() => setPlannerViewMode('simple')}
+            className={`px-3 py-1 rounded text-xs font-bold transition flex items-center gap-1.5 ${
+              plannerViewMode === 'simple'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>🟢 Sade Menü</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlannerViewMode('detailed')}
+            className={`px-3 py-1 rounded text-xs font-bold transition flex items-center gap-1.5 ${
+              plannerViewMode === 'detailed'
+                ? 'bg-purple-600 text-white shadow'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>🔬 Detaylı Ayarlar</span>
+          </button>
+        </div>
+      </div>
+
       {/* ÜST ARAÇ ÇUBUĞU: HESAPLAMA MODU & HIZLI GEOMETRİ ŞABLONLARI */}
       <div className="bg-slate-900 p-2.5 rounded border border-slate-800 flex flex-wrap justify-between items-center gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -1408,7 +1449,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
               })}
             </div>
 
-            {/* 1.5 FİZİKSEL ODA KABUĞU ÖLÇÜLERİ (Duvar Projeksiyon Alanından Bağımsız Mimari Oda) */}
+            {/* 1.5 FİZİKSEL ODA KABUĞU ÖLÇÜLERİ (Sadece Detaylı Modda Gösterilir) */}
+            {plannerViewMode === 'detailed' && (
             <div className="p-2.5 rounded bg-slate-950 border border-indigo-800/70 space-y-2 mt-2">
               <div className="flex justify-between items-center">
                 <label className="flex items-center gap-1.5 cursor-pointer font-bold text-indigo-300 text-[11px]">
@@ -1474,10 +1516,228 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 </div>
               )}
             </div>
+            )}
           </div>
 
           {/* 2. SEÇİLİ YÜZEYİN GEOMETRİ, UZAKLIK, LENS VE PİKSEL YOĞUNLUĞU EDİTÖRÜ */}
-          {activeSurface && (
+          {activeSurface && plannerViewMode === 'simple' && (
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-emerald-800/80 space-y-3.5 shadow-xl">
+              {/* Başlık ve Hızlı Bilgi */}
+              <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={activeSurface.color}
+                    onChange={e => updateSurface(activeSurface.id, { color: e.target.value })}
+                    className="w-5 h-5 rounded cursor-pointer bg-transparent border-0"
+                  />
+                  <div>
+                    <span className="font-bold text-white text-sm">{activeSurface.name}</span>
+                    <span className="text-[10px] text-slate-400 ml-2">
+                      ({activeSurface.geometry === 'flat' ? 'Düz Yüzey' : GEOMETRY_LABELS[activeSurface.geometry] || activeSurface.geometry})
+                    </span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono text-xs font-extrabold shadow">
+                  {activeSurface.netW} × {activeSurface.netH} px
+                </span>
+              </div>
+
+              {/* 1. Yüzey Adı & Boyutları */}
+              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                <div className="text-[11px] font-bold text-sky-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>1. Yüzey Ölçüleri:</span>
+                  <span className="text-[10px] text-slate-400 font-mono font-normal">
+                    Oran: {activeSurface.aspectPhysical} : 1
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {activeSurface.geometry === 'circle_floor' ? 'Zemin Çapı D (m):' : 'Genişlik (m):'}
+                    </label>
+                    <input
+                      className="inp font-bold text-sky-300"
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      value={activeSurface.widthM}
+                      onChange={e => updateSurface(activeSurface.id, { widthM: Math.max(0.1, +e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {activeSurface.geometry === 'circle_floor' ? 'Zemin Yarıçapı R (m):' : 'Yükseklik (m):'}
+                    </label>
+                    <input
+                      className="inp font-bold text-sky-300"
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      value={activeSurface.heightM}
+                      onChange={e => updateSurface(activeSurface.id, { heightM: Math.max(0.1, +e.target.value) })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Projektör Dizilimi & Çözünürlük */}
+              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>2. Projektör Donanımı & Adedi:</span>
+                  <span className="text-[10px] text-amber-300 font-mono">
+                    Toplam {activeSurface.cols * activeSurface.rows} Cihaz ({activeSurface.cols}×{activeSurface.rows})
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Projektör Modeli / Çözünürlük:</label>
+                    <select
+                      className="inp font-semibold text-slate-200"
+                      value={activeSurface.resIdx}
+                      onChange={e => updateSurface(activeSurface.id, { resIdx: +e.target.value })}
+                    >
+                      {RESOLUTIONS.map((r, i) => (
+                        <option key={i} value={i}>{r.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Yönelim (Oryantasyon):</label>
+                    <select
+                      className="inp font-semibold text-slate-200"
+                      value={activeSurface.orient}
+                      onChange={e => updateSurface(activeSurface.id, { orient: e.target.value as 'landscape' | 'portrait' })}
+                    >
+                      <option value="landscape">Yatay (Landscape)</option>
+                      <option value="portrait">Dikey (Portrait 90°)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-900">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Yatay Projektör Sayısı (N):</label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => updateSurface(activeSurface.id, { cols: Math.max(1, activeSurface.cols - 1) })}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-200 font-bold border border-slate-700"
+                      >
+                        -
+                      </button>
+                      <span className="flex-1 text-center font-mono font-bold text-amber-400 bg-slate-900 py-1 rounded border border-slate-800 text-sm">
+                        {activeSurface.cols}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateSurface(activeSurface.id, { cols: activeSurface.cols + 1 })}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-200 font-bold border border-slate-700"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Dikey Sıra Sayısı (M):</label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => updateSurface(activeSurface.id, { rows: Math.max(1, activeSurface.rows - 1) })}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-200 font-bold border border-slate-700"
+                      >
+                        -
+                      </button>
+                      <span className="flex-1 text-center font-mono font-bold text-amber-400 bg-slate-900 py-1 rounded border border-slate-800 text-sm">
+                        {activeSurface.rows}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateSurface(activeSurface.id, { rows: activeSurface.rows + 1 })}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-xs text-slate-200 font-bold border border-slate-700"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Atım Mesafesi (Throw Distance) & Lens */}
+              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>3. Atım Mesafesi & Lens:</span>
+                  <button
+                    type="button"
+                    onClick={() => updateSurface(activeSurface.id, { throwDistM: activeSurface.requiredThrowDistM })}
+                    className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900"
+                    title="Projektör mesafesini duvar yüksekliğini tam dolduracak optik mesafeye eşitler"
+                  >
+                    Duvara Eşitle ({activeSurface.requiredThrowDistM}m)
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Atım Uzaklığı (m):</label>
+                    <input
+                      className="inp font-bold text-emerald-300"
+                      type="number"
+                      step="0.1"
+                      min="0.5"
+                      value={activeSurface.throwDistM}
+                      onChange={e => updateSurface(activeSurface.id, { throwDistM: Math.max(0.5, +e.target.value) })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Lens Throw Ratio (TR):</label>
+                    <input
+                      className="inp font-bold text-emerald-300"
+                      type="number"
+                      step="0.05"
+                      min="0.15"
+                      value={activeSurface.throwRatio}
+                      onChange={e => updateSurface(activeSurface.id, { throwRatio: Math.max(0.15, +e.target.value) })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Büyük Sonuç Rozeti ve İnce Ayar Butonu */}
+              <div className="bg-gradient-to-r from-slate-950 to-slate-900 p-3 rounded-lg border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Net İçerik Çözünürlüğü:</span>
+                    <div className="text-xl font-extrabold text-emerald-400 font-mono tracking-tight">
+                      {activeSurface.netW} × {activeSurface.netH} px
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 block">Piksel Yoğunluğu:</span>
+                    <span className="text-sm font-bold text-sky-400 font-mono">
+                      {activeSurface.avgMmPerPx} mm/px
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">
+                    Özel overlap, milimetrik lens eğrileri veya mimari kabuk için:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPlannerViewMode('detailed')}
+                    className="px-2.5 py-1 rounded bg-purple-900/80 hover:bg-purple-800 text-purple-200 border border-purple-700 text-[10.5px] font-semibold transition"
+                  >
+                    🔬 Detaylı Ayarları Göster ➔
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 2. SEÇİLİ YÜZEYİN DETAYLI EDİTÖRÜ (SADECE DETAYLI MODDA) */}
+          {activeSurface && plannerViewMode === 'detailed' && (
             <div className="p-3 rounded bg-slate-900 border border-sky-800/80 space-y-3">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                 <div className="flex items-center gap-2">

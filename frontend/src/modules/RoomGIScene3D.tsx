@@ -27,7 +27,9 @@ function createHeatmapCanvasTexture(
   rows: number,
   mode: 'total' | 'direct' | 'indirect' | 'reflectance',
   globalMin: number,
-  globalMax: number
+  globalMax: number,
+  bounceBoost: number = 1.0,
+  usePerceptualScale: boolean = true
 ): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   const scale = 24;
@@ -44,9 +46,16 @@ function createHeatmapCanvasTexture(
 
     patches.forEach(p => {
       let val = p.totalLux;
-      if (mode === 'direct') val = p.directLux;
-      else if (mode === 'indirect') val = p.indirectLux;
-      else if (mode === 'reflectance') val = p.reflectance * 100;
+      if (mode === 'direct') {
+        val = p.directLux;
+      } else if (mode === 'indirect') {
+        val = p.indirectLux * bounceBoost;
+      } else if (mode === 'total') {
+        // Doğrudan ışık + güçlendirilmiş seken ışık (karanlık duvarları aydınlatmak için)
+        val = p.directLux + (p.indirectLux * bounceBoost);
+      } else if (mode === 'reflectance') {
+        val = p.reflectance * 100;
+      }
 
       let r = 0, g = 0, b = 0;
       if (mode === 'reflectance') {
@@ -55,7 +64,16 @@ function createHeatmapCanvasTexture(
         g = grey;
         b = grey;
       } else {
-        [r, g, b] = getLuxColorRGB(val, globalMin, globalMax);
+        if (usePerceptualScale && mode !== 'direct' && globalMax > globalMin) {
+          // İnsan gözünün ışık algısına uygun gama/logaritmik eşleme: seken hafif ışıklar da görünür olsun
+          const norm = Math.max(0, Math.min(1, (val - globalMin) / (globalMax - globalMin || 1)));
+          // Karekök / gama 0.55 ile düşük lüks tonlarını canlandır
+          const mappedNorm = Math.pow(norm, 0.55);
+          const mappedVal = globalMin + mappedNorm * (globalMax - globalMin);
+          [r, g, b] = getLuxColorRGB(mappedVal, globalMin, globalMax);
+        } else {
+          [r, g, b] = getLuxColorRGB(val, globalMin, globalMax);
+        }
       }
 
       // Canvas koordinatlarında Y yukarıdan aşağı gider
@@ -87,8 +105,12 @@ function GISurfaceMesh({
   mode,
   globalMin,
   globalMax,
+  bounceBoost,
+  usePerceptualScale,
   onSelect,
 }: {
+  bounceBoost?: number;
+  usePerceptualScale?: boolean;
   surfaceDef: RoomSurfaceDef;
   surfaceResult?: RoomGISimulationResult['surfaces'][0];
   isSelected: boolean;
@@ -107,9 +129,11 @@ function GISurfaceMesh({
       surfaceResult.rows,
       mode,
       globalMin,
-      globalMax
+      globalMax,
+      bounceBoost || 1.0,
+      usePerceptualScale ?? true
     );
-  }, [surfaceResult, mode, globalMin, globalMax]);
+  }, [surfaceResult, mode, globalMin, globalMax, bounceBoost, usePerceptualScale]);
 
   // Normal ve teğet vektörlerinden Three.js rotasyonu
   const rotationEuler = useMemo(() => {
@@ -182,6 +206,65 @@ function GISurfaceMesh({
 /**
  * 3B Sahne İçi Projektör Modelleri ve Işık Konileri
  */
+
+/**
+ * 3B Yüzeyler Arası Işık Sekme Işınları (Inter-Wall Light Bounce Rays)
+ * Ön projeksiyon duvarından yan duvarlara, tavana ve zemine sıçrayan ışık akışını somut çizgilerle gösterir.
+ */
+function InterWallBounceRays({
+  surfaces,
+  bounceBoost,
+}: {
+  surfaces: RoomSurfaceDef[];
+  bounceBoost: number;
+}) {
+  const frontWall = surfaces.find(s => s.type === 'front_wall' || s.id === 'front_wall');
+  const otherSurfaces = surfaces.filter(s => s.id !== frontWall?.id);
+
+  if (!frontWall) return null;
+
+  return (
+    <group>
+      {otherSurfaces.map(other => {
+        const startPos = frontWall.centerPos;
+        const endPos = other.centerPos;
+        // Orta kavis noktası
+        const midX = (startPos[0] + endPos[0]) / 2;
+        const midY = (startPos[1] + endPos[1]) / 2 + 0.35;
+        const midZ = (startPos[2] + endPos[2]) / 2;
+
+        return (
+          <group key={`bounce-${frontWall.id}-${other.id}`}>
+            {/* Sekme Işını (Kavisli 3 Nokta) */}
+            <DreiLine
+              points={[startPos, [midX, midY, midZ], endPos]}
+              color={other.type === 'floor' ? '#f59e0b' : other.type === 'ceiling' ? '#38bdf8' : '#10b981'}
+              lineWidth={Math.min(4, 1.8 * bounceBoost)}
+              dashed
+              dashSize={0.4}
+              gapSize={0.25}
+              transparent
+              opacity={0.75}
+            />
+            {/* Sekme Etiket Rozeti */}
+            <DreiText
+              position={[midX, midY + 0.15, midZ]}
+              fontSize={0.22}
+              color="#fef08a"
+              anchorX="center"
+              anchorY="bottom"
+              outlineWidth={0.03}
+              outlineColor="#020617"
+            >
+              {`➔ ${other.name}`}
+            </DreiText>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 function GIProjectorFrustums({ projectors }: { projectors: ProjectorGISource[] }) {
   return (
     <group>
@@ -272,6 +355,13 @@ export default function RoomGIScene3D() {
     setSurfaceMaterial,
   } = usePhotometricStore();
 
+  // Yansıma / Sekme Belirginlik Çarpanı (1x fiziksel, 2x, 3x, 5x yüksek görünürlük)
+  const [bounceBoost, setBounceBoost] = useState<number>(2.0);
+  // Yüzeyler Arası Sekme Işın Çizgileri
+  const [showBounceRays, setShowBounceRays] = useState<boolean>(true);
+  // Perseptüel renk eşleme
+  const [usePerceptualScale, setUsePerceptualScale] = useState<boolean>(true);
+
   const roomW = physicalRoom?.widthM || 23.3;
   const roomL = physicalRoom?.lengthM || 7.0;
   const roomH = physicalRoom?.heightM || 4.3;
@@ -306,7 +396,7 @@ export default function RoomGIScene3D() {
     );
   }, [roomSurfaces, giProjectors, giBounceCount, giResolution]);
 
-  // Global Min & Max Lüks
+  // Global Min & Max Lüks (Seken Işıklar ve Yansıma Çarpanı ile Uyumlu)
   const { globalMin, globalMax } = useMemo(() => {
     let min = Infinity;
     let max = -Infinity;
@@ -314,9 +404,16 @@ export default function RoomGIScene3D() {
     giResult.surfaces.forEach(s => {
       s.patches.forEach(p => {
         let v = p.totalLux;
-        if (giViewMode === 'direct') v = p.directLux;
-        else if (giViewMode === 'indirect') v = p.indirectLux;
-        else if (giViewMode === 'reflectance') v = p.reflectance * 100;
+        if (giViewMode === 'direct') {
+          v = p.directLux;
+        } else if (giViewMode === 'indirect') {
+          // Dolaylı ışık modunda yalnızca seken lükslerin min-max aralığı kullanılır (duvarlar kararmaz)
+          v = p.indirectLux * bounceBoost;
+        } else if (giViewMode === 'total') {
+          v = p.directLux + (p.indirectLux * bounceBoost);
+        } else if (giViewMode === 'reflectance') {
+          v = p.reflectance * 100;
+        }
 
         if (v < min) min = v;
         if (v > max) max = v;
@@ -326,7 +423,7 @@ export default function RoomGIScene3D() {
     if (min === Infinity) min = 0;
     if (max <= min) max = min + 100;
     return { globalMin: min, globalMax: max };
-  }, [giResult, giViewMode]);
+  }, [giResult, giViewMode, bounceBoost]);
 
   // Seçili Yüzey
   const selectedSurfResult = useMemo(() => {
@@ -435,6 +532,35 @@ export default function RoomGIScene3D() {
               </button>
             ))}
           </div>
+
+          {/* 🌟 Yansıma Vurgusu (Bounce Boost) */}
+          <div className="flex items-center bg-slate-950 px-2 py-1 rounded-lg border border-slate-800 text-xs gap-1" title="Yan duvarlara ve tavana seken ışıkların görsel belirginliğini artırır">
+            <span className="text-[10px] text-amber-400 font-semibold">Yansıma:</span>
+            {[1, 2, 3, 5].map(b => (
+              <button
+                key={b}
+                onClick={() => setBounceBoost(b)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono transition ${
+                  bounceBoost === b ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {b}x
+              </button>
+            ))}
+          </div>
+
+          {/* 🌟 Sekme Işın Çizgileri Toggle */}
+          <button
+            onClick={() => setShowBounceRays(!showBounceRays)}
+            className={`px-2 py-1 rounded-lg text-[10.5px] font-semibold border transition ${
+              showBounceRays
+                ? 'bg-amber-950/80 border-amber-500/60 text-amber-300'
+                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+            }`}
+            title="Ön duvardan yan duvarlara, tavana ve zemine sıçrayan ışık akış çizgilerini açıp kapatır"
+          >
+            {showBounceRays ? '⚡ Sekme Çizgileri: Açık' : '⚡ Sekme Çizgileri: Kapalı'}
+          </button>
         </div>
       </div>
 
@@ -474,10 +600,18 @@ export default function RoomGIScene3D() {
                   mode={giViewMode}
                   globalMin={globalMin}
                   globalMax={globalMax}
+                  bounceBoost={bounceBoost}
+                  usePerceptualScale={usePerceptualScale}
                   onSelect={setSelectedGISurfaceId}
                 />
               );
             })}
+
+            {/* PROJEKTÖR MODELLERİ VE IŞIK KONİLERİ */}
+            {/* YÜZEYLER ARASI SEKME IŞINLARI */}
+            {showBounceRays && (
+              <InterWallBounceRays surfaces={roomSurfaces} bounceBoost={bounceBoost} />
+            )}
 
             {/* PROJEKTÖR MODELLERİ VE IŞIK KONİLERİ */}
             <GIProjectorFrustums projectors={giProjectors} />
@@ -617,6 +751,108 @@ export default function RoomGIScene3D() {
           <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[10.5px] text-slate-400 leading-relaxed">
             <span className="font-bold text-amber-400">📌 Fiziksel Doğruluk Notu:</span> Malzeme yansıtma katsayısını değiştirdiğinizde, yüzeyden seken ışık miktarı (Radiosity $B = \rho \cdot E$) ve diğer duvarlara ulaşan dolaylı aydınlık anında yeniden simüle edilir.
           </div>
+        </div>
+      </div>
+      {/* 🌟 TÜM ODA DUVARLARI ARASI IŞIK SEKME VE YANSIMA MATRİSİ */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-base text-amber-400">📊</span>
+            <h4 className="font-bold text-xs sm:text-sm text-slate-100 uppercase tracking-wider">
+              Tüm Duvarların Birbirine Yansıyan Işıkları ve Sekme Matrisi
+            </h4>
+            <span className="text-[10px] bg-sky-950 text-sky-300 px-2 py-0.5 rounded border border-sky-800 font-mono">
+              {roomSurfaces.length} Oda Yüzeyi
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-400">
+            Doğrudan ışığın çarptığı ön duvardan yan duvarlara, tavana ve zemine seken ışık dökümü
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-slate-800 text-[11px] text-slate-400 bg-slate-950/60">
+                <th className="py-2 px-3 font-semibold">Oda Yüzeyi</th>
+                <th className="py-2 px-3 font-semibold">Boyut (G×Y)</th>
+                <th className="py-2 px-3 font-semibold">Malzeme / Yansıtma (ρ)</th>
+                <th className="py-2 px-3 font-semibold text-right text-sky-400">Doğrudan Lux (Direct)</th>
+                <th className="py-2 px-3 font-semibold text-right text-emerald-400">Seken / Dolaylı (Indirect)</th>
+                <th className="py-2 px-3 font-semibold text-right text-amber-300">Toplam Aydınlık (Total)</th>
+                <th className="py-2 px-3 font-semibold text-right">Sekme Katkısı</th>
+                <th className="py-2 px-3 font-center">İncele</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 font-mono">
+              {roomSurfaces.map(surf => {
+                const sRes = giResult.surfaces.find(s => s.id === surf.id);
+                const dirLux = Math.round(sRes?.avgDirectLux || 0);
+                const indLux = Math.round(sRes?.avgIndirectLux || 0);
+                const totLux = Math.round(sRes?.avgTotalLux || 0);
+                const bounceShare = totLux > 0 ? Math.round((indLux / totLux) * 100) : 0;
+                const isSelected = surf.id === selectedGISurfaceId;
+
+                return (
+                  <tr
+                    key={surf.id}
+                    onClick={() => setSelectedGISurfaceId(surf.id)}
+                    className={`cursor-pointer transition hover:bg-slate-800/50 ${
+                      isSelected ? 'bg-sky-950/40 border-l-2 border-sky-400' : ''
+                    }`}
+                  >
+                    <td className="py-2 px-3 font-sans font-medium text-slate-200 flex items-center gap-2">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: surf.material.color }}
+                      />
+                      <span>{surf.name}</span>
+                      {surf.type === 'front_wall' && (
+                        <span className="text-[9px] bg-sky-900/60 text-sky-300 px-1.5 py-0.2 rounded font-mono">
+                          Projeksiyon Duvarı
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-slate-400">
+                      {surf.widthM}m × {surf.heightM}m
+                    </td>
+                    <td className="py-2 px-3 text-slate-300 font-sans">
+                      {surf.material.name.split('(')[0].trim()}{' '}
+                      <span className="text-purple-400 font-mono font-bold">
+                        (%{(surf.material.diffuseReflectance * 100).toFixed(0)})
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-right text-sky-400 font-bold">
+                      {dirLux > 0 ? `${dirLux} lx` : '—'}
+                    </td>
+                    <td className="py-2 px-3 text-right text-emerald-400 font-bold">
+                      +{indLux} lx
+                    </td>
+                    <td className="py-2 px-3 text-right text-amber-300 font-bold text-sm">
+                      {totLux} lx
+                    </td>
+                    <td className="py-2 px-3 text-right">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        bounceShare > 50 ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'text-slate-400'
+                      }`}>
+                        %{bounceShare}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-center font-sans">
+                      <button
+                        type="button"
+                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
+                          isSelected ? 'bg-sky-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                        }`}
+                      >
+                        {isSelected ? 'Seçili' : 'Seç'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

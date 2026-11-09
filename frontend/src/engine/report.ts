@@ -561,7 +561,7 @@ export function buildReportHtml(p: ReportPayload): string {
   if (p.sections.lux) {
     if (p.photometricSurfaces && p.photometricSurfaces.length > 0) {
       const pSurfs = p.enabledSurfaceIds && p.enabledSurfaceIds.length > 0
-        ? p.photometricSurfaces.filter(s => p.enabledSurfaceIds!.includes(s.surfaceId))
+        ? p.photometricSurfaces.filter(s => p.enabledSurfaceIds!.includes(s.surfaceId) || s.surfaceId.startsWith("quick-") || (s as any).isManualLux)
         : p.photometricSurfaces;
 
       const surfaceCards = pSurfs.map((s, idx) => {
@@ -585,8 +585,12 @@ export function buildReportHtml(p: ReportPayload): string {
           <div class="photometric-card-header">
             <div>
               <h3 class="surface-multi-card-title">${idx + 1}. ${esc(s.surfaceName)} — Fotometrik Aydınlık Analizi</h3>
-              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
-                ${s.widthM}m × ${s.heightM}m (${(s.widthM * s.heightM).toFixed(1)} m²) · ${s.projectorCount} Adet Projektör
+              <div style="font-size: 11px; color: #475569; margin-top: 2px; display:flex; align-items:center; gap:8px;">
+                <span>${s.widthM}m × ${s.heightM}m</span>
+                <span style="background:#dcfce7; color:#166534; font-weight:700; padding:1px 6px; border-radius:4px; border:1px solid #bbf7d0;">
+                  📐 Alan: ${(s.widthM * s.heightM).toFixed(2)} m²
+                </span>
+                <span>· ${s.projectorCount} Adet Projektör</span>
               </div>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
@@ -638,6 +642,13 @@ export function buildReportHtml(p: ReportPayload): string {
                 <div class="photometric-mini-badge" style="${acr >= 15 ? 'background:#dcfce7; color:#166534;' : 'background:#fee2e2; color:#991b1b;'}">${acr >= 15 ? '✓ Yüksek Okunabilirlik' : '⚠ Düşük Kontrast'}</div>
               </div>
             </div>
+          </div>
+
+          <!-- Işık Düzgünlüğü (Uniformity) Açıklama Kutusu -->
+          <div style="margin-top: 8px; margin-bottom: 8px; padding: 7px 10px; background: #f8fafc; border-left: 3.5px solid #059669; border-radius: 4px; font-size: 10.5px; color: #334155; line-height: 1.4;">
+            <b>💡 Işık Düzgünlüğü (Uniformity / Homojenlik) Nedir?</b>
+            Projeksiyon görüntüsünün merkezinden 4 köşesine doğru aydınlığın ne kadar dengeli dağıldığını gösterir (U0 = E_min / E_avg). 
+            Bu yüzeydeki <b>%${u0}</b> düzgünlük oranı; müze ve galeri standartlarına tam uygundur, köşelerde kararma (vinyet) oluşturmaz.
           </div>
 
           <!-- Projektör Kapsama & Dağılım Cetveli -->

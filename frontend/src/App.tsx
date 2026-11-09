@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useState, useEffect } from 'react';
 import ScreenCalculator from './modules/ScreenCalculator';
 import ProjectorCalculator from './modules/ProjectorCalculator';
 import LuxCalculator from './modules/LuxCalculator';
@@ -38,6 +38,16 @@ const MODULES: Mod[] = [
 
 export default function App() {
   const [active, setActive] = useState('screen');
+
+  useEffect(() => {
+    const handleNav = (e: any) => {
+      if (e.detail && MODULES.some(m => m.id === e.detail)) {
+        setActive(e.detail);
+      }
+    };
+    window.addEventListener('navigate-module' as any, handleNav);
+    return () => window.removeEventListener('navigate-module' as any, handleNav);
+  }, []);
   const [unit, setUnit] = useState<LengthUnit>('m');
   const [dark, setDark] = useState(true);
   const mod = MODULES.find(m => m.id === active)!;

@@ -15,6 +15,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Text as DreiText, Line as DreiLine } from '@react-three/drei';
 import * as THREE from 'three';
 import RoomGIScene3D from './RoomGIScene3D';
+import QuickOpticsLuxCalculator from './QuickOpticsLuxCalculator';
 
 interface ScenarioComparisonItem {
   name: string;
@@ -35,13 +36,58 @@ interface ScenarioComparisonItem {
  */
 function Photometric3DScene({
   surface,
-  projectors
+  projectors,
+  simResult,
 }: {
   surface: Surface3DConfig;
   projectors: Projector3DConfig[];
+  simResult?: PhotometricSimulationResult;
 }) {
   const halfW = surface.widthM / 2;
   const halfH = surface.heightM / 2;
+
+  // Duvara kaplanacak 3D Lüks Isı Haritası Texture'ı
+  const heatmapTexture = useMemo(() => {
+    if (!simResult || !simResult.grid || simResult.grid.length === 0) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(256, simResult.cols * 16);
+    canvas.height = Math.max(256, simResult.rows * 16);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const cellW = canvas.width / simResult.cols;
+    const cellH = canvas.height / simResult.rows;
+    const min = simResult.minLux;
+    const max = Math.max(min + 1, simResult.maxLux);
+
+    for (let r = 0; r < simResult.rows; r++) {
+      for (let c = 0; c < simResult.cols; c++) {
+        const idx = r * simResult.cols + c;
+        const cell = simResult.grid[idx];
+        const val = cell ? cell.totalLux : 0;
+        const [red, green, blue] = getLuxColorRGB(val, min, max);
+
+        // Three.js UV koordinatında Y aşağıdan yukarıdır, Canvas'ta yukarıdan aşağıdır.
+        const py = (simResult.rows - 1 - r) * cellH;
+        ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
+        ctx.fillRect(c * cellW, py, cellW + 0.5, cellH + 0.5);
+
+        // İnce ızgara çizgisi
+        ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(c * cellW, py, cellW, cellH);
+      }
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    return tex;
+  }, [simResult]);
 
   return (
     <div className="relative w-full h-[520px] bg-slate-950 rounded-xl overflow-hidden border border-slate-800 shadow-2xl">
@@ -65,11 +111,15 @@ function Photometric3DScene({
           fadeDistance={60}
         />
 
-        {/* Projeksiyon Yüzeyi (Duvar / Zemin) */}
+        {/* Projeksiyon Yüzeyi (Duvar / Zemin) – Canlı Isı Haritası Kaplamalı */}
         <group position={[0, halfH, 0]}>
           <mesh>
             <planeGeometry args={[surface.widthM, surface.heightM]} />
-            <meshStandardMaterial color="#0f172a" roughness={0.7} metalness={0.1} />
+            {heatmapTexture ? (
+              <meshBasicMaterial map={heatmapTexture} side={THREE.DoubleSide} />
+            ) : (
+              <meshStandardMaterial color="#0f172a" roughness={0.7} metalness={0.1} side={THREE.DoubleSide} />
+            )}
           </mesh>
           <DreiLine
             points={[
@@ -156,9 +206,19 @@ function Photometric3DScene({
         })}
       </Canvas>
 
-      {/* 3D Bilgi Notu */}
-      <div className="absolute bottom-3 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 px-3 py-1.5 rounded-lg text-xs text-slate-300 pointer-events-none shadow-lg">
-        <span className="font-bold text-sky-400">💡 3B Mekansal Görünüm:</span> Fareyle sahneyi 360° çevirebilir, {projectors.filter(p => p.enabled).length} projektörün havada nerede asılı olduğunu ve {surface.widthM}m duvardaki dağılımını görebilirsiniz.
+      {/* 3D Bilgi Notu & Renk Skalası */}
+      <div className="absolute bottom-3 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 px-3 py-2 rounded-lg text-xs text-slate-300 pointer-events-none shadow-lg flex flex-wrap items-center gap-4">
+        <div>
+          <span className="font-bold text-sky-400">💡 3B Mekansal Lux Haritası:</span> Duvar üzerinde hesaplanan gerçek lüks ısı haritası renklendirilmiştir.
+        </div>
+        {simResult && (
+          <div className="flex items-center gap-2 pl-3 border-l border-slate-700 font-mono text-[11px]">
+            <span className="text-blue-400">{Math.round(simResult.minLux)} lx</span>
+            <div className="w-24 h-2.5 rounded bg-gradient-to-r from-blue-600 via-emerald-500 via-amber-400 to-red-500 border border-slate-700" />
+            <span className="text-red-400">{Math.round(simResult.maxLux)} lx</span>
+            <span className="text-slate-400 ml-1">Ort: <b className="text-emerald-300">{Math.round(simResult.avgLux)} lx</b></span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -260,6 +320,9 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       importFromPlannerSurface(plannerSurfaces[0], defaultProjectorLumens);
     }
   }, [plannerSurfaces, selectedSurfaceId, importFromPlannerSurface, defaultProjectorLumens, projectors.length]);
+
+  // Basit Hesaplama vs Detaylı Fotometrik Modu
+  const [calcMode, setCalcMode] = useState<'quick_report' | 'advanced'>('quick_report');
 
   // Hover Durumu (Isı Haritası Tooltip)
   const [hoveredCell, setHoveredCell] = useState<{
@@ -823,8 +886,76 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
   const uniEval = getUniformityEvaluation(simResult.uniformityU0);
   const acrEval = getContrastEvaluation(simResult.ambientContrastRatio);
 
+  // Basit Parlaklık Matematik Değerleri
+  const simpleAreaM2 = Math.max(0.1, toMeters(screenW, unit) * toMeters(screenH, unit));
+  const simpleProjCount = Math.max(1, activeProjectors.length || 1);
+  const simplePerProjLumens = activeProjectors[0]?.ansiLumens || defaultProjectorLumens || 6000;
+  const simpleTotalLumens = simpleProjCount * simplePerProjLumens;
+  const simpleOpticalEfficiency = 0.90; // Lens ve optik motor verimi
+  const simpleEffectiveLumens = simpleTotalLumens * simpleOpticalEfficiency;
+  const simpleAvgLux = Math.round(simpleEffectiveLumens / simpleAreaM2);
+  const simpleNits = Math.round((simpleAvgLux * screenGain) / Math.PI);
+  const simpleFL = (simpleNits * 0.2919).toFixed(1);
+  const simpleACR = ((simpleAvgLux + ambientLux) / Math.max(1, ambientLux)).toFixed(1);
+
   return (
-    <div className="flex flex-col lg:grid lg:grid-cols-[400px_1fr] gap-4 h-full text-slate-100 p-2 sm:p-4 overflow-hidden">
+    <div className="flex flex-col gap-4 h-full text-slate-100 p-2 sm:p-4 overflow-y-auto">
+      {/* 🌟 EN ÜST BÖLÜM SEÇİM ÇUBUĞU (Bağımsız Parlaklık & Lens Raporu vs Detaylı Simülasyon) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 sm:p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-sky-950 border border-sky-800 text-sky-400 font-bold text-lg">
+            💡
+          </div>
+          <div>
+            <h2 className="font-bold text-sm sm:text-base text-slate-100 flex items-center gap-2">
+              <span>Lux & Parlaklık Modülü</span>
+              <span className="text-[10px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-400 font-mono">
+                {calcMode === 'quick_report' ? 'Bağımsız Hesaplama & Rapor' : 'Mekansal Fotometrik Dağılım'}
+              </span>
+            </h2>
+            <p className="text-[11px] text-slate-400">
+              {calcMode === 'quick_report'
+                ? 'Diğer alanlardan bağımsız serbest giriş: Alan (m²), ortalama ekran luxu, yüzey nit/fL parlaklığı, ACR, ışık düzgünlüğü ve A4 teknik raporu.'
+                : 'Mekansal 2B Lüks Izgarası, 3B Oda Yansımaları (GI) ve Noktadan Noktaya Simülasyon.'}
+            </p>
+          </div>
+        </div>
+
+        {/* Bölüm Değiştirici Butonlar */}
+        <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 gap-1">
+          <button
+            type="button"
+            onClick={() => setCalcMode('quick_report')}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1.5 ${
+              calcMode === 'quick_report'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>💡 Bağımsız Parlaklık & Lens (Resmi Rapor)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCalcMode('advanced')}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1.5 ${
+              calcMode === 'advanced'
+                ? 'bg-purple-600 text-white shadow-md'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>🔬 Detaylı 2B/3B Fotometrik Simülasyon</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 💡 1. BAĞIMSIZ PARLAKLIK & LENS HESAPLAYICI (RESMİ RAPOR ALANI) */}
+      {calcMode === 'quick_report' && (
+        <QuickOpticsLuxCalculator unit={unit} />
+      )}
+
+      {/* 🔬 2. DETAYLI FOTOMETRİK GÖRÜNÜM (MEVCUT GÖRÜNÜM) */}
+      {calcMode === 'advanced' && (
+        <div className="flex flex-col lg:grid lg:grid-cols-[400px_1fr] gap-4 h-full text-slate-100 overflow-hidden">
       
       {/* SOL PANEL: KONTROLLER VE PARAMETRELER */}
       <div className="flex flex-col gap-3 bg-slate-900 border border-slate-800 rounded-xl p-4 overflow-y-auto max-h-[85vh] lg:max-h-full text-xs sm:text-sm shadow-xl">
@@ -1355,7 +1486,7 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         {/* 🌟 3B MEKANSAL SİMÜLASYON SEKMESİ */}
         {activeTab === '3d' && (
           <div className="space-y-3">
-            <Photometric3DScene surface={surfaceConfig} projectors={projectors} />
+            <Photometric3DScene surface={surfaceConfig} projectors={projectors} simResult={simResult} />
           </div>
         )}
 
@@ -1967,6 +2098,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         )}
 
       </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ export default function ReportGenerator() {
   const { meta, setMeta, projectionSnap, luxSnap, ledSnap, electrical, equipmentList, setEquipmentList } = useProjectStore();
   const { surfaces, calculatedSurfaces, physicalRoom } = usePlannerStore();
   const { slots } = useMapping();
+  const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
 
   const [lang, setLang] = useState<ReportLang>('tr');
   const [sections, setSections] = useState<ReportSectionFlags>(() => ({
@@ -28,10 +29,18 @@ export default function ReportGenerator() {
   const [enabledSurfaceIds, setEnabledSurfaceIds] = useState<string[]>(() => (calculatedSurfaces && calculatedSurfaces.length > 0 ? calculatedSurfaces : surfaces).map(s => s.id));
 
   useEffect(() => {
-    if (ipSurfaces && ipSurfaces.length > 0 && enabledSurfaceIds.length === 0) {
-      setEnabledSurfaceIds(ipSurfaces.map(s => s.id));
+    const allIds = [
+      ...ipSurfaces.map(s => s.id),
+      ...Object.keys(surfacePhotometrics).filter(id => !ipSurfaces.some(s => s.id === id))
+    ];
+    if (allIds.length > 0) {
+      setEnabledSurfaceIds(prev => {
+        // if prev is empty or misses standalone IDs, include them
+        const missing = allIds.filter(id => !prev.includes(id));
+        return missing.length > 0 ? [...prev, ...missing] : prev;
+      });
     }
-  }, [ipSurfaces]);
+  }, [ipSurfaces, surfacePhotometrics]);
 
   useEffect(() => {
     if (meta.archPlanRotation !== undefined && meta.archPlanRotation !== archRotation) {
@@ -82,10 +91,8 @@ export default function ReportGenerator() {
       : (meta.room3dSnapshotUrl ? [meta.room3dSnapshotUrl] : []);
   }, [meta.room3dSnapshots, meta.room3dSnapshotUrl]);
 
-  const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
-
   const reportPhotometricSurfaces = useMemo(() => {
-    return ipSurfaces.map(s => {
+    const fromPlanner = ipSurfaces.map(s => {
       if (surfacePhotometrics[s.id]) {
         return surfacePhotometrics[s.id];
       }
@@ -157,6 +164,11 @@ export default function ReportGenerator() {
         distributionRows: distRows,
       };
     });
+
+    const plannerIds = new Set(ipSurfaces.map(s => s.id));
+    const standaloneSurfaces = Object.values(surfacePhotometrics).filter(p => !plannerIds.has(p.surfaceId));
+
+    return [...fromPlanner, ...standaloneSurfaces];
   }, [ipSurfaces, surfacePhotometrics]);
 
   // 3. HTML RAPORUNU OLUŞTUR
@@ -398,6 +410,30 @@ export default function ReportGenerator() {
                 <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
                 <span className={k === 'led' ? (sections.led ? 'text-amber-300 font-bold' : 'text-slate-400') : ''}>{label}</span>
               </label>
+              {k === 'lux' && sections.lux && (
+                <div className="ml-6 mt-1 p-2 space-y-1 rounded bg-slate-900 border border-slate-800 text-[11px]">
+                  <span className="text-emerald-400 font-bold block text-[10.5px]">
+                    ✓ Rapora Eklenen Fotometrik Yüzeyler ({reportPhotometricSurfaces.length}):
+                  </span>
+                  {reportPhotometricSurfaces.length > 0 ? (
+                    reportPhotometricSurfaces.map(s => (
+                      <div key={s.surfaceId} className="flex items-center justify-between text-slate-300 py-0.5 border-b border-slate-800/60 last:border-0">
+                        <span className="truncate text-sky-300 font-medium">
+                          {s.surfaceId.startsWith('quick-') ? '💡 ' : '🧱 '}
+                          {s.surfaceName}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {(s.widthM * s.heightM).toFixed(1)} m² · {Math.round(s.avgLux)} lx
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <span className="text-[10px] text-slate-500 italic block">
+                      Henüz yüzey eklenmedi. "Lux & Parlaklık" sekmesinden aktarabilirsiniz.
+                    </span>
+                  )}
+                </div>
+              )}
               {k === 'architecturalPlan' && sections.architecturalPlan && (
                 <div className="flex items-center gap-1.5 ml-6 py-1 px-2 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-300">
                   <span className="text-slate-400 font-medium">🔄 Pafta Yönü:</span>

@@ -488,8 +488,14 @@ function ProjectorFrustum3D({
   showSurfaceFill = true,
   isCurvedSurface = false,
   isSelected = false,
+  rotYaw = 0,
+  rotPitch = 0,
+  rotRoll = 0,
   onSelectProjector,
 }: {
+  rotYaw?: number;
+  rotPitch?: number;
+  rotRoll?: number;
   pos: [number, number, number];
   targetCenter: [number, number, number];
   upVec: [number, number, number];
@@ -530,6 +536,23 @@ function ProjectorFrustum3D({
     const normal = new THREE.Vector3().crossVectors(r, u).normalize();
     if (normal.dot(p.clone().sub(c)) < 0) {
       normal.negate();
+    }
+
+    // Projektör Açı Rotasyonu (Yaw, Pitch, Roll) — Hem Duvar Hem Zemin Projektörlerini Eğip Bükme
+    if (rotYaw || rotPitch || rotRoll) {
+      const euler = new THREE.Euler(
+        (rotPitch * Math.PI) / 180,
+        (rotYaw * Math.PI) / 180,
+        (rotRoll * Math.PI) / 180,
+        'YXZ'
+      );
+      r.applyEuler(euler).normalize();
+      u.applyEuler(euler).normalize();
+      normal.applyEuler(euler).normalize();
+
+      // Projektör eğilip büküldüğünde ışık hedef merkezi ve ayak izi de açı doğrultusunda kayar
+      const rotatedTarget = p.clone().addScaledVector(normal, throwDist);
+      c.copy(rotatedTarget);
     }
 
     const halfW = imgW / 2;
@@ -585,6 +608,20 @@ function ProjectorFrustum3D({
 
     const isFloorProjector = Math.abs(normal.y) > 0.7;
     const planeD = normal.dot(c);
+
+    if (!showShadows) {
+      // Gölgeler kapatıldıysa hesaplamayı doğrudan atla
+      return {
+        beamGeo: g,
+        corners: pts.map(pt => [pt.x, pt.y, pt.z] as [number, number, number]),
+        lookQuat: qLook,
+        litPos: [litCenterVec.x, litCenterVec.y, litCenterVec.z] as [number, number, number],
+        litQuat: qPlane,
+        wallShadows: [],
+        floorShadows: [],
+        deviceShadows: [],
+      };
+    }
 
     for (const actor of humans) {
       const cfg = HUMAN_VARIANT_CATALOG[actor.variant] || HUMAN_VARIANT_CATALOG.male_casual;
@@ -1435,6 +1472,9 @@ export default function PlannerRoom3D({
       shiftX: number;
       shiftY: number;
       shiftZ: number;
+      rotYaw?: number;
+      rotPitch?: number;
+      rotRoll?: number;
     }[] = [];
 
     const walls = surfaces.filter(s => s.type === 'wall');
@@ -1520,6 +1560,9 @@ export default function PlannerRoom3D({
             shiftX: indOffset.shiftX || 0,
             shiftY: indOffset.shiftY || 0,
             shiftZ: indOffset.shiftZ || 0,
+            rotYaw: indOffset.rotYaw || 0,
+            rotPitch: indOffset.rotPitch || 0,
+            rotRoll: indOffset.rotRoll || 0,
           });
         }
       }
@@ -1563,6 +1606,9 @@ export default function PlannerRoom3D({
             shiftX: indOffset.shiftX || 0,
             shiftY: indOffset.shiftY || 0,
             shiftZ: indOffset.shiftZ || 0,
+            rotYaw: indOffset.rotYaw || 0,
+            rotPitch: indOffset.rotPitch || 0,
+            rotRoll: indOffset.rotRoll || 0,
           });
         }
       }
@@ -1587,6 +1633,36 @@ export default function PlannerRoom3D({
     if (!selectedPjId) return allProjectorList[0] || null;
     return allProjectorList.find(p => p.id === selectedPjId) || allProjectorList[0] || null;
   }, [allProjectorList, selectedPjId]);
+
+  const handleRotateProjector = (pjId: string, deltaYaw: number, deltaPitch: number, deltaRoll: number = 0) => {
+    const pj = allProjectorList.find(p => p.id === pjId);
+    if (!pj) return;
+    const key = `${pj.row}-${pj.col}`;
+    const updater = (prevSurf: SurfaceItem): SurfaceItem => {
+      const curOffsets = prevSurf.customProjectorOffsets || {};
+      const cur = curOffsets[key] || { shiftX: 0, shiftY: 0, shiftZ: 0 };
+      return {
+        ...prevSurf,
+        customProjectorOffsets: {
+          ...curOffsets,
+          [key]: {
+            ...cur,
+            rotYaw: +((cur.rotYaw || 0) + deltaYaw).toFixed(1),
+            rotPitch: +((cur.rotPitch || 0) + deltaPitch).toFixed(1),
+            rotRoll: +((cur.rotRoll || 0) + deltaRoll).toFixed(1),
+          },
+        },
+      };
+    };
+
+    if (onUpdateSurface) {
+      onUpdateSurface(pj.surfId, updater);
+    } else {
+      usePlannerStore.getState().setSurfaces(
+        usePlannerStore.getState().surfaces.map((s: SurfaceItem) => s.id === pj.surfId ? updater(s) : s)
+      );
+    }
+  };
 
   const handleNudgeProjector = (pjId: string, deltaX: number, deltaY: number, deltaZ: number = 0) => {
     const pj = allProjectorList.find(p => p.id === pjId);
@@ -2077,10 +2153,33 @@ export default function PlannerRoom3D({
                 <button onClick={() => handleNudgeProjector(selectedPj.id, 0, 0, +0.1)} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-[10px]">+0.1m</button>
               </div>
 
+              {/* 🌟 3B Projektör Açı Döndürme (Yaw / Pitch / Roll) */}
+              <div className="flex items-center gap-0.5 bg-slate-950 px-1.5 py-0.5 rounded border border-purple-800/80">
+                <span className="text-purple-300 text-[10px] mr-1 font-semibold">🔄 Yaw (Yatay):</span>
+                <button onClick={() => handleRotateProjector(selectedPj.id, -15, 0)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">-15°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, -5, 0)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">-5°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, +5, 0)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">+5°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, +15, 0)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">+15°</button>
+              </div>
+
+              <div className="flex items-center gap-0.5 bg-slate-950 px-1.5 py-0.5 rounded border border-purple-800/80">
+                <span className="text-purple-300 text-[10px] mr-1 font-semibold">📐 Pitch (Eğim):</span>
+                <button onClick={() => handleRotateProjector(selectedPj.id, 0, -15)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">-15°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, 0, -5)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">-5°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, 0, +5)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">+5°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, 0, +15)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">+15°</button>
+              </div>
+
+              <div className="flex items-center gap-0.5 bg-slate-950 px-1.5 py-0.5 rounded border border-purple-800/80">
+                <span className="text-purple-300 text-[10px] mr-1 font-semibold">🌀 Roll:</span>
+                <button onClick={() => handleRotateProjector(selectedPj.id, 0, 0, -10)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">-10°</button>
+                <button onClick={() => handleRotateProjector(selectedPj.id, 0, 0, +10)} className="px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold text-[10px]">+10°</button>
+              </div>
+
               <button
                 onClick={() => handleResetProjectorOffset(selectedPj.id)}
                 className="px-2 py-0.5 rounded bg-rose-950 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
-                title="Seçili projektörün özel kaydırma ofsetini sıfırlar"
+                title="Seçili projektörün özel kaydırma ve açı ofsetlerini sıfırlar"
               >
                 ⟲ Sıfırla
               </button>
@@ -2351,6 +2450,9 @@ function RoomBoxScene({
           pos: [number, number, number];
           target: [number, number, number];
           label: string;
+          rotYaw?: number;
+          rotPitch?: number;
+          rotRoll?: number;
         }[] = [];
 
         if (showThisProjectors) {
@@ -2379,6 +2481,9 @@ function RoomBoxScene({
                 pos: [px, py, pz],
                 target: [tx, ty, tz],
                 label: `PJ ${c + 1}${surf.rows > 1 ? `.${r + 1}` : ''}`,
+                rotYaw: indOffset.rotYaw || 0,
+                rotPitch: indOffset.rotPitch || 0,
+                rotRoll: indOffset.rotRoll || 0,
               });
             }
           }
@@ -2513,6 +2618,9 @@ function RoomBoxScene({
                 showShadows={showShadows}
                 showSurfaceFill={true}
                 isSelected={item.id === selectedPjId}
+                rotYaw={item.rotYaw}
+                rotPitch={item.rotPitch}
+                rotRoll={item.rotRoll}
                 onSelectProjector={() => {
                   onSelect(surf.id);
                   onSelectProjector?.(item.id);
@@ -2598,6 +2706,9 @@ function RoomBoxScene({
                     showShadows={showShadows}
                     showSurfaceFill={true}
                     isSelected={floorPjId === selectedPjId}
+                    rotYaw={indOffset.rotYaw || 0}
+                    rotPitch={indOffset.rotPitch || 0}
+                    rotRoll={indOffset.rotRoll || 0}
                     onSelectProjector={() => {
                       onSelect(floor.id);
                       onSelectProjector?.(floorPjId);
