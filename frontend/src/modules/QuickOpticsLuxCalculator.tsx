@@ -43,21 +43,6 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     // Ortalama Ekran Aydınlığı (Lux)
     const avgLux = Math.round(effLumens / Math.max(0.1, areaM2));
 
-    // Işık Düzgünlüğü (Uniformity): Merkezden köşelere vinyet kaybı
-    // Standart projeksiyon lenslerinde köşe aydınlığı merkez aydınlığının %75 - %85'i arasındadır.
-    const uniformityU0 = 80; // %80
-    const minLux = Math.round(avgLux * 0.78);
-    const maxLux = Math.round(avgLux * 1.14);
-
-    // Yüzey Parlaklığı (Luminance): Nit (cd/m²) ve Foot-Lambert (fL)
-    // Nit = (Lux * Gain) / π
-    const nits = Math.round((avgLux * screenGain) / Math.PI);
-    const footLambert = +(nits * 0.2919).toFixed(1);
-
-    // Ortam Kontrast Oranı (ACR - Ambient Contrast Ratio)
-    // ACR = (Ekran Lux + Ortam Lux) / Ortam Lux
-    const acr = +((avgLux + ambientLux) / Math.max(1, ambientLux)).toFixed(1);
-
     // Lens Geometrisi (Tek projektörün açtığı görüntü boyutu)
     const singleW = +(throwDistM / Math.max(0.1, throwRatio)).toFixed(2);
     const singleH = +(singleW / 1.7778).toFixed(2); // 16:9 varsayım
@@ -65,7 +50,75 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     const overlapM = projCount > 1 ? +((totalCoverW - screenW) / (projCount - 1)).toFixed(2) : 0;
     const overlapPct = projCount > 1 && singleW > 0 ? Math.round((overlapM / singleW) * 100) : 0;
 
-    // Değerlendirme Durumu
+    // Fiziksel Işık Düzgünlüğü (Uniformity U0) Hesabı:
+    // Lensin iç optik düşüşü (baz: %82) + Kapsama alanı ve Overlap geometrisi
+    let calculatedU0 = 82;
+
+    if (projCount === 1) {
+      // Tek projektörde ekran taşması / kapsama analizi
+      const covW = Math.min(1.0, singleW / Math.max(0.1, screenW));
+      const covH = Math.min(1.0, singleH / Math.max(0.1, screenH));
+      const coverage = Math.min(covW, covH);
+      calculatedU0 = Math.round(82 * Math.pow(coverage, 1.8));
+    } else {
+      // Çoklu projektörde örtüşme (overlap) ve kapsama analizi
+      const covW = Math.min(1.0, totalCoverW / Math.max(0.1, screenW));
+      const covH = Math.min(1.0, singleH / Math.max(0.1, screenH));
+      const coverage = Math.min(covW, covH);
+
+      if (overlapPct >= 15 && overlapPct <= 30) {
+        // İdeal blend aralığı: bindirme sayesinde homojenlik mükemmeldir
+        calculatedU0 = Math.round(85 * coverage);
+      } else if (overlapPct > 30) {
+        // Fazla örtüşme: merkezde gereksiz ışık birikmesi
+        calculatedU0 = Math.round(78 * coverage);
+      } else if (overlapPct >= 5) {
+        // Düşük örtüşme: hafif dalgalanma
+        calculatedU0 = Math.round(72 * coverage);
+      } else if (overlapPct >= 0) {
+        // Neredeyse sıfır örtüşme
+        calculatedU0 = Math.round(62 * coverage);
+      } else {
+        // Negatif örtüşme (projektörler arasında boşluk/kör nokta var)
+        calculatedU0 = Math.max(25, Math.round(50 + overlapPct * 0.8));
+      }
+    }
+    const uniformityU0 = Math.max(20, Math.min(95, calculatedU0));
+
+    // Min ve Max Lux Değerleri:
+    // Homojenliğe göre gerçek minimum ve maksimum aydınlık
+    const minLux = Math.round(avgLux * (uniformityU0 / 100));
+    const maxLux = Math.round(avgLux * (1 + (1 - uniformityU0 / 100) * 0.65));
+
+    // Yüzey Parlaklığı (Luminance): Nit (cd/m²) ve Foot-Lambert (fL)
+    const nits = Math.round((avgLux * screenGain) / Math.PI);
+    const footLambert = +(nits * 0.2919).toFixed(1);
+
+    // Ortam Kontrast Oranı (ACR - Ambient Contrast Ratio)
+    const acr = +((avgLux + ambientLux) / Math.max(1, ambientLux)).toFixed(1);
+
+    // Dinamik Homojenlik ve Mühendislik Değerlendirmesi
+    let uniformityEvaluation = {
+      title: 'Mükemmel Homojenlik (Müze & Sergi Standardı)',
+      badgeClass: 'bg-emerald-950 text-emerald-300 border-emerald-700',
+      description: `Bu kurulumda hesaplanan %${uniformityU0} homojenlik değeri, profesyonel müze ve galeri standartlarına tam uyumludur. İzleyicinin gözü köşelerde ve kenarlarda kararma (vinyet) algılamaz. Renk ve ton dengesi tüm perdede eşittir.`,
+    };
+
+    if (uniformityU0 < 60) {
+      uniformityEvaluation = {
+        title: '⚠ Düşük Homojenlik (Köşelerde Kararma Riski)',
+        badgeClass: 'bg-red-950 text-red-300 border-red-700',
+        description: `DİKKAT: %${uniformityU0} homojenlik değeri müze standartlarının altındadır. Ekranın uç köşeleri ile merkez arasında belirgin ışık farkı oluşur ve köşeler karanlık kalır. Öneri: Projektör atım mesafesini veya projektör adedini artırın.`,
+      };
+    } else if (uniformityU0 < 75) {
+      uniformityEvaluation = {
+        title: 'Kabul Edilebilir Düzgünlük (Hafif Kenar Düşüşü)',
+        badgeClass: 'bg-amber-950 text-amber-300 border-amber-700',
+        description: `Hesaplanan %${uniformityU0} homojenlik değeri genel sergiler için kabul edilebilir toleranstadır. Köşelerde standart lens optik düşüşüne bağlı hafif ışık azalması görülür, ancak izleme deneyimini bozmaz.`,
+      };
+    }
+
+    // Genel Parlaklık Durumu
     let evalStatus = {
       badge: '✓ İdeal Seviye (Müze & Sergi)',
       badgeClass: 'bg-emerald-950 text-emerald-400 border-emerald-700',
@@ -94,6 +147,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       minLux,
       maxLux,
       uniformityU0,
+      uniformityEvaluation,
       nits,
       footLambert,
       acr,
@@ -132,6 +186,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     const cellH = clampedH / rows;
 
     const singleW = throwDistM / Math.max(0.1, throwRatio);
+    const singleH = singleW / 1.7778;
     const step = projCount > 1 ? (screenW - singleW) / (projCount - 1) : 0;
 
     const gridLux: number[][] = [];
@@ -150,25 +205,38 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
           const pjCenterY = screenH / 2;
 
           const dx = (xM - pjCenterX) / (singleW / 2);
-          const dy = (yM - pjCenterY) / (screenH / 2);
-          const distSq = dx * dx + dy * dy;
+          const dy = (yM - pjCenterY) / (singleH / 2);
 
-          if (distSq <= 1.4) {
-            // Cosinus vinyet düşüşü
-            const falloff = Math.max(0, Math.cos(Math.min(Math.PI / 2, Math.sqrt(distSq) * 1.05)));
-            totalCellFlux += falloff;
+          // Projektör dikdörtgen kapsama sınırları içindeyse
+          if (Math.abs(dx) <= 1.05 && Math.abs(dy) <= 1.05) {
+            // Merkezden radyal normalize mesafe (0 merkez, 1.41 en uç köşe)
+            const radDist = Math.sqrt(dx * dx + dy * dy) / 1.414;
+            // Gerçek lens optik düşüşü: Merkez 1.0 iken en uç köşe uniformity oranına göre dengelenir.
+            // Asla sıfıra düşmez! Merkez 600 lx ise köşe ~480 lx seviyesindedir.
+            const cornerDropRatio = 1.0 - (calc.uniformityU0 / 100);
+            const lensFactor = Math.max(0.4, 1.0 - radDist * cornerDropRatio * 1.15);
+            totalCellFlux += lensFactor;
           }
         }
 
-        const cellLux = Math.round((totalCellFlux * calc.avgLux) / Math.max(1, projCount * 0.72));
+        // Efektif hücre aydınlığı
+        let cellLux = 0;
+        if (totalCellFlux > 0) {
+          cellLux = Math.round((totalCellFlux * calc.avgLux) / Math.max(1, projCount > 1 ? 1.08 : 0.95));
+        } else {
+          // Projektör ışığının yetişmediği kör nokta
+          cellLux = Math.round(calc.avgLux * 0.15);
+        }
+
         gridLux[r][c] = cellLux;
         if (cellLux < calculatedMin) calculatedMin = cellLux;
         if (cellLux > calculatedMax) calculatedMax = cellLux;
       }
     }
 
-    const minL = Math.max(50, calculatedMin);
-    const maxL = Math.max(minL + 50, calculatedMax);
+    // Renk skalası aralığı: perdenin gerçek min ve max lux sınırları
+    const minL = Math.min(calc.minLux, Math.max(30, calculatedMin));
+    const maxL = Math.max(calc.maxLux, calculatedMax, minL + 100);
 
     // Isı haritası boyama
     for (let r = 0; r < rows; r++) {
@@ -848,14 +916,25 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
           </tbody>
         </table>
 
-        {/* 4. Işık Düzgünlüğü ve Mühendislik Açıklaması */}
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-700 space-y-1.5">
-          <div className="font-bold text-slate-900">
-            📌 Işık Düzgünlüğü (Uniformity) ve Mühendislik Değerlendirmesi:
+        {/* 4. Işık Düzgünlüğü ve Mühendislik Açıklaması (DİNAMİK) */}
+        <div className={`p-3.5 rounded border text-xs space-y-1.5 ${
+          calc.uniformityU0 >= 75 
+            ? 'bg-emerald-50/70 border-emerald-300 text-slate-800' 
+            : calc.uniformityU0 >= 60 
+            ? 'bg-amber-50/70 border-amber-300 text-slate-800' 
+            : 'bg-red-50/70 border-red-300 text-slate-900'
+        }`}>
+          <div className="flex items-center justify-between font-bold">
+            <span className="flex items-center gap-1.5 text-slate-900">
+              📌 Işık Düzgünlüğü (Uniformity) ve Mühendislik Değerlendirmesi:
+            </span>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${calc.uniformityEvaluation.badgeClass}`}>
+              {calc.uniformityEvaluation.title}
+            </span>
           </div>
-          <p className="leading-relaxed">
-            Işık düzgünlüğü, projektör lensinden çıkan ışığın ekranın merkez noktası ile 4 köşesi arasındaki homojenlik katsayısıdır.
-            Bu raporda hesaplanan <b>%{calc.uniformityU0}</b> homojenlik değeri, profesyonel müze standartlarına tam uyumludur. İzleyicinin gözü köşelerde kararma algılamaz.
+          <p className="leading-relaxed text-slate-700">
+            Işık düzgünlüğü, projektör lensinden çıkan ışığın ekranın merkez noktası ile 4 köşesi arasındaki homojenlik katsayısıdır (U0 = E_min / E_ort).
+            {' '}{calc.uniformityEvaluation.description}
           </p>
         </div>
 

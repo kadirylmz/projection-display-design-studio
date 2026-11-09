@@ -644,11 +644,15 @@ export function buildReportHtml(p: ReportPayload): string {
             </div>
           </div>
 
-          <!-- Işık Düzgünlüğü (Uniformity) Açıklama Kutusu -->
-          <div style="margin-top: 8px; margin-bottom: 8px; padding: 7px 10px; background: #f8fafc; border-left: 3.5px solid #059669; border-radius: 4px; font-size: 10.5px; color: #334155; line-height: 1.4;">
+          <!-- Işık Düzgünlüğü (Uniformity) Dinamik Açıklama Kutusu -->
+          <div style="margin-top: 8px; margin-bottom: 8px; padding: 7px 10px; background: #f8fafc; border-left: 3.5px solid ${+u0 >= 75 ? '#059669' : +u0 >= 60 ? '#d97706' : '#dc2626'}; border-radius: 4px; font-size: 10.5px; color: #334155; line-height: 1.4;">
             <b>💡 Işık Düzgünlüğü (Uniformity / Homojenlik) Nedir?</b>
             Projeksiyon görüntüsünün merkezinden 4 köşesine doğru aydınlığın ne kadar dengeli dağıldığını gösterir (U0 = E_min / E_avg). 
-            Bu yüzeydeki <b>%${u0}</b> düzgünlük oranı; müze ve galeri standartlarına tam uygundur, köşelerde kararma (vinyet) oluşturmaz.
+            ${+u0 >= 75 
+              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı profesyonel müze standartlarına tam uygundur; köşelerde gözün algılayacağı kararma (vinyet) oluşmaz.`
+              : +u0 >= 60 
+              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı genel mekanlar için kabul edilebilir toleranstadır; köşelerde standart optik düşüş görülür.`
+              : `⚠ DİKKAT: <b>%${u0}</b> düzgünlük oranı düşüktür; ekranın köşe ve kenarlarında belirgin kararma (vinyet) ve ışık kaybı oluşur. Projektör adedi veya atım mesafesi artırılmalıdır.`}
           </div>
 
           <!-- Projektör Kapsama & Dağılım Cetveli -->
