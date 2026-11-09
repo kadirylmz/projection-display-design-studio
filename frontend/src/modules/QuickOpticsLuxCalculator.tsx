@@ -224,7 +224,8 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     let calculatedMin = Infinity;
     let calculatedMax = -Infinity;
 
-    // Pürüzsüz Edge-Blend ve Doğal Lens Vinyet Isı Haritası Motoru
+    // Pürüzsüz Edge-Blend ve Canlı Termal Hotspot Isı Haritası Motoru
+    // Merkezde kırmızı (Peak Hotspot), gövdede sarı/yeşil, köşelerde turkuaz/mavi
     for (let r = 0; r < rows; r++) {
       gridLux[r] = [];
       const yM = ((r + 0.5) / rows) * screenH;
@@ -241,28 +242,27 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
           const pjEndX = pjStartX + singleW;
           const pjCenterX = (pjStartX + pjEndX) / 2;
 
-          // xM bu projektörün sınırları içinde ve yükseklik uygun mu?
+          // xM bu projektörün menzili içinde mi?
           if (xM >= pjStartX && xM <= pjEndX && isInsideY) {
             // 1. Soft Edge-Blending Geçiş Katsayısı:
             let blendFactor = 1.0;
             if (projCount > 1 && calc.overlapM > 0) {
-              // Sol kenar örtüşme rampası
               if (p > 0 && xM < pjStartX + calc.overlapM) {
                 const t = (xM - pjStartX) / calc.overlapM;
-                blendFactor = 0.5 * (1 - Math.cos(Math.PI * t)); // Pürüzsüz kosinüs S-eğrisi
-              }
-              // Sağ kenar örtüşme rampası
-              else if (p < projCount - 1 && xM > pjEndX - calc.overlapM) {
+                blendFactor = 0.5 * (1 - Math.cos(Math.PI * t));
+              } else if (p < projCount - 1 && xM > pjEndX - calc.overlapM) {
                 const t = (pjEndX - xM) / calc.overlapM;
                 blendFactor = 0.5 * (1 - Math.cos(Math.PI * t));
               }
             }
 
-            // 2. Doğal Lens Vinyet Eğrisi (Köşelere doğru hafif optik düşüş)
+            // 2. Termal Lens Düşüşü:
+            // Merkez (dx=0, dy=0) tepe ışık (1.0 = calc.maxLux Hotspot Kırmızı)
+            // Köşelere doğru radyal olarak minimum lüks oranına (calc.minLux / calc.maxLux) iner
             const dx = (xM - pjCenterX) / (singleW / 2);
-            const distNorm = Math.sqrt(dx * dx + dy * dy) / 1.414;
-            const drop = (1.0 - (calc.uniformityU0 / 100)) * 0.9;
-            const lensFactor = Math.max(0.5, 1.0 - distNorm * drop);
+            const distNorm = Math.min(1.0, Math.sqrt(dx * dx + dy * dy) / 1.414);
+            const minRatio = Math.max(0.45, calc.minLux / Math.max(1, calc.maxLux));
+            const lensFactor = 1.0 - distNorm * (1.0 - minRatio);
 
             totalCellFlux += lensFactor * blendFactor;
           }
@@ -270,11 +270,11 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
 
         let cellLux = 0;
         if (totalCellFlux > 0) {
-          // Hücre aydınlığı: ortalama lux ile kalibre edilir
-          cellLux = Math.round(totalCellFlux * calc.avgLux);
+          // Tepe parlaklık merkezde tam calc.maxLux (Kırmızı Hotspot) seviyesindedir
+          cellLux = Math.round(totalCellFlux * calc.maxLux);
         } else {
-          // Projektörün kaplayamadığı açıkta kalan kör nokta
-          cellLux = Math.round(calc.avgLux * 0.12);
+          // Projektör ışığının yetişmediği karanlık bölge
+          cellLux = Math.round(calc.minLux * 0.25);
         }
 
         gridLux[r][c] = cellLux;
@@ -283,9 +283,9 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       }
     }
 
-    // Renk skalası: Kontrastı dengeli, pürüzsüz ve gerçekçi termal aydınlık aralığı
-    const minL = Math.max(30, Math.min(calc.minLux * 0.92, calculatedMin));
-    const maxL = Math.max(minL + 50, Math.max(calc.maxLux * 1.04, calculatedMax));
+    // Renk Skalası: Tepe noktalarının kırmızı, ortalamanın yeşil/sarı, köşelerin mavi olmasını sağlar
+    const minL = Math.max(20, calculatedMin);
+    const maxL = Math.max(minL + 40, calculatedMax);
 
     // Isı haritası boyama
     for (let r = 0; r < rows; r++) {
