@@ -37,6 +37,11 @@ SEED_PROJECTORS = [
     # Vivitek Genişletilmiş
     {"manufacturer": "Vivitek", "model": "DK8500Z", "native_w": 3840, "native_h": 2160, "ansi_lumens": 7500, "aspect": "16:9", "lens_mount": "Vivitek-D88", "light_source": "1-Chip DLP 4K UHD Laser", "verified": True},
     {"manufacturer": "Vivitek", "model": "DU6693Z", "native_w": 1920, "native_h": 1200, "ansi_lumens": 7000, "aspect": "16:10", "lens_mount": "Vivitek-D88", "light_source": "1-Chip DLP Laser", "verified": True},
+    {"manufacturer": "Vivitek", "model": "DU8193Z-BK", "native_w": 1920, "native_h": 1200, "ansi_lumens": 12000, "aspect": "16:10", "lens_mount": "Vivitek-D88", "light_source": "1-Chip DLP Laser", "verified": True},
+    {"manufacturer": "Vivitek", "model": "DU8190Z", "native_w": 1920, "native_h": 1200, "ansi_lumens": 10000, "aspect": "16:10", "lens_mount": "Vivitek-D88", "light_source": "1-Chip DLP Laser", "verified": True},
+    {"manufacturer": "Vivitek", "model": "DU7099Z", "native_w": 1920, "native_h": 1200, "ansi_lumens": 8000, "aspect": "16:10", "lens_mount": "Vivitek-D70", "light_source": "1-Chip DLP Laser", "verified": True},
+    {"manufacturer": "Vivitek", "model": "DU7299Z", "native_w": 1920, "native_h": 1200, "ansi_lumens": 9600, "aspect": "16:10", "lens_mount": "Vivitek-D70", "light_source": "1-Chip DLP Laser", "verified": True},
+    {"manufacturer": "Vivitek", "model": "DU4381Z-ST", "native_w": 1920, "native_h": 1200, "ansi_lumens": 6100, "aspect": "16:10", "lens_mount": "Dahili-Vivitek-DU4381ZST", "light_source": "1-Chip DLP Laser", "verified": True},
     # Sharp / NEC Genişletilmiş
     {"manufacturer": "Sharp / NEC", "model": "PX2201UL", "native_w": 1920, "native_h": 1200, "ansi_lumens": 20500, "aspect": "16:10", "lens_mount": "NEC-PX-ZL", "light_source": "1-Chip DLP RB Laser", "verified": True},
     {"manufacturer": "Sharp / NEC", "model": "XP-P601Q", "native_w": 3840, "native_h": 2160, "ansi_lumens": 6000, "aspect": "16:9", "lens_mount": "Dahili-NEC-XPP601Q", "light_source": "1-Chip DLP 4K UHD Laser", "verified": True},
@@ -105,6 +110,7 @@ SEED_LENSES = [
     {"manufacturer": "Vivitek", "model": "D70-Standard Zoom", "lens_mount": "Vivitek-D70", "throw_min": 1.54, "throw_max": 1.93, "verified": True},
     {"manufacturer": "Vivitek", "model": "D70-Long Zoom", "lens_mount": "Vivitek-D70", "throw_min": 1.93, "throw_max": 2.90, "verified": True},
     {"manufacturer": "Vivitek", "model": "D70-Super Long", "lens_mount": "Vivitek-D70", "throw_min": 3.00, "throw_max": 5.01, "verified": True},
+    {"manufacturer": "Vivitek", "model": "DU4381Z-ST Dahili Short", "lens_mount": "Dahili-Vivitek-DU4381ZST", "throw_min": 0.50, "throw_max": 0.50, "verified": True},
     # Sharp / NEC
     {"manufacturer": "Sharp / NEC", "model": "NP44ML (UST)", "lens_mount": "NEC-NP", "throw_min": 0.32, "throw_max": 0.32, "verified": True},
     {"manufacturer": "Sharp / NEC", "model": "NP40ZL (Short)", "lens_mount": "NEC-NP", "throw_min": 0.79, "throw_max": 1.11, "verified": True},
