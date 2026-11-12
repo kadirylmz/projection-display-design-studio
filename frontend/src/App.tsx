@@ -29,12 +29,23 @@ const MODULES: Mod[] = [
 
 export default function App() {
   const [active, setActive] = useState('projector');
+  const [visited, setVisited] = useState<Set<string>>(() => new Set(['projector']));
+
+  const selectTab = (id: string) => {
+    setActive(id);
+    setVisited(prev => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const handleNav = (e: any) => {
       const target = (e.detail === 'screen' || e.detail === 'geometry') ? 'projector' : e.detail === 'multi' ? 'pixel' : e.detail;
       if (target && MODULES.some(m => m.id === target)) {
-        setActive(target);
+        selectTab(target);
       }
     };
     window.addEventListener('navigate-module' as any, handleNav);
@@ -54,7 +65,7 @@ export default function App() {
             {MODULES.map(m => (
               <button
                 key={m.id}
-                onClick={() => setActive(m.id)}
+                onClick={() => selectTab(m.id)}
                 className={`w-full text-left px-4 py-2 text-sm flex justify-between hover:bg-slate-800 ${active === m.id ? 'bg-slate-800 text-sky-300 font-medium' : ''}`}
               >
                 <span>{m.name}</span>
@@ -77,17 +88,17 @@ export default function App() {
           </div>
         </aside>
         <main className="flex-1 p-4 overflow-auto">
-          {active === 'lux' ? <LuxCalculator unit={unit} />
-            : active === 'content' ? <ContentPlanner unit={unit} />
-            : active === 'pixel' ? <PixelMappingStudio />
-            : active === 'led' ? <LedCalculator unit={unit} />
-            : active === 'lcd' ? <LcdCalculator unit={unit} />
-            : active === 'equipment' ? <EquipmentDatabase />
-            : active === 'camera' ? <CameraCalculator unit={unit} />
-            : active === 'report' ? <ReportGenerator />
-            : active === 'projects' ? <ProjectManager />
-            : active === 'electrical' ? <ElectricalDrawingStudio />
-            : <ProjectorCalculator unit={unit} />}
+          {visited.has('projector') && <div className={active === 'projector' ? 'h-full' : 'hidden'}><ProjectorCalculator unit={unit} /></div>}
+          {visited.has('lux') && <div className={active === 'lux' ? 'h-full' : 'hidden'}><LuxCalculator unit={unit} /></div>}
+          {visited.has('content') && <div className={active === 'content' ? 'h-full' : 'hidden'}><ContentPlanner unit={unit} /></div>}
+          {visited.has('pixel') && <div className={active === 'pixel' ? 'h-full' : 'hidden'}><PixelMappingStudio /></div>}
+          {visited.has('led') && <div className={active === 'led' ? 'h-full' : 'hidden'}><LedCalculator unit={unit} /></div>}
+          {visited.has('lcd') && <div className={active === 'lcd' ? 'h-full' : 'hidden'}><LcdCalculator unit={unit} /></div>}
+          {visited.has('equipment') && <div className={active === 'equipment' ? 'h-full' : 'hidden'}><EquipmentDatabase /></div>}
+          {visited.has('camera') && <div className={active === 'camera' ? 'h-full' : 'hidden'}><CameraCalculator unit={unit} /></div>}
+          {visited.has('report') && <div className={active === 'report' ? 'h-full' : 'hidden'}><ReportGenerator /></div>}
+          {visited.has('projects') && <div className={active === 'projects' ? 'h-full' : 'hidden'}><ProjectManager /></div>}
+          {visited.has('electrical') && <div className={active === 'electrical' ? 'h-full' : 'hidden'}><ElectricalDrawingStudio /></div>}
         </main>
       </div>
     </div>

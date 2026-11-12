@@ -27,13 +27,13 @@ let counter = 1;
 export const newId = (p: string) => `${p}${counter++}`;
 
 export const useRoom = create<RoomState>(set => ({
-  room: { w: 10, l: 12, h: 4 },
-  surfaces: [{ kind: 'plane', id: 'S0', label: 'Ön duvar', center: [0, 2, 12], yawDeg: 180, pitchDeg: 0, width: 10, height: 4 }],
+  room: { w: 0, l: 0, h: 0 },
+  surfaces: [],
   obstacles: [],
-  projectors: [{ id: 'P0', label: 'Projektör 1', pos: [0, 2.5, 4], yawDeg: 0, pitchDeg: 0, throwRatio: 1.5, aspect: 16 / 9 }],
+  projectors: [],
   models: [],
   sel: null,
-  human: true,
+  human: false,
   setRoom: room => set({ room }),
   setSel: sel => set({ sel }),
   setHuman: human => set({ human }),

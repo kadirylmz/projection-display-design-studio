@@ -111,8 +111,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
       })
       .catch(() => setApiConnected(false));
 
-  useEffect(() => {
-    reload();
+  const applyCatalogFromStorage = () => {
     try {
       const raw = localStorage.getItem('selected_catalog_selection');
       if (raw) {
@@ -123,6 +122,14 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
         }
       }
     } catch {}
+  };
+
+  useEffect(() => {
+    reload();
+    applyCatalogFromStorage();
+    const onNav = () => applyCatalogFromStorage();
+    window.addEventListener('navigate-module' as any, onNav);
+    return () => window.removeEventListener('navigate-module' as any, onNav);
   }, []);
 
   const catProj = CATALOG_PROJECTORS.find(p => p.id === catProjId) ?? null;

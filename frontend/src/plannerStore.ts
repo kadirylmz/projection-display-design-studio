@@ -120,15 +120,15 @@ const INITIAL_SURFACES: SurfaceItem[] = [
 ];
 
 export const usePlannerStore = create<PlannerStoreState>((set) => ({
-  surfaces: INITIAL_SURFACES,
+  surfaces: [],
   physicalRoom: {
-    enabled: true,
-    widthM: 8.5,
-    lengthM: 25.0,
-    heightM: 5.5,
+    enabled: false,
+    widthM: 0,
+    lengthM: 0,
+    heightM: 0,
   },
   calculatedSurfaces: [],
-  totalProjectors: 18,
+  totalProjectors: 0,
   setSurfaces: (surfaces) => set((state) => {
     const total = surfaces.reduce((acc, s) => acc + s.cols * s.rows, 0);
     return { surfaces, totalProjectors: total };

@@ -519,7 +519,7 @@ export function buildReportHtml(p: ReportPayload): string {
   }
 
   // 4. PROJEKSİYON & LENS HESAPLARI
-  if (p.sections.projection && p.projection) {
+  if (p.sections.projection && p.projection && p.projection.imageWidthM > 0 && p.projection.distanceM > 0) {
     const pr = p.projection;
     const res = solveProjection({
       imageWidth: pr.imageWidthM,
@@ -725,7 +725,7 @@ export function buildReportHtml(p: ReportPayload): string {
         <h2>${tr.lux}</h2>
         ${surfaceCards}
       </section>`);
-    } else if (p.lux) {
+    } else if (p.lux && p.lux.widthM > 0 && p.lux.heightM > 0 && p.lux.ansiLumens.length > 0) {
       const lx = computeLux({
         ansiLumens: p.lux.ansiLumens,
         brightnessPct: p.lux.brightnessPct,
@@ -821,7 +821,7 @@ export function buildReportHtml(p: ReportPayload): string {
   }
 
   // 7. LED DUVAR SPESİFİKASYONLARI
-  if (p.sections.led && p.led) {
+  if (p.sections.led && p.led && p.led.cols > 0 && p.led.rows > 0) {
     const r = ledFromCabinets(p.led.cabinet, p.led.cols, p.led.rows, p.led.spareFraction, { voltage: 230, powerFactor: 1 });
     warnings.push(...r.warnings);
     assumptions.push(...r.approximations);
