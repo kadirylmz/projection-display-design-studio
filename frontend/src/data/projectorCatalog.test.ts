@@ -7,12 +7,23 @@ import {
 } from '../data/projectorCatalog';
 
 describe('çoklu marka projektör ve lens kataloğu', () => {
-  it('Epson, Vivitek, Sharp/NEC, Panasonic, Optoma, Barco ve Christie markalarını içerir', () => {
+  it('tüm profesyonel projeksiyon markalarını içerir', () => {
     expect(CATALOG_BRANDS).toEqual(
-      expect.arrayContaining(['Epson', 'Vivitek', 'Sharp / NEC', 'Panasonic', 'Optoma', 'Barco', 'Christie'])
+      expect.arrayContaining([
+        'Epson',
+        'Vivitek',
+        'Sharp / NEC',
+        'Panasonic',
+        'Optoma',
+        'Barco',
+        'Christie',
+        'Sony',
+        'BenQ',
+        'Digital Projection',
+      ])
     );
-    expect(CATALOG_PROJECTORS.length).toBeGreaterThanOrEqual(18);
-    expect(CATALOG_LENSES.length).toBeGreaterThanOrEqual(35);
+    expect(CATALOG_PROJECTORS.length).toBeGreaterThanOrEqual(50);
+    expect(CATALOG_LENSES.length).toBeGreaterThanOrEqual(100);
   });
 
   it('her projektörün en az 1 uyumlu lensi (veya dahili lensi) ve geçerli lümen/çözünürlük değerleri vardır', () => {
