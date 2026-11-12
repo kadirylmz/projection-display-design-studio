@@ -1,11 +1,21 @@
 import { useMemo, useRef, useState } from 'react';
-import { calculatePixelDensity, computeLayout, createDefaultBezierMask, createUniformWarp, ProjectorSlot } from '../engine/multiproj';
+import { calculatePixelDensity, computeLayout, gridLayout, pctToPx, ProjectorSlot } from '../engine/multiproj';
 import { fromConfig, layoutToSvg, toConfig } from '../engine/exporters';
 import { useMapping } from '../mappingStore';
 import { download, renderCanvasPixelMapPattern, renderTestPattern, svgToPng } from '../util';
 
 export default function PixelMappingStudio() {
   const { slots, setSlots, content, setContent, gamma, setGamma } = useMapping();
+
+  // Çoklu Projektör Hızlı Izgara Oluşturucu state'leri
+  const [cols, setCols] = useState(2);
+  const [rows, setRows] = useState(1);
+  const [gridW, setGridW] = useState(1920);
+  const [gridH, setGridH] = useState(1200);
+  const [pctX, setPctX] = useState(10);
+  const [pctY, setPctY] = useState(10);
+  const [outs, setOuts] = useState('');
+
   const [grid, setGrid] = useState(100), [snap, setSnap] = useState(true), [safe, setSafe] = useState(90);
   const [showSafe, setShowSafe] = useState(false), [rulers, setRulers] = useState(true);
   const [sel, setSel] = useState<string | null>(slots[0]?.id ?? null);
@@ -14,6 +24,28 @@ export default function PixelMappingStudio() {
   const [msg, setMsg] = useState('');
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
+
+  const builtGrid = useMemo(() => {
+    try {
+      const ox = cols > 1 ? pctToPx(pctX, gridW) : 0;
+      const oy = rows > 1 ? pctToPx(pctY, gridH) : 0;
+      const outputs = outs.split(',').map(s => s.trim()).filter(Boolean);
+      const s = gridLayout({ cols, rows, w: gridW, h: gridH, overlapX: ox, overlapY: oy, outputs });
+      return { ox, oy, L: computeLayout(s), s, err: null as string | null };
+    } catch (e) {
+      return { ox: 0, oy: 0, L: null, s: null, err: (e as Error).message };
+    }
+  }, [cols, rows, gridW, gridH, pctX, pctY, outs]);
+
+  const applyGridLayout = () => {
+    if (builtGrid.s && builtGrid.L) {
+      setSlots(builtGrid.s);
+      setContent({ w: builtGrid.L.canvasW, h: builtGrid.L.canvasH });
+      setSel(builtGrid.s[0]?.id ?? null);
+      setView(null);
+      setMsg(`${cols}×${rows} çoklu projektör düzeni uygulandı (${builtGrid.L.canvasW}×${builtGrid.L.canvasH} px)`);
+    }
+  };
 
   const res = useMemo(() => {
     try { return { L: computeLayout(slots), err: null as string | null }; }
@@ -85,11 +117,48 @@ export default function PixelMappingStudio() {
     <div className="grid lg:grid-cols-[400px_1fr] gap-4 h-full">
       <div className="space-y-2 p-3 rounded border border-slate-700 bg-slate-900 overflow-auto text-xs" style={{ maxHeight: '88vh' }}>
         <div className="border-b border-slate-700 pb-2">
-          <h2 className="text-sm font-semibold text-sky-300">Piksel Haritalama (Pixel Mapping) Stüdyosu</h2>
+          <h2 className="text-sm font-semibold text-sky-300">Çoklu Projektör &amp; Piksel Haritalama Stüdyosu</h2>
           <p className="text-[11px] text-slate-400 mt-0.5">
             İçerik Canvas'ı ile fiziksel ekran/çıkış çözünürlükleri arasındaki teknik piksel eşleşmesi.
           </p>
         </div>
+
+        {/* Çoklu Projektör Hızlı Izgara Oluşturucu */}
+        <details className="bg-slate-950 p-2.5 rounded border border-slate-800 space-y-2" open>
+          <summary className="cursor-pointer font-semibold text-sky-300 text-xs">
+            ⚡ Çoklu Projektör Izgara Oluşturucu (Grid &amp; Blend)
+          </summary>
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <label>Sütun (Yatay)<input className="inp" type="number" min="1" value={cols} onChange={e => setCols(Math.max(1, Math.round(+e.target.value)))} /></label>
+            <label>Satır (Dikey)<input className="inp" type="number" min="1" value={rows} onChange={e => setRows(Math.max(1, Math.round(+e.target.value)))} /></label>
+            <label>Çıkış Genişlik (px)<input className="inp" type="number" min="1" value={gridW} onChange={e => setGridW(Math.max(1, Math.round(+e.target.value)))} /></label>
+            <label>Çıkış Yükseklik (px)<input className="inp" type="number" min="1" value={gridH} onChange={e => setGridH(Math.max(1, Math.round(+e.target.value)))} /></label>
+          </div>
+          <label className="block">Yatay Örtüşme (Blend): %{pctX} → {builtGrid.ox} px
+            <input type="range" min="0" max="50" value={pctX} onChange={e => setPctX(+e.target.value)} className="w-full accent-sky-500" disabled={cols < 2} />
+          </label>
+          <label className="block">Dikey Örtüşme (Blend): %{pctY} → {builtGrid.oy} px
+            <input type="range" min="0" max="50" value={pctY} onChange={e => setPctY(+e.target.value)} className="w-full accent-sky-500" disabled={rows < 2} />
+          </label>
+          <label className="block">Çıkış Atamaları (virgülle: DP-1, DP-2…)
+            <input className="inp" value={outs} onChange={e => setOuts(e.target.value)} placeholder="DP-1, DP-2..." />
+          </label>
+          {builtGrid.err && <p className="text-red-400">⚠ {builtGrid.err}</p>}
+          {builtGrid.L && (
+            <div className="text-[11px] bg-slate-900 border border-slate-800 rounded p-2 space-y-0.5">
+              <div>Birleşik Kanvas: <b className="text-emerald-300">{builtGrid.L.canvasW} × {builtGrid.L.canvasH} px</b></div>
+              <div className="text-slate-400">Örtüşme çıkarıldı (ham toplam: {builtGrid.L.naiveW}×{builtGrid.L.naiveH} px).</div>
+            </div>
+          )}
+          <button
+            className="w-full py-1.5 bg-sky-700 hover:bg-sky-600 rounded text-white font-semibold"
+            disabled={!builtGrid.L}
+            onClick={applyGridLayout}
+          >
+            Izgara Düzenini Uygula →
+          </button>
+          {msg && <div className="text-[11px] text-emerald-400">{msg}</div>}
+        </details>
 
         {/* Canvas & Çözünürlük Özeti */}
         <div className="grid grid-cols-2 gap-2 bg-slate-950 p-2 rounded border border-slate-800">
