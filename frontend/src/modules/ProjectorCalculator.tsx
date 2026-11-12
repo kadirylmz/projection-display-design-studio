@@ -73,6 +73,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const [lid, setLid] = useState<number | ''>('');
   const [catProjId, setCatProjId] = useState<string>('');
   const [catLensId, setCatLensId] = useState<string>('');
+  const [customLensName, setCustomLensName] = useState<string>('');
   const [tableScope, setTableScope] = useState<'compat' | 'all'>('all');
   const [presetId, setPresetId] = useState<string>('std-125-160');
   const [apiConnected, setApiConnected] = useState(true);
@@ -310,7 +311,9 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
           ? `${dbLens.manufacturer} ${dbLens.model}`
           : activePreset
             ? activePreset.name
-            : `Özel Lens (${range.min.toFixed(2)}–${range.max.toFixed(2)}:1)`,
+            : customLensName.trim()
+              ? `${customLensName.trim()} (${range.min.toFixed(2)}–${range.max.toFixed(2)}:1)`
+              : `Özel Lens (${range.min.toFixed(2)}–${range.max.toFixed(2)}:1)`,
       imageWidthM: round(out.r.imageWidth, 4),
       distanceM: round(out.r.lensToSurface, 4),
       aspectW: round(activeAspect.w, 4),
@@ -327,7 +330,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   useEffect(() => {
     const snap = buildReportProjection();
     if (snap) setProjectionSnap(snap);
-  }, [out.r, catProj, proj, catLensId, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit]);
+  }, [out.r, catProj, proj, catLensId, customLensName, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit]);
 
   const handleSendToReport = () => {
     const snap = buildReportProjection();
@@ -551,6 +554,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
               <label className="block text-xs text-slate-400">
                 Uyumlu Lens ({catProj.lensMount})
                 <select className="inp mt-1 text-sm" value={catLensId} onChange={e => handleCatalogLensChange(e.target.value)}>
+                  <option value="custom">— Özel (Manuel Lens Gir) —</option>
                   {catCompatLenses.map(l => (
                     <option key={l.id} value={l.id}>
                       {l.model} ({l.throwMin === l.throwMax ? `${l.throwMin.toFixed(2)}:1` : `${l.throwMin.toFixed(2)}–${l.throwMax.toFixed(2)}:1`})
@@ -586,30 +590,44 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
             {dbLens?.warnings.map(w => <p key={w} className="text-xs text-amber-400">⚠ {w}</p>)}
 
             {!dbLens && (
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <label className="text-slate-400">
-                  TR Min (Geniş)
-                  <input
-                    className="inp mt-0.5"
-                    type="number"
-                    step="0.01"
-                    min="0.1"
-                    value={trMin}
-                    onChange={e => { setPresetId('custom'); setTrMin(+e.target.value); }}
-                  />
-                </label>
-                <label className="text-slate-400">
-                  TR Max (Tele)
-                  <input
-                    className="inp mt-0.5"
-                    type="number"
-                    step="0.01"
-                    min="0.1"
-                    value={trMax}
-                    onChange={e => { setPresetId('custom'); setTrMax(+e.target.value); }}
-                  />
-                </label>
-              </div>
+              <>
+                {((catProj && catLensId === 'custom') || (!catProj && pid === '' && presetId === 'custom')) && (
+                  <label className="block text-xs text-slate-400">
+                    Özel Lens Adı / Modeli (Opsiyonel)
+                    <input
+                      className="inp mt-0.5 text-xs"
+                      type="text"
+                      placeholder="Örn: ELPLU04 veya Özel 0.65–0.85"
+                      value={customLensName}
+                      onChange={e => setCustomLensName(e.target.value)}
+                    />
+                  </label>
+                )}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <label className="text-slate-400">
+                    TR Min (Geniş)
+                    <input
+                      className="inp mt-0.5"
+                      type="number"
+                      step="0.01"
+                      min="0.1"
+                      value={trMin}
+                      onChange={e => { if (catProj) setCatLensId('custom'); setPresetId('custom'); setTrMin(+e.target.value); }}
+                    />
+                  </label>
+                  <label className="text-slate-400">
+                    TR Max (Tele)
+                    <input
+                      className="inp mt-0.5"
+                      type="number"
+                      step="0.01"
+                      min="0.1"
+                      value={trMax}
+                      onChange={e => { if (catProj) setCatLensId('custom'); setPresetId('custom'); setTrMax(+e.target.value); }}
+                    />
+                  </label>
+                </div>
+              </>
             )}
 
             <div className="space-y-1">

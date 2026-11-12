@@ -632,6 +632,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
                       Lens: {l.model} ({l.throwMin === l.throwMax ? `${l.throwMin.toFixed(2)}:1` : `${l.throwMin.toFixed(2)}–${l.throwMax.toFixed(2)}:1`})
                     </option>
                   ))}
+                  <option value="custom">— Özel (Manuel Throw Ratio Gir) —</option>
                 </select>
               );
             })()}
