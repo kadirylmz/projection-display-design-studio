@@ -161,5 +161,10 @@ describe('rapor üretici (kabul testi 10)', () => {
     expect(htmlWithProj).toContain('ELPLW05 (Wide Zoom)');
     expect(htmlWithProj).toContain('Ön Görünüş — Ekran Boyutu');
     expect(htmlWithProj).toContain('Yan Optik Kesit — Atım Geometrisi');
+    expect(htmlWithProj).not.toContain('Ulaşılabilir');
+    expect(htmlWithProj).not.toContain('Fiziksel Sınır Dışı');
+    expect(htmlWithProj).not.toContain('Şasi Ön Yüzü');
+    expect((htmlWithProj.match(/<th>Diagonal<\/th>/g) ?? []).length).toBe(1);
+    expect(htmlWithProj).not.toContain('Diagonal (inç)');
   });
 });

@@ -556,11 +556,11 @@ export function buildReportHtml(p: ReportPayload): string {
       <h2>${tr.projection}</h2>
       <table><tbody>
         <tr><th>${tr.projector}</th><td>${esc(pr.projectorName)}</td><th>${tr.lens}</th><td>${esc(pr.lensName)}</td></tr>
-        <tr><th>${tr.imgSize}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m</td><th>${tr.diagonal}</th><td>${round(res.diagonal, 3)} m</td></tr>
-        <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m</td></tr>
-        <tr><th>${tr.chassisDist}</th><td>${round(res.chassisFrontToSurface, 3)} m</td><th>${tr.status}</th><td>${res.achievable ? `<span class="badge-success">${tr.achievable}</span>` : `<span class="badge-danger">${tr.notAchievable}</span>`}</td></tr>
-        ${pr.ansiLumens ? `<tr><th>Işık Gücü (ANSI Lümen)</th><td><b>${pr.ansiLumens.toLocaleString('tr-TR')} ANSI lm</b>${pr.technology ? ` · ${esc(pr.technology)}` : ''}</td><th>Çözünürlük &amp; Oran</th><td>${pr.resolution ? esc(pr.resolution) : `${pr.aspectW}:${pr.aspectH}`}</td></tr>` : `<tr><th>En-Boy Oranı</th><td>${pr.aspectW}:${pr.aspectH}</td><th>Ekran Alanı</th><td>${round(res.imageWidth * res.imageHeight, 2)} m²</td></tr>`}
-        <tr><th>Diagonal (inç) &amp; Alan</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.imageWidth * res.imageHeight, 2)} m²)</td><th>Lens Mesafe Aralığı &amp; Zoom</th><td>${res.distanceMin && res.distanceMax ? `${round(res.distanceMin, 2)} – ${round(res.distanceMax, 2)} m` : '—'}${res.zoomPosition !== undefined ? ` (Zoom %${round(res.zoomPosition * 100, 0)})` : ''}</td></tr>
+        <tr><th>${tr.imgSize}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m (${round(res.imageWidth * res.imageHeight, 2)} m²)</td><th>${tr.diagonal}</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 3)} m)</td></tr>
+        <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m${Math.abs(res.chassisFrontToSurface - res.lensToSurface) > 0.005 ? ` (${p.lang === 'en' ? 'Chassis' : 'Şasi'}: ${round(res.chassisFrontToSurface, 3)} m)` : ''}</td></tr>
+
+        ${pr.ansiLumens ? `<tr><th>${p.lang === 'en' ? 'Light Output (ANSI Lumens)' : 'Işık Gücü (ANSI Lümen)'}</th><td><b>${pr.ansiLumens.toLocaleString('tr-TR')} ANSI lm</b>${pr.technology ? ` · ${esc(pr.technology)}` : ''}</td><th>${p.lang === 'en' ? 'Resolution & Aspect' : 'Çözünürlük &amp; Oran'}</th><td>${pr.resolution ? esc(pr.resolution) : `${pr.aspectW}:${pr.aspectH}`}</td></tr>` : ''}
+        ${res.distanceMin && res.distanceMax ? `<tr><th>${p.lang === 'en' ? 'Lens Throw Range' : 'Lens Mesafe Aralığı'}</th><td>${round(res.distanceMin, 2)} – ${round(res.distanceMax, 2)} m</td><th>${p.lang === 'en' ? 'Zoom Position' : 'Zoom Konumu'}</th><td>${res.zoomPosition !== undefined ? `%${round(res.zoomPosition * 100, 0)}` : '—'}</td></tr>` : ''}
       </tbody></table>
       ${(() => {
         // Ön Görünüş SVG (Ekran Boyutu)
@@ -603,7 +603,6 @@ export function buildReportHtml(p: ReportPayload): string {
           </div>
         </div>`;
       })()}
-      </tbody></table>
     </section>`);
   }
 
