@@ -10,7 +10,7 @@ import { toSvg } from '../engine/drawing';
 import { download } from '../util';
 
 export default function ReportGenerator() {
-  const { meta, setMeta, projectionSnap, luxSnap, ledSnap, electrical, equipmentList, setEquipmentList } = useProjectStore();
+  const { meta, setMeta, projectionSnap, luxSnap, ledSnap, electrical, equipmentList } = useProjectStore();
   const { surfaces, calculatedSurfaces, physicalRoom } = usePlannerStore();
   const { slots } = useMapping();
   const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
@@ -19,6 +19,8 @@ export default function ReportGenerator() {
   const [sections, setSections] = useState<ReportSectionFlags>(() => ({
     ...DEFAULT_SECTIONS,
     led: false, // Projeksiyon mekanlarında varsayılan olarak kapalı; kullanıcı dilediğinde kutucuktan tek tıkla ekler/çıkarır
+    drawings2d: false,
+    equipmentList: false,
   }));
   const [presentation, setPresentation] = useState(false);
   // 1. PROJEKSİYONLAR ARASI MONTAJ, EKSEN VE MESAFE MATRİSİ HESABI
@@ -395,16 +397,16 @@ export default function ReportGenerator() {
             ['summary', '1. Proje Özeti & Metrikler'],
             ['room3d', '2. 3B Simülasyon & 2B Görsel Paftalar'],
             ['interProjector', '3. Projeksiyonlar Arası Eksen & Mesafe Cetveli'],
-            ['architecturalPlan', '4. 2B Mimari Yerleşim & CAD Paftası'],
-            ['projection', '5. Projektör & Lens Hesapları'],
-            ['lux', '6. Lux & Parlaklık Analizi'],
-            ['multiProjector', '7. Çoklu Projektör & Kanvas Haritası'],
-            ['led', '8. LED Duvar Spesifikasyonları'],
-            ['electrical', '9. Elektrik Yük & Tek Hat Dağıtım Şeması'],
+            ['architecturalPlan', '3. 2B Mimari Yerleşim & CAD Paftası'],
+            ['projection', '4. Projektör & Lens Hesapları'],
+            ['lux', '5. Lux & Parlaklık Analizi'],
+            ['multiProjector', '6. Çoklu Projektör & Kanvas Haritası'],
+            ['led', '7. LED Duvar Spesifikasyonları'],
+            ['electrical', '8. Elektrik Yük & Tek Hat Dağıtım Şeması'],
             ['drawings2d', '10. 2B CAD Teknik Çizimler'],
             ['equipmentList', '11. Ekipman Listesi (BOM)'],
-            ['assumptionsAndWarnings', '12. Şantiye Standartları & Teknik Uyarılar'],
-          ] as [keyof ReportSectionFlags, string][]).filter(([k]) => k !== 'interProjector').map(([k, label]) => (
+            ['assumptionsAndWarnings', '9. Şantiye Standartları & Teknik Uyarılar'],
+          ] as [keyof ReportSectionFlags, string][]).filter(([k]) => k !== 'interProjector' && k !== 'drawings2d' && k !== 'equipmentList').map(([k, label]) => (
             <div key={k} className="space-y-1">
               <label className="flex items-center gap-2 cursor-pointer hover:text-white transition">
                 <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
@@ -486,26 +488,7 @@ export default function ReportGenerator() {
           ))}
         </div>
 
-        {/* EKİPMAN LİSTESİ */}
-        <div className="border-t border-slate-800 pt-2.5 space-y-1.5">
-          <div className="flex justify-between items-center">
-            <b>Rapor Ekipman Listesi (BOM)</b>
-            <button
-              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded text-[10px]"
-              onClick={() => setEquipmentList([...equipmentList, { category: 'Projektör', manufacturer: '', model: '', qty: 1 }])}
-            >
-              + Satır Ekle
-            </button>
-          </div>
-          {equipmentList.map((item, i) => (
-            <div key={i} className="grid grid-cols-[80px_1fr_44px_20px] gap-1 items-center">
-              <input className="inp !mt-0" placeholder="Kategori" value={item.category} onChange={e => setEquipmentList(equipmentList.map((x, k) => k === i ? { ...x, category: e.target.value } : x))} />
-              <input className="inp !mt-0" placeholder="Model" value={item.model} onChange={e => setEquipmentList(equipmentList.map((x, k) => k === i ? { ...x, model: e.target.value } : x))} />
-              <input className="inp !mt-0 text-center" type="number" min="1" value={item.qty} onChange={e => setEquipmentList(equipmentList.map((x, k) => k === i ? { ...x, qty: +e.target.value } : x))} />
-              <button className="text-red-400 hover:text-red-300" onClick={() => setEquipmentList(equipmentList.filter((_, k) => k !== i))}>✕</button>
-            </div>
-          ))}
-        </div>
+        
 
         {/* AKSİYON BUTONLARI */}
         <div className="flex flex-col gap-2 pt-3 border-t border-slate-800">

@@ -883,8 +883,8 @@ export function buildReportHtml(p: ReportPayload): string {
   }
 
   // 9. 2B TEKNİK CAD ÇİZİMLERİ (Mimari Yerleşim & Mapping Çizimi)
-  if (p.sections.drawings2d || p.sections.architecturalPlan) {
-    if (p.architecturalPlanSvg) {
+  {
+    if (p.sections.architecturalPlan && p.architecturalPlanSvg) {
       blocks.push(`<section class="report-section">
         <h2>${tr.archPlan}</h2>
         <p class="section-intro">Aşağıdaki mimari yerleşim planında oda dış sınırları, projeksiyon cihazlarının tavandaki askı merkezleri, duvardan dik atım mesafeleri (D) ve 230V besleme prizleri şematik olarak gösterilmiştir.</p>
@@ -898,7 +898,7 @@ export function buildReportHtml(p: ReportPayload): string {
       </section>`);
     }
 
-    if (p.mappingSlots && p.mappingSlots.length > 0) {
+    if (p.sections.drawings2d && p.mappingSlots && p.mappingSlots.length > 0) {
       const L = computeLayout(p.mappingSlots);
       const cadSvg = toSvg(mappingDrawing(L), { background: '#0f172a' });
       blocks.push(`<section class="report-section"><h2>${tr.drawings}</h2><div class="diagram">${cadSvg}</div></section>`);
