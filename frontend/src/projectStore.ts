@@ -9,6 +9,8 @@ export interface ProjectState {
   currentProjectId: number | null;
   meta: ReportProjectMeta;
   projectionSnap: {
+    screenName?: string;
+    screenPhotoUrl?: string;
     projectorName: string;
     ansiLumens?: number;
     resolution?: string;

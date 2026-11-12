@@ -99,6 +99,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const [hOff, setHOff] = useState(0);
   const [human, setHuman] = useState(true);
   const [bgPhoto, setBgPhoto] = useState<string | null>(null);
+  const [screenName, setScreenName] = useState<string>('');
   const geoSvgRef = useRef<SVGSVGElement>(null);
   const geoDragging = useRef(false);
 
@@ -300,6 +301,8 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
     const activePreset = STANDARD_LENS_PRESETS.find(p => p.id === presetId);
     const activeAspect = calcMode === 'dist2size' ? baseAspect : screenDims.effAspect;
     return {
+      screenName: screenName.trim() || undefined,
+      screenPhotoUrl: bgPhoto ?? undefined,
       projectorName: catProj
         ? `${catProj.manufacturer} ${catProj.model}`
         : proj
@@ -337,7 +340,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   useEffect(() => {
     const snap = buildReportProjection();
     if (snap) setProjectionSnap(snap);
-  }, [out.r, catProj, proj, catLensId, customLensName, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit]);
+  }, [out.r, screenName, bgPhoto, catProj, proj, catLensId, customLensName, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit]);
 
   const handleSendToReport = () => {
     const snap = buildReportProjection();
@@ -443,6 +446,46 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
           >
             {UNITS.map(u => <option key={u} value={u}>Birim: {u}</option>)}
           </select>
+        </div>
+
+        {/* Ekran Adı & Fotoğrafı */}
+        <div className="p-2.5 rounded bg-slate-950/60 border border-slate-800 space-y-2">
+          <label className="block text-xs text-slate-300">
+            Ekran Adı
+            <input
+              type="text"
+              className="inp mt-1 text-sm"
+              placeholder="Örn: Ana Salon Perdesi, Sol Duvar..."
+              value={screenName}
+              onChange={e => setScreenName(e.target.value)}
+            />
+          </label>
+          <div className="flex items-center gap-2 text-xs">
+            <label className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded cursor-pointer text-slate-200 transition">
+              📷 {bgPhoto ? 'Fotoğrafı Değiştir' : 'Ekran Fotoğrafı Ekle'}
+              <input
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const rd = new FileReader();
+                  rd.onload = () => setBgPhoto(rd.result as string);
+                  rd.readAsDataURL(file);
+                }}
+              />
+            </label>
+            {bgPhoto && (
+              <button
+                type="button"
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-amber-400"
+                onClick={() => setBgPhoto(null)}
+              >
+                Foto Sil
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Ana Hesaplama Modu */}
@@ -767,7 +810,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="p-2.5 rounded border border-slate-700 bg-slate-950 flex flex-col">
                     <div className="flex items-center justify-between px-1 pb-1.5">
-                      <span className="text-xs font-medium text-slate-300">Ön Görünüş — Ekran Boyutu</span>
+                      <span className="text-xs font-medium text-slate-300">Ön Görünüş — {screenName.trim() || 'Ekran Boyutu'}</span>
                       <button
                         onClick={() => setExpandedView('front')}
                         className="px-2 py-0.5 rounded bg-slate-800 hover:bg-sky-700 text-[11px] text-sky-300 hover:text-white transition"
@@ -775,7 +818,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
                         🔍 Büyüt
                       </button>
                     </div>
-                    <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} />
+                    <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} screenName={screenName} photoUrl={bgPhoto} />
                   </div>
                   <div className="p-2.5 rounded border border-slate-700 bg-slate-950 flex flex-col">
                     <div className="flex items-center justify-between gap-2 px-1 pb-1.5">
@@ -1142,7 +1185,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
 
           <div className="flex-1 min-h-0 flex items-center justify-center bg-slate-900/40 rounded border border-slate-800 p-4" onClick={e => e.stopPropagation()}>
             {expandedView === 'front' && (
-              <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} large />
+              <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} screenName={screenName} photoUrl={bgPhoto} large />
             )}
             {expandedView === 'side' && (
               <SideDiagram r={out.r} unit={unit} large />
@@ -1242,14 +1285,22 @@ const Card = ({ k, v }: { k: string; v: string }) => (
 );
 
 /** Ön görünüş: Ekran genişliği, yüksekliği ve diagonal. */
-function FrontScreenDiagram({ w, h, d, unit, large }: { w: number; h: number; d: number; unit: LengthUnit; large?: boolean }) {
+function FrontScreenDiagram({ w, h, d, unit, screenName, photoUrl, large }: { w: number; h: number; d: number; unit: LengthUnit; screenName?: string; photoUrl?: string | null; large?: boolean }) {
   const pad = 42, vw = 520, vh = 260;
   const s = Math.min((vw - 2 * pad) / w, (vh - 2 * pad) / h);
   const pw = w * s, ph = h * s, x = (vw - pw) / 2, y = (vh - ph) / 2;
   return (
     <svg viewBox={`0 0 ${vw} ${vh}`} className={large ? 'w-full h-full max-h-[82vh]' : 'w-full min-h-[240px] max-h-[340px]'}>
-      <rect x={x} y={y} width={pw} height={ph} fill="#0b3a5b" stroke="#38bdf8" strokeWidth="2" />
+      {photoUrl && (
+        <image href={photoUrl} x={x} y={y} width={pw} height={ph} preserveAspectRatio="xMidYMid slice" opacity="0.72" />
+      )}
+      <rect x={x} y={y} width={pw} height={ph} fill={photoUrl ? 'none' : '#0b3a5b'} stroke="#38bdf8" strokeWidth="2" />
       <line x1={x} y1={y} x2={x + pw} y2={y + ph} stroke="#38bdf8" strokeDasharray="5 4" opacity=".45" />
+      {screenName?.trim() && (
+        <text x={vw / 2} y={y + 18} textAnchor="middle" fill="#f8fafc" fontSize="12" fontWeight="600">
+          {screenName.trim()}
+        </text>
+      )}
       <text x={vw / 2} y={y - 10} textAnchor="middle" fill="#cbd5e1" fontSize="13">
         {round(fromMeters(w, unit), 2)} {unit}
       </text>

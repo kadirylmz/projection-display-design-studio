@@ -105,6 +105,8 @@ export interface ReportPayload {
   architecturalPlanSvg?: string;
   interProjectorAnalysis?: InterProjectorAnalysis;
   projection?: {
+    screenName?: string;
+    screenPhotoUrl?: string;
     projectorName: string;
     lensName: string;
     imageWidthM: number;
@@ -533,6 +535,7 @@ export function buildReportHtml(p: ReportPayload): string {
     blocks.push(`<section class="report-section">
       <h2>${tr.projection}</h2>
       <table><tbody>
+        ${pr.screenName ? `<tr><th>${p.lang === 'en' ? 'Screen Name' : 'Ekran Adı'}</th><td colspan="3"><b>${esc(pr.screenName)}</b></td></tr>` : ''}
         <tr><th>${tr.projector}</th><td>${esc(pr.projectorName)}</td><th>${tr.lens}</th><td>${esc(pr.lensName)}</td></tr>
         <tr><th>${tr.imgSize} &amp; ${p.lang === 'en' ? 'Area' : 'Alan'}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m · <b>${round(res.imageWidth * res.imageHeight, 2)} m²</b></td><th>${tr.diagonal}</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 3)} m)</td></tr>
         <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m${Math.abs(res.chassisFrontToSurface - res.lensToSurface) > 0.005 ? ` (${p.lang === 'en' ? 'Chassis' : 'Şasi'}: ${round(res.chassisFrontToSurface, 3)} m)` : ''}</td></tr>
@@ -546,7 +549,8 @@ export function buildReportHtml(p: ReportPayload): string {
         const fs = Math.min((fW - 2 * fPad) / Math.max(0.1, res.imageWidth), (fH - 2 * fPad) / Math.max(0.1, res.imageHeight));
         const pw = res.imageWidth * fs, ph = res.imageHeight * fs, fx = (fW - pw) / 2, fy = (fH - ph) / 2;
         const frontSvg = `<svg viewBox="0 0 ${fW} ${fH}" style="width:100%; height:175px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px;">
-          <rect x="${fx}" y="${fy}" width="${pw}" height="${ph}" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />
+          ${pr.screenPhotoUrl ? `<image href="${pr.screenPhotoUrl}" x="${fx}" y="${fy}" width="${pw}" height="${ph}" preserveAspectRatio="xMidYMid slice" opacity="0.7" />` : ''}
+          <rect x="${fx}" y="${fy}" width="${pw}" height="${ph}" fill="${pr.screenPhotoUrl ? 'none' : '#e0f2fe'}" stroke="#0284c7" stroke-width="2" />
           <line x1="${fx}" y1="${fy}" x2="${fx + pw}" y2="${fy + ph}" stroke="#0284c7" stroke-dasharray="4 3" opacity="0.5" />
           <text x="${fW / 2}" y="${fy - 8}" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="600">${round(res.imageWidth, 2)} m</text>
           <text x="${fx - 10}" y="${fH / 2}" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="600" transform="rotate(-90 ${fx - 10} ${fH / 2})">${round(res.imageHeight, 2)} m</text>
@@ -573,7 +577,7 @@ export function buildReportHtml(p: ReportPayload): string {
 
         return `<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
           <div>
-            <div style="font-size:11px; font-weight:600; color:#334155; margin-bottom:4px;">Ön Görünüş — Ekran Boyutu</div>
+            <div style="font-size:11px; font-weight:600; color:#334155; margin-bottom:4px;">Ön Görünüş — ${pr.screenName ? esc(pr.screenName) : 'Ekran Boyutu'}</div>
             ${frontSvg}
           </div>
           <div>
