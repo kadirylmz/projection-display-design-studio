@@ -1,7 +1,6 @@
 import { Suspense, lazy, useState, useEffect } from 'react';
 import ProjectorCalculator from './modules/ProjectorCalculator';
 import LuxCalculator from './modules/LuxCalculator';
-import GeometrySimulator from './modules/GeometrySimulator';
 import PixelMappingStudio from './modules/PixelMappingStudio';
 import ContentPlanner from './modules/ContentPlanner';
 import LedCalculator from './modules/LedCalculator';
@@ -19,7 +18,6 @@ interface Mod { id: string; name: string; ready: boolean; phase: number }
 const MODULES: Mod[] = [
   { id: 'projector', name: 'Ekran, Projektör & Lens', ready: true, phase: 1 },
   { id: 'lux', name: 'Lux & Parlaklık', ready: true, phase: 2 },
-  { id: 'geometry', name: 'Projeksiyon Geometrisi', ready: true, phase: 2 },
   { id: 'content', name: 'İçerik Çözünürlüğü Planlayıcı', ready: true, phase: 3 },
   { id: 'pixel', name: 'Çoklu Projektör & Piksel Haritalama', ready: true, phase: 3 },
   { id: 'led', name: 'LED Duvar', ready: true, phase: 4 },
@@ -37,7 +35,7 @@ export default function App() {
 
   useEffect(() => {
     const handleNav = (e: any) => {
-      const target = e.detail === 'screen' ? 'projector' : e.detail === 'multi' ? 'pixel' : e.detail;
+      const target = (e.detail === 'screen' || e.detail === 'geometry') ? 'projector' : e.detail === 'multi' ? 'pixel' : e.detail;
       if (target && MODULES.some(m => m.id === target)) {
         setActive(target);
       }
@@ -83,7 +81,6 @@ export default function App() {
         </aside>
         <main className="flex-1 p-4 overflow-auto">
           {active === 'lux' ? <LuxCalculator unit={unit} />
-            : active === 'geometry' ? <GeometrySimulator unit={unit} />
             : active === 'content' ? <ContentPlanner unit={unit} />
             : active === 'pixel' ? <PixelMappingStudio />
             : active === 'led' ? <LedCalculator unit={unit} />

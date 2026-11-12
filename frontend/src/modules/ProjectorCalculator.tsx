@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PRESET_ASPECTS,
   Aspect,
@@ -18,12 +18,17 @@ import {
 } from '../engine/lenses';
 import { LengthUnit, fromMeters, toMeters, round } from '../engine/units';
 import { api, CompatLens, ProjectorRecord } from '../api';
+import { download, svgToPng } from '../util';
 import {
   CATALOG_BRANDS,
   CATALOG_LENSES,
   CATALOG_PROJECTORS,
   getCompatibleCatalogLenses,
 } from '../data/projectorCatalog';
+
+type DiagramTab = 'standard' | 'geometry';
+type GeoViewMode = 'side' | 'top' | 'front' | 'perspective';
+type SurfaceTarget = 'wall' | 'floor' | 'ceiling';
 
 type CalcMode = 'size2dist' | 'dist2size' | 'both2tr';
 type SizeInputMode = 'w2h' | 'h2w' | 'd2wh' | 'wh2d';
@@ -81,6 +86,18 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   // JSON içe aktarma
   const [importText, setImportText] = useState('');
   const [msg, setMsg] = useState('');
+
+  // Gelişmiş Geometri & Perspektif Simülasyonu state'leri
+  const [diagramTab, setDiagramTab] = useState<DiagramTab>('standard');
+  const [geoView, setGeoView] = useState<GeoViewMode>('side');
+  const [surface, setSurface] = useState<SurfaceTarget>('wall');
+  const [surfW, setSurfW] = useState(8);
+  const [surfH, setSurfH] = useState(4.5);
+  const [hOff, setHOff] = useState(0);
+  const [human, setHuman] = useState(true);
+  const [bgPhoto, setBgPhoto] = useState<string | null>(null);
+  const geoSvgRef = useRef<SVGSVGElement>(null);
+  const geoDragging = useRef(false);
 
   const reload = () =>
     Promise.all([api.projectors(), api.lenses()])
@@ -219,6 +236,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
         aspect: activeAspect,
         throwRange: range,
         lensFrontProtrusion: toMeters(protr, 'mm'),
+        horizontalOffset: toMeters(hOff, inUnit),
         verticalOffset: toMeters(vOff, inUnit),
         vShift: shift.v,
         hShift: shift.h,
@@ -235,7 +253,33 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
     } catch (e) {
       return { r: null, err: (e as Error).message };
     }
-  }, [calcMode, screenDims, baseAspect, range.min, range.max, dist, tr, vOff, protr, inUnit, dbLens]);
+  }, [calcMode, screenDims, baseAspect, range.min, range.max, dist, tr, hOff, vOff, protr, inUnit, dbLens]);
+
+  const geoCalc = useMemo(() => {
+    const SW = toMeters(surfW, inUnit), SH = toMeters(surfH, inUnit);
+    const fits = out.r
+      ? Math.abs(out.r.bounds.left) <= SW / 2 && Math.abs(out.r.bounds.right) <= SW / 2 && (out.r.bounds.top - out.r.bounds.bottom) <= SH && out.r.bounds.top <= SH / 2 && out.r.bounds.bottom >= -SH / 2
+      : false;
+    return { SW, SH, fits };
+  }, [out.r, surfW, surfH, inUnit]);
+
+  const onGeoDragMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!geoDragging.current || !geoSvgRef.current) return;
+    const rect = geoSvgRef.current.getBoundingClientRect();
+    const nx = Math.max(0.08, Math.min(0.85, (e.clientX - rect.left) / rect.width));
+    if (geoView === 'side' || geoView === 'top') {
+      const newDistM = Math.max(0.5, (1 - nx) * toMeters(surfW, inUnit) * 1.4);
+      if (calcMode === 'size2dist') setCalcMode('dist2size');
+      setDist(round(fromMeters(newDistM, inUnit), 2));
+    }
+  };
+
+  const exportGeoScreenshot = async () => {
+    if (!geoSvgRef.current) return;
+    const xml = new XMLSerializer().serializeToString(geoSvgRef.current);
+    const blob = await svgToPng(xml, 1920);
+    download(`geometri-${geoView}.png`, blob);
+  };
 
   const f = (m: number | undefined, digits = 3) =>
     m === undefined ? '—' : `${round(fromMeters(m, unit), digits)} ${unit}`;
@@ -606,18 +650,166 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
               />
             </div>
 
-            {/* Çift Teknik Çizim: Ön Ekran Görünüşü + Yan Optik Kesit */}
-            <div className="grid md:grid-cols-2 gap-3">
-              <div className="p-2 rounded border border-slate-700 bg-slate-950 flex flex-col">
-                <div className="text-[11px] text-slate-400 px-1 pb-1">Ön Görünüş — Ekran Boyutu</div>
-                <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} />
-              </div>
-              <div className="p-2 rounded border border-slate-700 bg-slate-950 flex flex-col">
-                <div className="text-[11px] text-slate-400 px-1 pb-1">
-                  Yan Optik Kesit · Şasi Önü: {f(out.r.chassisFrontToSurface, 2)} · Sınırlar: Ü {f(out.r.bounds.top, 2)} / A {f(out.r.bounds.bottom, 2)}
+            {/* Teknik Çizim & Geometri Simülasyonu Sekmeleri */}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex rounded overflow-hidden border border-slate-700 text-xs">
+                  <button
+                    onClick={() => setDiagramTab('standard')}
+                    className={`px-3 py-1.5 font-medium ${diagramTab === 'standard' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                  >
+                    📐 Ön &amp; Yan Optik Kesit
+                  </button>
+                  <button
+                    onClick={() => setDiagramTab('geometry')}
+                    className={`px-3 py-1.5 font-medium ${diagramTab === 'geometry' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                  >
+                    🎯 Gelişmiş Geometri &amp; Perspektif (Duvar/Zemin/Tavan + Foto)
+                  </button>
                 </div>
-                <SideDiagram r={out.r} unit={unit} />
+
+                {diagramTab === 'geometry' && (
+                  <span className={`text-xs px-2.5 py-1 rounded border font-medium ${geoCalc.fits ? 'bg-emerald-950/50 border-emerald-700 text-emerald-300' : 'bg-amber-950/50 border-amber-700 text-amber-300'}`}>
+                    {geoCalc.fits ? '✔ Yüzey İçinde Sığıyor' : '⚠ Yüzey Sınırını Aşıyor'}
+                  </span>
+                )}
               </div>
+
+              {diagramTab === 'standard' ? (
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="p-2 rounded border border-slate-700 bg-slate-950 flex flex-col">
+                    <div className="text-[11px] text-slate-400 px-1 pb-1">Ön Görünüş — Ekran Boyutu</div>
+                    <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} />
+                  </div>
+                  <div className="p-2 rounded border border-slate-700 bg-slate-950 flex flex-col">
+                    <div className="text-[11px] text-slate-400 px-1 pb-1">
+                      Yan Optik Kesit · Şasi Önü: {f(out.r.chassisFrontToSurface, 2)} · Sınırlar: Ü {f(out.r.bounds.top, 2)} / A {f(out.r.bounds.bottom, 2)}
+                    </div>
+                    <SideDiagram r={out.r} unit={unit} />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded border border-slate-700 bg-slate-950 space-y-2.5">
+                  {/* Geometri Simülatörü Kontrolleri */}
+                  <div className="flex flex-wrap items-center gap-2 text-xs border-b border-slate-800 pb-2">
+                    <div className="flex gap-1">
+                      {([['side', 'Yan'], ['top', 'Üst'], ['front', 'Ön'], ['perspective', 'Perspektif']] as [GeoViewMode, string][]).map(([k, l]) => (
+                        <button key={k} onClick={() => setGeoView(k)} className={`px-2.5 py-1 rounded ${geoView === k ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-300'}`}>{l}</button>
+                      ))}
+                    </div>
+                    <select className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200" value={surface} onChange={e => setSurface(e.target.value as SurfaceTarget)}>
+                      <option value="wall">Duvar</option>
+                      <option value="floor">Zemin (Floor)</option>
+                      <option value="ceiling">Tavan (Ceiling)</option>
+                    </select>
+                    <label className="flex items-center gap-1 text-slate-400">
+                      Yüzey G:
+                      <input type="number" step="0.1" value={surfW} onChange={e => setSurfW(+e.target.value)} className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 w-14 text-slate-100" />
+                    </label>
+                    <label className="flex items-center gap-1 text-slate-400">
+                      Yüzey Y:
+                      <input type="number" step="0.1" value={surfH} onChange={e => setSurfH(+e.target.value)} className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 w-14 text-slate-100" />
+                    </label>
+                    <label className="flex items-center gap-1 text-slate-400">
+                      Yatay Shift:
+                      <input type="number" step="0.05" value={hOff} onChange={e => setHOff(+e.target.value)} className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 w-14 text-slate-100" />
+                    </label>
+                    <label className="flex items-center gap-1 text-slate-300 cursor-pointer">
+                      <input type="checkbox" checked={human} onChange={e => setHuman(e.target.checked)} /> İnsan (1.75m)
+                    </label>
+                    <label className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded cursor-pointer text-slate-200">
+                      📷 Foto Yükle
+                      <input type="file" accept="image/*" hidden onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const rd = new FileReader();
+                        rd.onload = () => setBgPhoto(rd.result as string);
+                        rd.readAsDataURL(file);
+                      }} />
+                    </label>
+                    {bgPhoto && <button className="px-2 py-1 bg-slate-800 rounded text-amber-400" onClick={() => setBgPhoto(null)}>Foto Sil</button>}
+                    <button className="ml-auto px-2.5 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white font-medium" onClick={exportGeoScreenshot}>PNG İndir</button>
+                  </div>
+
+                  {/* İnteraktif SVG Geometri Sahnesi */}
+                  <svg
+                    ref={geoSvgRef}
+                    viewBox="0 0 900 460"
+                    className="w-full max-h-[380px] bg-slate-950 rounded select-none touch-none"
+                    onPointerMove={onGeoDragMove}
+                    onPointerUp={() => { geoDragging.current = false; }}
+                  >
+                    {bgPhoto && (geoView === 'front' || geoView === 'perspective') && (
+                      <image href={bgPhoto} x="50" y="20" width="800" height="420" preserveAspectRatio="xMidYMid slice" opacity="0.55" />
+                    )}
+
+                    {(geoView === 'side' || geoView === 'top') && (() => {
+                      const r = out.r!;
+                      const spanM = Math.max(geoCalc.SW * 1.4, r.lensToSurface * 1.15, 4);
+                      const scale = 680 / spanM;
+                      const xSurf = 780;
+                      const xProj = xSurf - r.lensToSurface * scale;
+                      const yMid = 230;
+                      const imgSpan = geoView === 'side' ? r.imageHeight : r.imageWidth;
+                      const surfSpan = geoView === 'side' ? geoCalc.SH : geoCalc.SW;
+                      const shiftM = toMeters(geoView === 'side' ? vOff : hOff, inUnit);
+                      const yTop = yMid - (shiftM + imgSpan / 2) * scale;
+                      const yBot = yMid - (shiftM - imgSpan / 2) * scale;
+                      return (
+                        <g>
+                          <line x1={xSurf} y1={yMid - (surfSpan / 2) * scale} x2={xSurf} y2={yMid + (surfSpan / 2) * scale} stroke="#64748b" strokeWidth="6" />
+                          <polygon points={`${xProj},${yMid} ${xSurf},${yTop} ${xSurf},${yBot}`} fill="#38bdf8" fillOpacity="0.18" stroke="#38bdf8" strokeWidth="2" />
+                          <line x1={xProj} y1={yMid} x2={xSurf} y2={yMid} stroke="#f59e0b" strokeDasharray="6 4" />
+                          <line x1={xSurf} y1={yTop} x2={xSurf} y2={yBot} stroke="#4ade80" strokeWidth="5" />
+                          <g className="cursor-ew-resize" onPointerDown={e => { e.stopPropagation(); geoDragging.current = true; }}>
+                            <rect x={xProj - 32} y={yMid - 14} width="32" height="28" rx="3" fill="#334155" stroke="#94a3b8" />
+                            <circle cx={xProj} cy={yMid} r="7" fill="#f59e0b" />
+                          </g>
+                          {human && geoView === 'side' && (
+                            <g transform={`translate(${xSurf - 70}, ${yMid + (surfSpan / 2) * scale - 1.75 * scale})`}>
+                              <circle cx="0" cy={0.15 * scale} r={0.12 * scale} fill="#f87171" />
+                              <line x1="0" y1={0.27 * scale} x2="0" y2={1.75 * scale} stroke="#f87171" strokeWidth="4" />
+                            </g>
+                          )}
+                          <text x={(xProj + xSurf) / 2} y={yMid - 10} fill="#f59e0b" fontSize="13" textAnchor="middle">
+                            {geoView === 'side' ? 'Yan Görünüş' : 'Üst Görünüş'} · Optik Eksen D = {f(r.lensToSurface, 2)} ({surface})
+                          </text>
+                          <text x={xSurf + 12} y={(yTop + yBot) / 2} fill="#4ade80" fontSize="13">
+                            {geoView === 'side' ? `H = ${f(r.imageHeight, 2)}` : `W = ${f(r.imageWidth, 2)}`}
+                          </text>
+                        </g>
+                      );
+                    })()}
+
+                    {(geoView === 'front' || geoView === 'perspective') && (() => {
+                      const r = out.r!;
+                      const scale = Math.min(720 / geoCalc.SW, 360 / geoCalc.SH);
+                      const cx = 450, cy = 230;
+                      const sw = geoCalc.SW * scale, sh = geoCalc.SH * scale;
+                      const iw = r.imageWidth * scale, ih = r.imageHeight * scale;
+                      const ox = toMeters(hOff, inUnit) * scale, oy = -toMeters(vOff, inUnit) * scale;
+                      return (
+                        <g>
+                          <rect x={cx - sw / 2} y={cy - sh / 2} width={sw} height={sh} fill={bgPhoto ? 'none' : '#0f172a'} stroke="#64748b" strokeWidth="2" strokeDasharray="6 4" />
+                          {geoView === 'perspective' && (
+                            <polygon points={`${cx},${cy + 190} ${cx + ox - iw / 2},${cy + oy + ih / 2} ${cx + ox + iw / 2},${cy + oy - ih / 2}`} fill="#38bdf8" fillOpacity="0.12" />
+                          )}
+                          <rect x={cx + ox - iw / 2} y={cy + oy - ih / 2} width={iw} height={ih} fill="#38bdf8" fillOpacity="0.22" stroke="#38bdf8" strokeWidth="2.5" />
+                          {human && (
+                            <g transform={`translate(${cx - sw / 2 + 35}, ${cy + sh / 2 - 1.75 * scale})`}>
+                              <circle cx="0" cy={0.15 * scale} r={0.12 * scale} fill="#f87171" />
+                              <line x1="0" y1={0.27 * scale} x2="0" y2={1.75 * scale} stroke="#f87171" strokeWidth="4" />
+                            </g>
+                          )}
+                          <text x={cx} y={cy - sh / 2 - 10} fill="#cbd5e1" fontSize="13" textAnchor="middle">
+                            Yüzey: {f(geoCalc.SW, 2)} × {f(geoCalc.SH, 2)} &nbsp;|&nbsp; Görüntü: {f(r.imageWidth, 2)} × {f(r.imageHeight, 2)}
+                          </text>
+                        </g>
+                      );
+                    })()}
+                  </svg>
+                </div>
+              )}
             </div>
           </>
         )}
