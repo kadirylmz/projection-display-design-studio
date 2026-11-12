@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import ProjectorCalculator from './modules/ProjectorCalculator';
 import LuxCalculator from './modules/LuxCalculator';
 import PixelMappingStudio from './modules/PixelMappingStudio';
@@ -12,8 +12,6 @@ import ProjectManager from './modules/ProjectManager';
 import ElectricalDrawingStudio from './modules/ElectricalDrawingStudio';
 import { LengthUnit } from './engine/units';
 
-const RoomDesigner = lazy(() => import('./modules/RoomDesigner'));
-
 interface Mod { id: string; name: string; ready: boolean; phase: number }
 const MODULES: Mod[] = [
   { id: 'projector', name: 'Ekran, Projektör & Lens', ready: true, phase: 1 },
@@ -23,7 +21,6 @@ const MODULES: Mod[] = [
   { id: 'led', name: 'LED Duvar', ready: true, phase: 4 },
   { id: 'lcd', name: 'LCD Video Duvarı', ready: true, phase: 4 },
   { id: 'equipment', name: 'Ekipman Veritabanı', ready: true, phase: 4 },
-  { id: 'room', name: '3D Oda Tasarımı', ready: true, phase: 5 },
   { id: 'camera', name: 'Kamera & FOV', ready: true, phase: 5 },
   { id: 'report', name: 'Rapor & Çizim (PDF)', ready: true, phase: 6 },
   { id: 'projects', name: 'Projeler & Revizyonlar', ready: true, phase: 6 },
@@ -86,7 +83,6 @@ export default function App() {
             : active === 'led' ? <LedCalculator unit={unit} />
             : active === 'lcd' ? <LcdCalculator unit={unit} />
             : active === 'equipment' ? <EquipmentDatabase />
-            : active === 'room' ? <Suspense fallback={<div className="text-slate-400">3B sahne yükleniyor…</div>}><RoomDesigner /></Suspense>
             : active === 'camera' ? <CameraCalculator unit={unit} />
             : active === 'report' ? <ReportGenerator />
             : active === 'projects' ? <ProjectManager />

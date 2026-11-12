@@ -6,16 +6,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import compat as compat_mod
-from .db import engine, get_db
+from .db import SessionLocal, engine, get_db
 from .models import (Base, Customer, Equipment, Lens, Manufacturer, Project, ProjectRevision,
                      Projector, ProjectorLensCompat)
 from .schemas import (EQUIPMENT_CATEGORIES, CompatIn, EquipmentIn, EquipmentOut, LensIn, LensOut,
                       ProjectIn, ProjectorIn, ProjectorOut, RevisionIn, RevisionOverwrite)
+from .seed import seed_default_catalog
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        seed_default_catalog(db)
     yield
 
 
