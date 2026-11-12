@@ -136,4 +136,30 @@ describe('rapor üretici (kabul testi 10)', () => {
     expect(htmlWithPhoto).toContain('17:1');
     expect(htmlWithPhoto).toContain('1.05m (%16 Blend PJ 2 ile)');
   });
+
+  it('ekran, projektör lümeni, çözünürlük, lens ile ön ve yan optik kesit SVG diyagramlarını rapora ekler', () => {
+    const htmlWithProj = buildReportHtml({
+      ...payload,
+      projection: {
+        projectorName: 'Epson EB-PU2010B',
+        ansiLumens: 10000,
+        resolution: '1920×1200 (16:10)',
+        technology: '3LCD Laser',
+        lensName: 'ELPLW05 (Wide Zoom)',
+        imageWidthM: 4,
+        distanceM: 3.6,
+        aspectW: 16,
+        aspectH: 10,
+        throwMin: 0.77,
+        throwMax: 1.07,
+      },
+    });
+
+    expect(htmlWithProj).toContain('Epson EB-PU2010B');
+    expect(htmlWithProj).toContain('10.000 ANSI lm');
+    expect(htmlWithProj).toContain('1920×1200 (16:10)');
+    expect(htmlWithProj).toContain('ELPLW05 (Wide Zoom)');
+    expect(htmlWithProj).toContain('Ön Görünüş — Ekran Boyutu');
+    expect(htmlWithProj).toContain('Yan Optik Kesit — Atım Geometrisi');
+  });
 });

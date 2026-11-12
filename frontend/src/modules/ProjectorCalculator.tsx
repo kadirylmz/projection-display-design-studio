@@ -18,6 +18,7 @@ import {
 } from '../engine/lenses';
 import { LengthUnit, fromMeters, toMeters, round } from '../engine/units';
 import { api, CompatLens, ProjectorRecord } from '../api';
+import { useProjectStore } from '../projectStore';
 import { download, svgToPng } from '../util';
 import {
   CATALOG_BRANDS,
@@ -280,6 +281,60 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
     const xml = new XMLSerializer().serializeToString(geoSvgRef.current);
     const blob = await svgToPng(xml, 1920);
     download(`geometri-${geoView}.png`, blob);
+  };
+
+  const setProjectionSnap = useProjectStore(s => s.setProjectionSnap);
+  const [reportToast, setReportToast] = useState<string | null>(null);
+
+  const buildReportProjection = () => {
+    if (!out.r) return null;
+    const activeCatLens = catCompatLenses.find(l => l.id === catLensId);
+    const activePreset = STANDARD_LENS_PRESETS.find(p => p.id === presetId);
+    const activeAspect = calcMode === 'dist2size' ? baseAspect : screenDims.effAspect;
+    return {
+      projectorName: catProj
+        ? `${catProj.manufacturer} ${catProj.model}`
+        : proj
+          ? `${proj.manufacturer} ${proj.model}`
+          : 'Genel Projektör (Manuel)',
+      ansiLumens: catProj?.ansiLumens ?? proj?.ansi_lumens ?? undefined,
+      resolution: catProj
+        ? `${catProj.nativeW}×${catProj.nativeH} (${catProj.aspect})`
+        : proj?.native_w && proj?.native_h
+          ? `${proj.native_w}×${proj.native_h}`
+          : undefined,
+      technology: catProj?.technology ?? undefined,
+      lensName: activeCatLens
+        ? activeCatLens.model
+        : dbLens
+          ? `${dbLens.manufacturer} ${dbLens.model}`
+          : activePreset
+            ? activePreset.name
+            : `Özel Lens (${range.min.toFixed(2)}–${range.max.toFixed(2)}:1)`,
+      imageWidthM: round(out.r.imageWidth, 4),
+      distanceM: round(out.r.lensToSurface, 4),
+      aspectW: round(activeAspect.w, 4),
+      aspectH: round(activeAspect.h, 4),
+      throwMin: range.min,
+      throwMax: range.max,
+      throwRatio: round(out.r.throwRatio, 4),
+      lensFrontProtrusionM: toMeters(protr, 'mm'),
+      verticalOffsetM: toMeters(vOff, inUnit),
+      horizontalOffsetM: toMeters(hOff, inUnit),
+    };
+  };
+
+  useEffect(() => {
+    const snap = buildReportProjection();
+    if (snap) setProjectionSnap(snap);
+  }, [out.r, catProj, proj, catLensId, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit]);
+
+  const handleSendToReport = () => {
+    const snap = buildReportProjection();
+    if (!snap) return;
+    setProjectionSnap(snap);
+    setReportToast('✔ Ekran, Projektör & Lens rapora eklendi');
+    setTimeout(() => setReportToast(null), 2600);
   };
 
   const f = (m: number | undefined, digits = 3) =>
@@ -626,8 +681,15 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
                 {out.r.achievable ? '✔ Yapılandırma fiziksel olarak ulaşılabilir' : '✘ Seçili lens / throw aralığı bu yapılandırmayı karşılamıyor'}
                 {out.r.warnings.map(w => <div key={w} className="text-xs text-amber-300 mt-0.5">⚠ {w}</div>)}
               </div>
-              <div className="text-xs text-slate-300 font-mono">
-                Alan: {round(out.r.imageWidth * out.r.imageHeight, 2)} m² · Oran: {round(out.r.imageWidth / out.r.imageHeight, 3)}:1
+              <div className="flex items-center gap-2 text-xs text-slate-300 font-mono">
+                <span>Alan: {round(out.r.imageWidth * out.r.imageHeight, 2)} m² · Oran: {round(out.r.imageWidth / out.r.imageHeight, 3)}:1</span>
+                {reportToast && <span className="px-2 py-0.5 rounded bg-emerald-800 text-emerald-100 font-sans font-semibold">{reportToast}</span>}
+                <button
+                  onClick={handleSendToReport}
+                  className="px-2.5 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-sans font-semibold transition"
+                >
+                  📋 Rapora Ekle
+                </button>
               </div>
             </div>
 

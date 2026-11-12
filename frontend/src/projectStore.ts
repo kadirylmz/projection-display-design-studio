@@ -10,6 +10,9 @@ export interface ProjectState {
   meta: ReportProjectMeta;
   projectionSnap: {
     projectorName: string;
+    ansiLumens?: number;
+    resolution?: string;
+    technology?: string;
     lensName: string;
     imageWidthM: number;
     distanceM: number;
@@ -17,7 +20,10 @@ export interface ProjectState {
     aspectH: number;
     throwMin: number;
     throwMax: number;
+    throwRatio?: number;
     lensFrontProtrusionM: number;
+    verticalOffsetM?: number;
+    horizontalOffsetM?: number;
   };
   luxSnap: {
     ansiLumens: number[];

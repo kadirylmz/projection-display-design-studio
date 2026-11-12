@@ -114,6 +114,12 @@ export interface ReportPayload {
     throwMin?: number;
     throwMax?: number;
     lensFrontProtrusionM?: number;
+    ansiLumens?: number;
+    resolution?: string;
+    technology?: string;
+    throwRatio?: number;
+    verticalOffsetM?: number;
+    horizontalOffsetM?: number;
   };
   lux?: {
     ansiLumens: number[];
@@ -553,6 +559,50 @@ export function buildReportHtml(p: ReportPayload): string {
         <tr><th>${tr.imgSize}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m</td><th>${tr.diagonal}</th><td>${round(res.diagonal, 3)} m</td></tr>
         <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m</td></tr>
         <tr><th>${tr.chassisDist}</th><td>${round(res.chassisFrontToSurface, 3)} m</td><th>${tr.status}</th><td>${res.achievable ? `<span class="badge-success">${tr.achievable}</span>` : `<span class="badge-danger">${tr.notAchievable}</span>`}</td></tr>
+        ${pr.ansiLumens ? `<tr><th>Işık Gücü (ANSI Lümen)</th><td><b>${pr.ansiLumens.toLocaleString('tr-TR')} ANSI lm</b>${pr.technology ? ` · ${esc(pr.technology)}` : ''}</td><th>Çözünürlük &amp; Oran</th><td>${pr.resolution ? esc(pr.resolution) : `${pr.aspectW}:${pr.aspectH}`}</td></tr>` : `<tr><th>En-Boy Oranı</th><td>${pr.aspectW}:${pr.aspectH}</td><th>Ekran Alanı</th><td>${round(res.imageWidth * res.imageHeight, 2)} m²</td></tr>`}
+        <tr><th>Diagonal (inç) &amp; Alan</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.imageWidth * res.imageHeight, 2)} m²)</td><th>Lens Mesafe Aralığı &amp; Zoom</th><td>${res.distanceMin && res.distanceMax ? `${round(res.distanceMin, 2)} – ${round(res.distanceMax, 2)} m` : '—'}${res.zoomPosition !== undefined ? ` (Zoom %${round(res.zoomPosition * 100, 0)})` : ''}</td></tr>
+      </tbody></table>
+      ${(() => {
+        // Ön Görünüş SVG (Ekran Boyutu)
+        const fW = 380, fH = 190, fPad = 36;
+        const fs = Math.min((fW - 2 * fPad) / Math.max(0.1, res.imageWidth), (fH - 2 * fPad) / Math.max(0.1, res.imageHeight));
+        const pw = res.imageWidth * fs, ph = res.imageHeight * fs, fx = (fW - pw) / 2, fy = (fH - ph) / 2;
+        const frontSvg = `<svg viewBox="0 0 ${fW} ${fH}" style="width:100%; height:175px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px;">
+          <rect x="${fx}" y="${fy}" width="${pw}" height="${ph}" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />
+          <line x1="${fx}" y1="${fy}" x2="${fx + pw}" y2="${fy + ph}" stroke="#0284c7" stroke-dasharray="4 3" opacity="0.5" />
+          <text x="${fW / 2}" y="${fy - 8}" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="600">${round(res.imageWidth, 2)} m</text>
+          <text x="${fx - 10}" y="${fH / 2}" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="600" transform="rotate(-90 ${fx - 10} ${fH / 2})">${round(res.imageHeight, 2)} m</text>
+          <text x="${fW / 2}" y="${fH / 2 + 4}" text-anchor="middle" fill="#0369a1" font-size="11" font-weight="600">${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 2)} m)</text>
+        </svg>`;
+
+        // Yan Optik Kesit SVG (Atım Geometrisi)
+        const sW = 380, sH = 190, sPad = 32;
+        const spanY = Math.max(res.bounds.top, 0.2) - Math.min(res.bounds.bottom, -0.2);
+        const ss = Math.min((sW - 2 * sPad - 50) / Math.max(0.2, res.lensToSurface), (sH - 2 * sPad) / Math.max(0.2, spanY));
+        const sx0 = sPad + 24, sxs = sx0 + res.lensToSurface * ss;
+        const syAxis = sPad + Math.max(res.bounds.top, 0.2) * ss;
+        const syT = syAxis - res.bounds.top * ss, syB = syAxis - res.bounds.bottom * ss;
+        const sideSvg = `<svg viewBox="0 0 ${sW} ${sH}" style="width:100%; height:175px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px;">
+          <polygon points="${sx0},${syAxis} ${sxs},${syT} ${sxs},${syB}" fill="#38bdf8" fill-opacity="0.2" stroke="#0284c7" stroke-width="1.5" />
+          <line x1="${sx0}" y1="${syAxis}" x2="${sxs}" y2="${syAxis}" stroke="#d97706" stroke-dasharray="4 3" />
+          <rect x="${sx0 - 24}" y="${syAxis - 10}" width="24" height="20" fill="#475569" rx="2" />
+          <circle cx="${sx0}" cy="${syAxis}" r="3.5" fill="#d97706" />
+          <line x1="${sxs}" y1="${syT}" x2="${sxs}" y2="${syB}" stroke="#0f172a" stroke-width="3" />
+          <text x="${(sx0 + sxs) / 2}" y="${syAxis - 6}" fill="#b45309" font-size="10" font-weight="600" text-anchor="middle">D = ${round(res.lensToSurface, 2)} m (TR ${round(res.throwRatio, 2)}:1)</text>
+          <text x="${sxs + 5}" y="${(syT + syB) / 2 + 4}" fill="#0f172a" font-size="10" font-weight="600">H = ${round(res.imageHeight, 2)} m</text>
+        </svg>`;
+
+        return `<div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px;">
+          <div>
+            <div style="font-size:11px; font-weight:600; color:#334155; margin-bottom:4px;">Ön Görünüş — Ekran Boyutu</div>
+            ${frontSvg}
+          </div>
+          <div>
+            <div style="font-size:11px; font-weight:600; color:#334155; margin-bottom:4px;">Yan Optik Kesit — Atım Geometrisi</div>
+            ${sideSvg}
+          </div>
+        </div>`;
+      })()}
       </tbody></table>
     </section>`);
   }
