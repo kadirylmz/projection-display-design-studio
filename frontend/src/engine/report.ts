@@ -340,10 +340,7 @@ export function buildReportHtml(p: ReportPayload): string {
 
     const totalPj = p.interProjectorAnalysis?.totalProjectors ?? (p.mappingSlots?.length ?? 1);
     const totalW = elAnalysis?.totalW ?? (p.interProjectorAnalysis?.totalPowerW ?? 0);
-    const demandW = elAnalysis?.demandW ?? totalW;
     const totalIbA = elAnalysis?.totalIbA ?? (totalW > 0 ? (totalW / (230 * 0.95)) : 0);
-    const mainBrkA = elAnalysis?.mainBreakerA ?? (totalW > 9000 ? 63 : 40);
-    const phases = p.electrical?.supply.phases ?? (totalW > 9000 ? 3 : 1);
     const roomDims = p.interProjectorAnalysis?.roomDimensions;
 
     blocks.push(`<section class="report-section">
@@ -369,25 +366,6 @@ export function buildReportHtml(p: ReportPayload): string {
           <div class="metric-lbl">Oda Ebatları (G × U × Y)</div>
         </div>` : ''}
       </div>
-
-      <table class="compact-table" style="margin: 12px 0;">
-        <tbody>
-          <tr>
-            <th>Toplam Kurulu Güç (P<sub>top</sub>)</th>
-            <td><b class="text-amber">${(totalW / 1000).toFixed(2)} kW</b> (${Math.round(totalW).toLocaleString('tr-TR')} Watt)</td>
-            <th>Eşzamanlı Talep Gücü (P<sub>talep</sub>)</th>
-            <td><b class="text-amber">${(demandW / 1000).toFixed(2)} kW</b> (Talep Faktörü k=1.0)</td>
-          </tr>
-          <tr>
-            <th>Toplam Çekilen Akım (I<sub>b</sub>)</th>
-            <td><b class="text-rose">${totalIbA.toFixed(1)} Amper</b> ${phases === 3 ? `(Faz Başına Ortalama ~${(totalIbA / 3).toFixed(1)} A)` : '(@230V AC)'}</td>
-            <th>Gerekli Dağıtım Linyeleri</th>
-            <td>${elAnalysis?.circuits.length ?? (p.interProjectorAnalysis?.surfaceStats.length ?? 4)} Adet Linye (${phases === 3 ? 'L1, L2, L3 Dengeli Dağıtım' : 'Monofaze Dağıtım'})</td>
-          </tr>
-        </tbody>
-      </table>
-        </tbody>
-      </table>
       
       ${m.notes ? `<div class="note-box"><b>${tr.notes}:</b> ${esc(m.notes)}</div>` : ''}
     </section>`);
