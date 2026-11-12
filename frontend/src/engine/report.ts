@@ -556,7 +556,7 @@ export function buildReportHtml(p: ReportPayload): string {
       <h2>${tr.projection}</h2>
       <table><tbody>
         <tr><th>${tr.projector}</th><td>${esc(pr.projectorName)}</td><th>${tr.lens}</th><td>${esc(pr.lensName)}</td></tr>
-        <tr><th>${tr.imgSize}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m (${round(res.imageWidth * res.imageHeight, 2)} m²)</td><th>${tr.diagonal}</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 3)} m)</td></tr>
+        <tr><th>${tr.imgSize} &amp; ${p.lang === 'en' ? 'Area' : 'Alan'}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m · <b>${round(res.imageWidth * res.imageHeight, 2)} m²</b></td><th>${tr.diagonal}</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 3)} m)</td></tr>
         <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m${Math.abs(res.chassisFrontToSurface - res.lensToSurface) > 0.005 ? ` (${p.lang === 'en' ? 'Chassis' : 'Şasi'}: ${round(res.chassisFrontToSurface, 3)} m)` : ''}</td></tr>
 
         ${pr.ansiLumens ? `<tr><th>${p.lang === 'en' ? 'Light Output (ANSI Lumens)' : 'Işık Gücü (ANSI Lümen)'}</th><td><b>${pr.ansiLumens.toLocaleString('tr-TR')} ANSI lm</b>${pr.technology ? ` · ${esc(pr.technology)}` : ''}</td><th>${p.lang === 'en' ? 'Resolution & Aspect' : 'Çözünürlük &amp; Oran'}</th><td>${pr.resolution ? esc(pr.resolution) : `${pr.aspectW}:${pr.aspectH}`}</td></tr>` : ''}
@@ -572,7 +572,8 @@ export function buildReportHtml(p: ReportPayload): string {
           <line x1="${fx}" y1="${fy}" x2="${fx + pw}" y2="${fy + ph}" stroke="#0284c7" stroke-dasharray="4 3" opacity="0.5" />
           <text x="${fW / 2}" y="${fy - 8}" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="600">${round(res.imageWidth, 2)} m</text>
           <text x="${fx - 10}" y="${fH / 2}" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="600" transform="rotate(-90 ${fx - 10} ${fH / 2})">${round(res.imageHeight, 2)} m</text>
-          <text x="${fW / 2}" y="${fH / 2 + 4}" text-anchor="middle" fill="#0369a1" font-size="11" font-weight="600">${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 2)} m)</text>
+          <text x="${fW / 2}" y="${fH / 2 + 2}" text-anchor="middle" fill="#0369a1" font-size="11" font-weight="600">${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 2)} m)</text>
+          <text x="${fW / 2}" y="${fH / 2 + 16}" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="600">Alan: ${round(res.imageWidth * res.imageHeight, 2)} m²</text>
         </svg>`;
 
         // Yan Optik Kesit SVG (Atım Geometrisi)

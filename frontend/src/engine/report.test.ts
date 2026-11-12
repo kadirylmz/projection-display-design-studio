@@ -160,6 +160,7 @@ describe('rapor üretici (kabul testi 10)', () => {
     expect(htmlWithProj).toContain('1920×1200 (16:10)');
     expect(htmlWithProj).toContain('ELPLW05 (Wide Zoom)');
     expect(htmlWithProj).toContain('Ön Görünüş — Ekran Boyutu');
+    expect(htmlWithProj).toContain('Alan: 10 m²');
     expect(htmlWithProj).toContain('Yan Optik Kesit — Atım Geometrisi');
     expect(htmlWithProj).not.toContain('Ulaşılabilir');
     expect(htmlWithProj).not.toContain('Fiziksel Sınır Dışı');
