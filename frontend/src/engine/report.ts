@@ -35,7 +35,7 @@ export const DEFAULT_SECTIONS: ReportSectionFlags = {
   summary: true,
   room3d: true,
   architecturalPlan: true,
-  interProjector: true,
+  interProjector: false,
   projection: true,
   lux: true,
   multiProjector: true,

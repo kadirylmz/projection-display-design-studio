@@ -404,7 +404,7 @@ export default function ReportGenerator() {
             ['drawings2d', '10. 2B CAD Teknik Çizimler'],
             ['equipmentList', '11. Ekipman Listesi (BOM)'],
             ['assumptionsAndWarnings', '12. Şantiye Standartları & Teknik Uyarılar'],
-          ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
+          ] as [keyof ReportSectionFlags, string][]).filter(([k]) => k !== 'interProjector').map(([k, label]) => (
             <div key={k} className="space-y-1">
               <label className="flex items-center gap-2 cursor-pointer hover:text-white transition">
                 <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
