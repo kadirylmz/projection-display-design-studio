@@ -89,6 +89,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
 
   // Gelişmiş Geometri & Perspektif Simülasyonu state'leri
   const [diagramTab, setDiagramTab] = useState<DiagramTab>('standard');
+  const [expandedView, setExpandedView] = useState<'front' | 'side' | 'geometry' | null>(null);
   const [geoView, setGeoView] = useState<GeoViewMode>('side');
   const [surface, setSurface] = useState<SurfaceTarget>('wall');
   const [surfW, setSurfW] = useState(8);
@@ -677,13 +678,29 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
 
               {diagramTab === 'standard' ? (
                 <div className="grid md:grid-cols-2 gap-3">
-                  <div className="p-2 rounded border border-slate-700 bg-slate-950 flex flex-col">
-                    <div className="text-[11px] text-slate-400 px-1 pb-1">Ön Görünüş — Ekran Boyutu</div>
+                  <div className="p-2.5 rounded border border-slate-700 bg-slate-950 flex flex-col">
+                    <div className="flex items-center justify-between px-1 pb-1.5">
+                      <span className="text-xs font-medium text-slate-300">Ön Görünüş — Ekran Boyutu</span>
+                      <button
+                        onClick={() => setExpandedView('front')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-sky-700 text-[11px] text-sky-300 hover:text-white transition"
+                      >
+                        🔍 Büyüt
+                      </button>
+                    </div>
                     <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} />
                   </div>
-                  <div className="p-2 rounded border border-slate-700 bg-slate-950 flex flex-col">
-                    <div className="text-[11px] text-slate-400 px-1 pb-1">
-                      Yan Optik Kesit · Şasi Önü: {f(out.r.chassisFrontToSurface, 2)} · Sınırlar: Ü {f(out.r.bounds.top, 2)} / A {f(out.r.bounds.bottom, 2)}
+                  <div className="p-2.5 rounded border border-slate-700 bg-slate-950 flex flex-col">
+                    <div className="flex items-center justify-between gap-2 px-1 pb-1.5">
+                      <span className="text-xs font-medium text-slate-300 truncate">
+                        Yan Optik Kesit · Şasi Önü: {f(out.r.chassisFrontToSurface, 2)} · Ü {f(out.r.bounds.top, 2)} / A {f(out.r.bounds.bottom, 2)}
+                      </span>
+                      <button
+                        onClick={() => setExpandedView('side')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-sky-700 text-[11px] text-sky-300 hover:text-white transition shrink-0"
+                      >
+                        🔍 Büyüt
+                      </button>
                     </div>
                     <SideDiagram r={out.r} unit={unit} />
                   </div>
@@ -728,14 +745,22 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
                       }} />
                     </label>
                     {bgPhoto && <button className="px-2 py-1 bg-slate-800 rounded text-amber-400" onClick={() => setBgPhoto(null)}>Foto Sil</button>}
-                    <button className="ml-auto px-2.5 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white font-medium" onClick={exportGeoScreenshot}>PNG İndir</button>
+                    <div className="ml-auto flex gap-1.5">
+                      <button
+                        onClick={() => setExpandedView('geometry')}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-sky-700 rounded text-sky-300 hover:text-white transition font-medium"
+                      >
+                        🔍 Büyüt
+                      </button>
+                      <button className="px-2.5 py-1 bg-sky-700 hover:bg-sky-600 rounded text-white font-medium" onClick={exportGeoScreenshot}>PNG İndir</button>
+                    </div>
                   </div>
 
                   {/* İnteraktif SVG Geometri Sahnesi */}
                   <svg
                     ref={geoSvgRef}
                     viewBox="0 0 900 460"
-                    className="w-full max-h-[380px] bg-slate-950 rounded select-none touch-none"
+                    className="w-full min-h-[360px] max-h-[520px] bg-slate-950 rounded select-none touch-none"
                     onPointerMove={onGeoDragMove}
                     onPointerUp={() => { geoDragging.current = false; }}
                   >
@@ -870,10 +895,10 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[300px] pr-1">
             {calcMode === 'dist2size' ? (
               <table className="w-full text-xs text-left border-collapse">
-                <thead>
+                <thead className="sticky top-0 bg-slate-900 z-10">
                   <tr className="border-b border-slate-700 text-slate-400">
                     <th className="py-2 pr-3">Lens / Kategori</th>
                     <th className="py-2 px-3">Atım Oranı (TR)</th>
@@ -925,7 +950,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
               </table>
             ) : (
               <table className="w-full text-xs text-left border-collapse">
-                <thead>
+                <thead className="sticky top-0 bg-slate-900 z-10">
                   <tr className="border-b border-slate-700 text-slate-400">
                     <th className="py-2 pr-3">Lens / Kategori</th>
                     <th className="py-2 px-3">Atım Oranı (TR)</th>
@@ -1007,6 +1032,110 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
           </div>
         </div>
       </div>
+
+      {/* Büyütülmüş / Tam Ekran Görünüm Modalı */}
+      {expandedView && out.r && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-sm p-6 flex flex-col gap-3"
+          onClick={() => setExpandedView(null)}
+        >
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3" onClick={e => e.stopPropagation()}>
+            <div className="text-sm font-semibold text-sky-300">
+              {expandedView === 'front' && `Ön Görünüş — ${f(out.r.imageWidth, 2)} × ${f(out.r.imageHeight, 2)} (${round(fromMeters(out.r.diagonal, 'in'), 1)}")`}
+              {expandedView === 'side' && `Yan Optik Kesit — Mesafe D = ${f(out.r.lensToSurface, 2)} · TR ${round(out.r.throwRatio, 2)}:1`}
+              {expandedView === 'geometry' && `Gelişmiş Geometri & Perspektif (${geoView.toUpperCase()} · ${surface})`}
+            </div>
+            <button
+              onClick={() => setExpandedView(null)}
+              className="px-3 py-1 rounded bg-slate-800 hover:bg-red-800 text-slate-200 hover:text-white text-xs font-semibold transition"
+            >
+              ✕ Küçült / Kapat
+            </button>
+          </div>
+
+          <div className="flex-1 min-h-0 flex items-center justify-center bg-slate-900/40 rounded border border-slate-800 p-4" onClick={e => e.stopPropagation()}>
+            {expandedView === 'front' && (
+              <FrontScreenDiagram w={out.r.imageWidth} h={out.r.imageHeight} d={out.r.diagonal} unit={unit} large />
+            )}
+            {expandedView === 'side' && (
+              <SideDiagram r={out.r} unit={unit} large />
+            )}
+            {expandedView === 'geometry' && (
+              <svg
+                viewBox="0 0 900 460"
+                className="w-full h-full max-h-[82vh] bg-slate-950 rounded select-none touch-none"
+                onPointerMove={onGeoDragMove}
+                onPointerUp={() => { geoDragging.current = false; }}
+              >
+                {bgPhoto && (geoView === 'front' || geoView === 'perspective') && (
+                  <image href={bgPhoto} x="50" y="20" width="800" height="420" preserveAspectRatio="xMidYMid slice" opacity="0.55" />
+                )}
+                {(geoView === 'side' || geoView === 'top') && (() => {
+                  const r = out.r!;
+                  const spanM = Math.max(geoCalc.SW * 1.4, r.lensToSurface * 1.15, 4);
+                  const scale = 680 / spanM;
+                  const xSurf = 780;
+                  const xProj = xSurf - r.lensToSurface * scale;
+                  const yMid = 230;
+                  const imgSpan = geoView === 'side' ? r.imageHeight : r.imageWidth;
+                  const surfSpan = geoView === 'side' ? geoCalc.SH : geoCalc.SW;
+                  const shiftM = toMeters(geoView === 'side' ? vOff : hOff, inUnit);
+                  const yTop = yMid - (shiftM + imgSpan / 2) * scale;
+                  const yBot = yMid - (shiftM - imgSpan / 2) * scale;
+                  return (
+                    <g>
+                      <line x1={xSurf} y1={yMid - (surfSpan / 2) * scale} x2={xSurf} y2={yMid + (surfSpan / 2) * scale} stroke="#64748b" strokeWidth="6" />
+                      <polygon points={`${xProj},${yMid} ${xSurf},${yTop} ${xSurf},${yBot}`} fill="#38bdf8" fillOpacity="0.18" stroke="#38bdf8" strokeWidth="2" />
+                      <line x1={xProj} y1={yMid} x2={xSurf} y2={yMid} stroke="#f59e0b" strokeDasharray="6 4" />
+                      <line x1={xSurf} y1={yTop} x2={xSurf} y2={yBot} stroke="#4ade80" strokeWidth="5" />
+                      <rect x={xProj - 32} y={yMid - 14} width="32" height="28" rx="3" fill="#334155" stroke="#94a3b8" />
+                      <circle cx={xProj} cy={yMid} r="7" fill="#f59e0b" />
+                      {human && geoView === 'side' && (
+                        <g transform={`translate(${xSurf - 70}, ${yMid + (surfSpan / 2) * scale - 1.75 * scale})`}>
+                          <circle cx="0" cy={0.15 * scale} r={0.12 * scale} fill="#f87171" />
+                          <line x1="0" y1={0.27 * scale} x2="0" y2={1.75 * scale} stroke="#f87171" strokeWidth="4" />
+                        </g>
+                      )}
+                      <text x={(xProj + xSurf) / 2} y={yMid - 10} fill="#f59e0b" fontSize="13" textAnchor="middle">
+                        {geoView === 'side' ? 'Yan Görünüş' : 'Üst Görünüş'} · Optik Eksen D = {f(r.lensToSurface, 2)} ({surface})
+                      </text>
+                      <text x={xSurf + 12} y={(yTop + yBot) / 2} fill="#4ade80" fontSize="13">
+                        {geoView === 'side' ? `H = ${f(r.imageHeight, 2)}` : `W = ${f(r.imageWidth, 2)}`}
+                      </text>
+                    </g>
+                  );
+                })()}
+                {(geoView === 'front' || geoView === 'perspective') && (() => {
+                  const r = out.r!;
+                  const scale = Math.min(720 / geoCalc.SW, 360 / geoCalc.SH);
+                  const cx = 450, cy = 230;
+                  const sw = geoCalc.SW * scale, sh = geoCalc.SH * scale;
+                  const iw = r.imageWidth * scale, ih = r.imageHeight * scale;
+                  const ox = toMeters(hOff, inUnit) * scale, oy = -toMeters(vOff, inUnit) * scale;
+                  return (
+                    <g>
+                      <rect x={cx - sw / 2} y={cy - sh / 2} width={sw} height={sh} fill={bgPhoto ? 'none' : '#0f172a'} stroke="#64748b" strokeWidth="2" strokeDasharray="6 4" />
+                      {geoView === 'perspective' && (
+                        <polygon points={`${cx},${cy + 190} ${cx + ox - iw / 2},${cy + oy + ih / 2} ${cx + ox + iw / 2},${cy + oy - ih / 2}`} fill="#38bdf8" fillOpacity="0.12" />
+                      )}
+                      <rect x={cx + ox - iw / 2} y={cy + oy - ih / 2} width={iw} height={ih} fill="#38bdf8" fillOpacity="0.22" stroke="#38bdf8" strokeWidth="2.5" />
+                      {human && (
+                        <g transform={`translate(${cx - sw / 2 + 35}, ${cy + sh / 2 - 1.75 * scale})`}>
+                          <circle cx="0" cy={0.15 * scale} r={0.12 * scale} fill="#f87171" />
+                          <line x1="0" y1={0.27 * scale} x2="0" y2={1.75 * scale} stroke="#f87171" strokeWidth="4" />
+                        </g>
+                      )}
+                      <text x={cx} y={cy - sh / 2 - 10} fill="#cbd5e1" fontSize="13" textAnchor="middle">
+                        Yüzey: {f(geoCalc.SW, 2)} × {f(geoCalc.SH, 2)} &nbsp;|&nbsp; Görüntü: {f(r.imageWidth, 2)} × {f(r.imageHeight, 2)}
+                      </text>
+                    </g>
+                  );
+                })()}
+              </svg>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1026,12 +1155,12 @@ const Card = ({ k, v }: { k: string; v: string }) => (
 );
 
 /** Ön görünüş: Ekran genişliği, yüksekliği ve diagonal. */
-function FrontScreenDiagram({ w, h, d, unit }: { w: number; h: number; d: number; unit: LengthUnit }) {
-  const pad = 42, vw = 520, vh = 240;
+function FrontScreenDiagram({ w, h, d, unit, large }: { w: number; h: number; d: number; unit: LengthUnit; large?: boolean }) {
+  const pad = 42, vw = 520, vh = 260;
   const s = Math.min((vw - 2 * pad) / w, (vh - 2 * pad) / h);
   const pw = w * s, ph = h * s, x = (vw - pw) / 2, y = (vh - ph) / 2;
   return (
-    <svg viewBox={`0 0 ${vw} ${vh}`} className="w-full max-h-[210px]">
+    <svg viewBox={`0 0 ${vw} ${vh}`} className={large ? 'w-full h-full max-h-[82vh]' : 'w-full min-h-[240px] max-h-[340px]'}>
       <rect x={x} y={y} width={pw} height={ph} fill="#0b3a5b" stroke="#38bdf8" strokeWidth="2" />
       <line x1={x} y1={y} x2={x + pw} y2={y + ph} stroke="#38bdf8" strokeDasharray="5 4" opacity=".45" />
       <text x={vw / 2} y={y - 10} textAnchor="middle" fill="#cbd5e1" fontSize="13">
@@ -1048,15 +1177,15 @@ function FrontScreenDiagram({ w, h, d, unit }: { w: number; h: number; d: number
 }
 
 /** Yan görünüş: projektör lensi → yüzey, görüntü yüksekliği, optik eksen. */
-function SideDiagram({ r, unit }: { r: ProjectionResult; unit: LengthUnit }) {
-  const vw = 520, vh = 240, pad = 38;
+function SideDiagram({ r, unit, large }: { r: ProjectionResult; unit: LengthUnit; large?: boolean }) {
+  const vw = 520, vh = 260, pad = 38;
   const spanY = Math.max(r.bounds.top, 0.2) - Math.min(r.bounds.bottom, -0.2);
   const s = Math.min((vw - 2 * pad - 60) / r.lensToSurface, (vh - 2 * pad) / spanY);
   const x0 = pad + 26, xs = x0 + r.lensToSurface * s;
   const yAxis = pad + Math.max(r.bounds.top, 0.2) * s;
   const yT = yAxis - r.bounds.top * s, yB = yAxis - r.bounds.bottom * s;
   return (
-    <svg viewBox={`0 0 ${vw} ${vh}`} className="w-full max-h-[210px]">
+    <svg viewBox={`0 0 ${vw} ${vh}`} className={large ? 'w-full h-full max-h-[82vh]' : 'w-full min-h-[240px] max-h-[340px]'}>
       <polygon points={`${x0},${yAxis} ${xs},${yT} ${xs},${yB}`} fill="#38bdf8" opacity=".15" stroke="#38bdf8" />
       <line x1={x0} y1={yAxis} x2={xs} y2={yAxis} stroke="#f59e0b" strokeDasharray="5 4" />
       <rect x={x0 - 30} y={yAxis - 13} width="30" height="26" fill="#475569" rx="2" />
