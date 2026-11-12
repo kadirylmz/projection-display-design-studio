@@ -1,5 +1,4 @@
 import { Suspense, lazy, useState, useEffect } from 'react';
-import ScreenCalculator from './modules/ScreenCalculator';
 import ProjectorCalculator from './modules/ProjectorCalculator';
 import LuxCalculator from './modules/LuxCalculator';
 import GeometrySimulator from './modules/GeometrySimulator';
@@ -19,8 +18,7 @@ const RoomDesigner = lazy(() => import('./modules/RoomDesigner'));
 
 interface Mod { id: string; name: string; ready: boolean; phase: number }
 const MODULES: Mod[] = [
-  { id: 'screen', name: 'Ekran Boyutu', ready: true, phase: 1 },
-  { id: 'projector', name: 'Projektör & Lens', ready: true, phase: 2 },
+  { id: 'projector', name: 'Ekran, Projektör & Lens', ready: true, phase: 1 },
   { id: 'lux', name: 'Lux & Parlaklık', ready: true, phase: 2 },
   { id: 'geometry', name: 'Projeksiyon Geometrisi', ready: true, phase: 2 },
   { id: 'multi', name: 'Çoklu Projektör', ready: true, phase: 3 },
@@ -37,12 +35,13 @@ const MODULES: Mod[] = [
 ];
 
 export default function App() {
-  const [active, setActive] = useState('screen');
+  const [active, setActive] = useState('projector');
 
   useEffect(() => {
     const handleNav = (e: any) => {
-      if (e.detail && MODULES.some(m => m.id === e.detail)) {
-        setActive(e.detail);
+      const target = e.detail === 'screen' ? 'projector' : e.detail;
+      if (target && MODULES.some(m => m.id === target)) {
+        setActive(target);
       }
     };
     window.addEventListener('navigate-module' as any, handleNav);
@@ -50,7 +49,6 @@ export default function App() {
   }, []);
   const [unit, setUnit] = useState<LengthUnit>('m');
   const [dark, setDark] = useState(true);
-  const mod = MODULES.find(m => m.id === active)!;
 
   return (
     <div className={dark ? 'dark' : ''}>
@@ -86,8 +84,7 @@ export default function App() {
           </div>
         </aside>
         <main className="flex-1 p-4 overflow-auto">
-          {active === 'projector' ? <ProjectorCalculator unit={unit} />
-            : active === 'lux' ? <LuxCalculator unit={unit} />
+          {active === 'lux' ? <LuxCalculator unit={unit} />
             : active === 'geometry' ? <GeometrySimulator unit={unit} />
             : active === 'multi' ? <MultiProjectorDesigner />
             : active === 'content' ? <ContentPlanner unit={unit} />
@@ -100,7 +97,7 @@ export default function App() {
             : active === 'report' ? <ReportGenerator />
             : active === 'projects' ? <ProjectManager />
             : active === 'electrical' ? <ElectricalDrawingStudio />
-            : <ScreenCalculator unit={unit} />}
+            : <ProjectorCalculator unit={unit} />}
         </main>
       </div>
     </div>
