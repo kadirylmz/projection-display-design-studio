@@ -3,6 +3,11 @@ import { getLuxColorRGB } from '../engine/photometrics';
 import { LengthUnit, toMeters, fromMeters, round } from '../engine/units';
 import { usePhotometricStore } from '../photometricStore';
 import { useProjectStore } from '../projectStore';
+import {
+  CATALOG_BRANDS,
+  CATALOG_PROJECTORS,
+  getCompatibleCatalogLenses,
+} from '../data/projectorCatalog';
 
 const STORAGE_KEY = 'quick_lux_calculator_persist_v1';
 
@@ -35,6 +40,8 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
   // 3. Ekran ve Ortam Koşulları
   const [screenGain, setScreenGain] = useState<number>(initial?.screenGain ?? 1.0);  // Kazanç
   const [ambientLux, setAmbientLux] = useState<number>(initial?.ambientLux ?? 50);   // Müze ortam ışığı (Lux)
+  const [catProjId, setCatProjId] = useState<string>('');
+  const [catLensId, setCatLensId] = useState<string>('');
 
   // Değerler değiştikçe LocalStorage'a kaydet (Asla başa dönmez!)
   useEffect(() => {
@@ -570,6 +577,64 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
                 />
               </div>
             </div>
+          </div>
+
+          {/* Katalogdan Hızlı Projektör & Lens Seçimi */}
+          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-1.5">
+            <div className="text-[10.5px] font-bold text-sky-400 uppercase">📦 Katalogdan Projektör &amp; Lens Seç:</div>
+            <select
+              value={catProjId}
+              onChange={e => {
+                const id = e.target.value;
+                setCatProjId(id);
+                const found = CATALOG_PROJECTORS.find(p => p.id === id);
+                if (found) {
+                  setLumensPerProj(found.ansiLumens);
+                  const lenses = getCompatibleCatalogLenses(found);
+                  if (lenses.length > 0) {
+                    setCatLensId(lenses[0].id);
+                    setThrowRatio(round((lenses[0].throwMin + lenses[0].throwMax) / 2, 2));
+                  }
+                } else {
+                  setCatLensId('');
+                }
+              }}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-sky-300 focus:ring-1 focus:ring-sky-500 focus:outline-none"
+            >
+              <option value="">— Marka / Model Seçin (Epson, Vivitek, Sharp...) —</option>
+              {CATALOG_BRANDS.map(brand => (
+                <optgroup key={brand} label={brand}>
+                  {CATALOG_PROJECTORS.filter(p => p.manufacturer === brand).map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.manufacturer} {p.model} ({p.ansiLumens.toLocaleString('tr-TR')} lm)
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            {catProjId && (() => {
+              const found = CATALOG_PROJECTORS.find(p => p.id === catProjId);
+              if (!found) return null;
+              const lenses = getCompatibleCatalogLenses(found);
+              return (
+                <select
+                  value={catLensId}
+                  onChange={e => {
+                    const lid = e.target.value;
+                    setCatLensId(lid);
+                    const lens = lenses.find(l => l.id === lid);
+                    if (lens) setThrowRatio(round((lens.throwMin + lens.throwMax) / 2, 2));
+                  }}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-emerald-300 focus:ring-1 focus:ring-sky-500 focus:outline-none"
+                >
+                  {lenses.map(l => (
+                    <option key={l.id} value={l.id}>
+                      Lens: {l.model} ({l.throwMin === l.throwMax ? `${l.throwMin.toFixed(2)}:1` : `${l.throwMin.toFixed(2)}–${l.throwMax.toFixed(2)}:1`})
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
           </div>
 
           {/* B) PROJEKTÖR & LENS PARAMETRELERİ */}

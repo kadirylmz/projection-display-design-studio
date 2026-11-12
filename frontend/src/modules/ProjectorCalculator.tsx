@@ -18,6 +18,12 @@ import {
 } from '../engine/lenses';
 import { LengthUnit, fromMeters, toMeters, round } from '../engine/units';
 import { api, CompatLens, ProjectorRecord } from '../api';
+import {
+  CATALOG_BRANDS,
+  CATALOG_LENSES,
+  CATALOG_PROJECTORS,
+  getCompatibleCatalogLenses,
+} from '../data/projectorCatalog';
 
 type CalcMode = 'size2dist' | 'dist2size' | 'both2tr';
 type SizeInputMode = 'w2h' | 'h2w' | 'd2wh' | 'wh2d';
@@ -53,12 +59,15 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const [dist, setDist] = useState(6);
   const [targetDistFilter, setTargetDistFilter] = useState('');
 
-  // Veritabanı ve lens seçimi
+  // Veritabanı ve Katalog projektör/lens seçimi
   const [projectors, setProjectors] = useState<ProjectorRecord[]>([]);
   const [allDbLenses, setAllDbLenses] = useState<LensRecord[]>([]);
   const [compat, setCompat] = useState<CompatLens[]>([]);
   const [pid, setPid] = useState<number | ''>('');
   const [lid, setLid] = useState<number | ''>('');
+  const [catProjId, setCatProjId] = useState<string>('');
+  const [catLensId, setCatLensId] = useState<string>('');
+  const [tableScope, setTableScope] = useState<'compat' | 'all'>('all');
   const [presetId, setPresetId] = useState<string>('std-125-160');
   const [apiConnected, setApiConnected] = useState(true);
 
@@ -84,7 +93,57 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
 
   useEffect(() => {
     reload();
+    try {
+      const raw = localStorage.getItem('selected_catalog_selection');
+      if (raw) {
+        localStorage.removeItem('selected_catalog_selection');
+        const { projId, lensId } = JSON.parse(raw);
+        if (projId) {
+          handleCatalogProjectorChange(projId, lensId);
+        }
+      }
+    } catch {}
   }, []);
+
+  const catProj = CATALOG_PROJECTORS.find(p => p.id === catProjId) ?? null;
+  const catCompatLenses = useMemo(() => (catProj ? getCompatibleCatalogLenses(catProj) : []), [catProj]);
+
+  const handleCatalogProjectorChange = (newProjId: string, preferredLensId?: string) => {
+    setCatProjId(newProjId);
+    setPid('');
+    setLid('');
+    if (!newProjId) {
+      setCatLensId('');
+      setTableScope('all');
+      return;
+    }
+    const found = CATALOG_PROJECTORS.find(p => p.id === newProjId);
+    if (!found) return;
+    if (found.aspect && PRESET_ASPECTS[found.aspect]) {
+      setAr(found.aspect);
+    }
+    const compatList = getCompatibleCatalogLenses(found);
+    const chosen = (preferredLensId && compatList.find(l => l.id === preferredLensId)) || compatList[0];
+    if (chosen) {
+      setCatLensId(chosen.id);
+      setPresetId('custom');
+      setTrMin(chosen.throwMin);
+      setTrMax(chosen.throwMax);
+      setTr(round((chosen.throwMin + chosen.throwMax) / 2, 2));
+    }
+    setTableScope('compat');
+  };
+
+  const handleCatalogLensChange = (newLensId: string) => {
+    setCatLensId(newLensId);
+    const found = catCompatLenses.find(l => l.id === newLensId);
+    if (found) {
+      setPresetId('custom');
+      setTrMin(found.throwMin);
+      setTrMax(found.throwMax);
+      setTr(round((found.throwMin + found.throwMax) / 2, 2));
+    }
+  };
 
   useEffect(() => {
     setLid('');
@@ -181,8 +240,18 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const f = (m: number | undefined, digits = 3) =>
     m === undefined ? '—' : `${round(fromMeters(m, unit), digits)} ${unit}`;
 
-  // Tüm lenslerin (Veritabanı + Standart Ön Tanımlar) birleştirilmiş listesi
+  // Tüm lenslerin (Seçili Projektör Uyumlu + Katalog + Veritabanı + Standart Ön Tanımlar) birleştirilmiş listesi
   const allUnifiedLenses: UnifiedLens[] = useMemo(() => {
+    if (catProj && tableScope === 'compat') {
+      return catCompatLenses.map(l => ({
+        id: l.id,
+        category: l.manufacturer,
+        name: l.model,
+        throwMin: l.throwMin,
+        throwMax: l.throwMax,
+        notes: l.notes ?? `Mount: ${l.lensMount}`,
+      }));
+    }
     const dbMapped: UnifiedLens[] = allDbLenses.map(l => ({
       id: `db-${l.id}`,
       dbId: l.id,
@@ -193,6 +262,14 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
       notes: l.lens_mount ? `Mount: ${l.lens_mount}` : undefined,
       isDb: true,
     }));
+    const catalogMapped: UnifiedLens[] = CATALOG_LENSES.map(l => ({
+      id: l.id,
+      category: l.manufacturer,
+      name: l.model,
+      throwMin: l.throwMin,
+      throwMax: l.throwMax,
+      notes: l.notes ?? `Mount: ${l.lensMount}`,
+    }));
     const presets: UnifiedLens[] = STANDARD_LENS_PRESETS.map(p => ({
       id: p.id,
       category: p.category,
@@ -201,8 +278,8 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
       throwMax: p.throwMax,
       notes: p.notes,
     }));
-    return [...dbMapped, ...presets];
-  }, [allDbLenses]);
+    return [...dbMapped, ...presets, ...catalogMapped];
+  }, [allDbLenses, catProj, catCompatLenses, tableScope]);
 
   // Tablo için hedef mesafe kontrolü
   const targetDistM = useMemo(() => {
@@ -320,23 +397,70 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
           <div className="p-2.5 rounded bg-slate-950/60 border border-slate-800 space-y-2">
             <div className="text-xs font-semibold text-sky-400 uppercase tracking-wider">Projektör &amp; Lens Seçimi</div>
 
-            {apiConnected && projectors.length > 0 && (
+            {/* Marka & Model Seçici (Tüm Markalar + Veritabanı) */}
+            <label className="block text-xs text-slate-400">
+              Projektör Markası &amp; Modeli
+              <select
+                className="inp mt-1 text-sm"
+                value={catProjId ? `cat:${catProjId}` : pid !== '' ? `db:${pid}` : ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val.startsWith('cat:')) {
+                    handleCatalogProjectorChange(val.slice(4));
+                  } else if (val.startsWith('db:')) {
+                    setCatProjId('');
+                    setCatLensId('');
+                    setPid(+val.slice(3));
+                  } else {
+                    setCatProjId('');
+                    setCatLensId('');
+                    setPid('');
+                  }
+                }}
+              >
+                <option value="">— Genel / Manuel Lens Seçimi —</option>
+                {CATALOG_BRANDS.map(brand => (
+                  <optgroup key={brand} label={brand}>
+                    {CATALOG_PROJECTORS.filter(p => p.manufacturer === brand).map(p => (
+                      <option key={p.id} value={`cat:${p.id}`}>
+                        {p.model} ({(p.ansiLumens / 1000).toFixed(1)}K lm · {p.nativeW}×{p.nativeH})
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                {apiConnected && projectors.length > 0 && (
+                  <optgroup label="Özel / Veritabanı">
+                    {projectors.map(p => (
+                      <option key={p.id} value={`db:${p.id}`}>
+                        {p.manufacturer} {p.model}{p.verified ? '' : ' (doğrulanmamış)'}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+
+            {catProj && (
+              <div className="text-[11px] bg-slate-900 border border-slate-700/80 rounded px-2 py-1.5 text-slate-300 flex flex-wrap justify-between gap-1">
+                <span>💡 <b className="text-amber-300">{catProj.ansiLumens.toLocaleString('tr-TR')} ANSI lm</b></span>
+                <span>{catProj.nativeW}×{catProj.nativeH} ({catProj.aspect}) · {catProj.technology}</span>
+              </div>
+            )}
+
+            {catProj ? (
               <label className="block text-xs text-slate-400">
-                Veritabanı Projektörü
-                <select className="inp mt-1 text-sm" value={pid} onChange={e => setPid(e.target.value ? +e.target.value : '')}>
-                  <option value="">— Manuel / Standart Lensler —</option>
-                  {projectors.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.manufacturer} {p.model}{p.verified ? '' : ' (doğrulanmamış)'}
+                Uyumlu Lens ({catProj.lensMount})
+                <select className="inp mt-1 text-sm" value={catLensId} onChange={e => handleCatalogLensChange(e.target.value)}>
+                  {catCompatLenses.map(l => (
+                    <option key={l.id} value={l.id}>
+                      {l.model} ({l.throwMin === l.throwMax ? `${l.throwMin.toFixed(2)}:1` : `${l.throwMin.toFixed(2)}–${l.throwMax.toFixed(2)}:1`})
                     </option>
                   ))}
                 </select>
               </label>
-            )}
-
-            {pid !== '' ? (
+            ) : pid !== '' ? (
               <label className="block text-xs text-slate-400">
-                Uyumlu Lens
+                Uyumlu Lens (Veritabanı)
                 <select className="inp mt-1 text-sm" value={lid} onChange={e => setLid(e.target.value ? +e.target.value : '')}>
                   <option value="">— Manuel TR kullan —</option>
                   {compat.map(l => (
@@ -514,7 +638,25 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
               </p>
             </div>
 
-            {calcMode === 'size2dist' && (
+            <div className="flex flex-wrap items-center gap-2">
+              {catProj && (
+                <div className="flex rounded overflow-hidden border border-slate-700 text-xs">
+                  <button
+                    onClick={() => setTableScope('compat')}
+                    className={`px-2.5 py-1 ${tableScope === 'compat' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    {catProj.model} Lensleri ({catCompatLenses.length})
+                  </button>
+                  <button
+                    onClick={() => setTableScope('all')}
+                    className={`px-2.5 py-1 ${tableScope === 'all' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    Tüm Markalar ({CATALOG_LENSES.length + STANDARD_LENS_PRESETS.length})
+                  </button>
+                </div>
+              )}
+
+              {calcMode === 'size2dist' && (
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-slate-400">Hedef Mesafe Filtresi ({inUnit}):</span>
                 <input
@@ -533,6 +675,7 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
                 )}
               </div>
             )}
+            </div>
           </div>
 
           <div className="overflow-x-auto">
