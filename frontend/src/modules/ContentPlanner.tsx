@@ -1677,9 +1677,16 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     onChange={e => updateSurface(activeSurface.id, { color: e.target.value })}
                     className="w-5 h-5 rounded cursor-pointer bg-transparent border-0"
                   />
-                  <div>
-                    <span className="font-bold text-white text-sm">{activeSurface.name}</span>
-                    <span className="text-[10px] text-slate-400 ml-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <input
+                      type="text"
+                      value={activeSurface.name}
+                      onChange={e => updateSurface(activeSurface.id, { name: e.target.value })}
+                      title="Duvar / Yüzey adını değiştir"
+                      placeholder="Yüzey Adı"
+                      className="font-bold text-white text-sm bg-slate-950/80 border border-slate-700 hover:border-sky-500 focus:border-sky-400 focus:outline-none rounded px-2 py-0.5 min-w-[160px]"
+                    />
+                    <span className="text-[10px] text-slate-400">
                       ({activeSurface.geometry === 'flat' ? 'Düz Yüzey' : GEOMETRY_LABELS[activeSurface.geometry] || activeSurface.geometry})
                     </span>
                   </div>
