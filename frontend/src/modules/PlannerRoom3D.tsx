@@ -1198,7 +1198,7 @@ export default function PlannerRoom3D({
   });
   const [selectedHumanId, setSelectedHumanId] = useState<string>('h-1');
   const [draggingHumanId, setDraggingHumanId] = useState<string | null>(null);
-  const [showRoomHandles, setShowRoomHandles] = useState(true);
+  const [showRoomHandles, setShowRoomHandles] = useState(false);
   const [draggingRoomHandle, setDraggingRoomHandle] = useState<'left' | 'right' | 'top' | 'bottom' | 'height' | null>(null);
   const [newVariant, setNewVariant] = useState<HumanVariant>('female_dress');
 
@@ -2344,7 +2344,7 @@ export default function PlannerRoom3D({
                   { id: 'right', pos: [sceneData.roomWidthX / 2, 0.3, 0] as [number, number, number], size: [0.35, 0.35, 1.4] as [number, number, number], color: '#22d3ee' },
                   { id: 'top', pos: [0, 0.3, -sceneData.roomLengthZ / 2] as [number, number, number], size: [1.4, 0.35, 0.35] as [number, number, number], color: '#22d3ee' },
                   { id: 'bottom', pos: [0, 0.3, sceneData.roomLengthZ / 2] as [number, number, number], size: [1.4, 0.35, 0.35] as [number, number, number], color: '#22d3ee' },
-                  { id: 'height', pos: [0, sceneData.roomHeightY, 0] as [number, number, number], size: [0.9, 0.25, 0.9] as [number, number, number], color: '#f59e0b' },
+                  { id: 'height', pos: [-sceneData.roomWidthX / 2, sceneData.roomHeightY, -sceneData.roomLengthZ / 2] as [number, number, number], size: [0.55, 0.25, 0.55] as [number, number, number], color: '#f59e0b' },
                 ] as const
               ).map(hItem => {
                 const isAct = draggingRoomHandle === hItem.id;
