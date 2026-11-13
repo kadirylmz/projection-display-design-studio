@@ -264,34 +264,44 @@ function generateSurfaceMultiSvg(s: any): string {
   const ovX = s.overlapX || 15;
   const ovY = s.overlapY || 10;
 
-  const pad = 42;
-  const canvasW = 920;
-  const aspect = wM / Math.max(0.4, hM);
-  const drawW = canvasW - pad * 2;
-  const drawH = Math.max(160, Math.min(380, Math.round(drawW / aspect)));
-  const canvasH = drawH + pad * 2 + 32;
+  const ovRatioX = s.projW && s.projW > 0 ? (s.ovPxX || 0) / s.projW : ovX / 100;
+  const ovRatioY = s.projH && s.projH > 0 ? (s.ovPxY || 0) / s.projH : ovY / 100;
+  const stepW_M = cols > 1 ? singleW * (1 - ovRatioX) : singleW;
+  const stepH_M = rows > 1 ? singleH * (1 - ovRatioY) : singleH;
 
-  const scaleX = drawW / wM;
-  const scaleY = drawH / hM;
+  const totalOptW = cols === 1 ? singleW : (cols - 1) * stepW_M + singleW;
+  const totalOptH = rows === 1 ? singleH : (rows - 1) * stepH_M + singleH;
+  const boundW_M = Math.max(wM, totalOptW);
+  const boundH_M = Math.max(hM, totalOptH);
+
+  const pad = 46;
+  const canvasW = 920;
+  const aspect = boundW_M / Math.max(0.4, boundH_M);
+  const drawW = canvasW - pad * 2;
+  const drawH = Math.max(170, Math.min(380, Math.round(drawW / aspect)));
+  const canvasH = drawH + pad * 2 + 34;
+
+  const scaleX = drawW / boundW_M;
+  const scaleY = drawH / boundH_M;
+  const surfOffsetX = pad + ((boundW_M - wM) / 2) * scaleX;
+  const surfOffsetY = pad + ((boundH_M - hM) / 2) * scaleY;
+  const projOffsetX = pad + ((boundW_M - totalOptW) / 2) * scaleX;
+  const projOffsetY = pad + ((boundH_M - totalOptH) / 2) * scaleY;
 
   const rects: string[] = [];
   const overlaps: string[] = [];
   const labels: string[] = [];
 
-  const ovRatioX = (s.projW && s.projW > 0 ? (s.ovPxX || 0) / s.projW : ovX / 100);
-  const stepW_M = cols > 1 ? singleW * (1 - ovRatioX) : singleW;
-  const stepH_M = rows > 1 ? singleH * 0.85 : singleH;
-
-  const bgRect = '<rect x="' + pad + '" y="' + pad + '" width="' + drawW + '" height="' + drawH + '" fill="#0f172a" stroke="#334155" stroke-width="2" stroke-dasharray="6 4"/>';
+  const bgRect = '<rect x="' + surfOffsetX.toFixed(1) + '" y="' + surfOffsetY.toFixed(1) + '" width="' + (wM * scaleX).toFixed(1) + '" height="' + (hM * scaleY).toFixed(1) + '" fill="#0f172a" stroke="#64748b" stroke-width="2" stroke-dasharray="6 4"/>';
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const xM = cols === 1 ? 0 : c * stepW_M;
       const yM = rows === 1 ? 0 : r * stepH_M;
-      const xPx = pad + xM * scaleX;
-      const yPx = pad + yM * scaleY;
-      const wPx = Math.min(drawW, singleW * scaleX);
-      const hPx = Math.min(drawH, singleH * scaleY);
+      const xPx = projOffsetX + xM * scaleX;
+      const yPx = projOffsetY + yM * scaleY;
+      const wPx = singleW * scaleX;
+      const hPx = singleH * scaleY;
 
       rects.push('<rect x="' + xPx.toFixed(1) + '" y="' + yPx.toFixed(1) + '" width="' + wPx.toFixed(1) + '" height="' + hPx.toFixed(1) + '" fill="' + (s.color || '#38bdf8') + '" fill-opacity="0.18" stroke="' + (s.color || '#38bdf8') + '" stroke-width="2"/>');
 
@@ -306,12 +316,22 @@ function generateSurfaceMultiSvg(s: any): string {
       );
 
       if (c < cols - 1) {
-        const nextXPx = pad + (c + 1) * stepW_M * scaleX;
+        const nextXPx = projOffsetX + (c + 1) * stepW_M * scaleX;
         const ovWPx = (xPx + wPx) - nextXPx;
         if (ovWPx > 0) {
           overlaps.push(
             '<rect x="' + nextXPx.toFixed(1) + '" y="' + yPx.toFixed(1) + '" width="' + ovWPx.toFixed(1) + '" height="' + hPx.toFixed(1) + '" fill="#22c55e" fill-opacity="0.35" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="3 3"/>' +
             '<text x="' + (nextXPx + ovWPx / 2).toFixed(1) + '" y="' + (yPx + hPx - 8).toFixed(1) + '" font-size="9" fill="#4ade80" font-family="sans-serif" font-weight="bold" text-anchor="middle">%' + ovX + ' Blend</text>'
+          );
+        }
+      }
+
+      if (r < rows - 1) {
+        const nextYPx = projOffsetY + (r + 1) * stepH_M * scaleY;
+        const ovHPx = (yPx + hPx) - nextYPx;
+        if (ovHPx > 0) {
+          overlaps.push(
+            '<rect x="' + xPx.toFixed(1) + '" y="' + nextYPx.toFixed(1) + '" width="' + wPx.toFixed(1) + '" height="' + ovHPx.toFixed(1) + '" fill="#facc15" fill-opacity="0.22" stroke="#eab308" stroke-width="1.2" stroke-dasharray="3 3"/>'
           );
         }
       }
@@ -829,7 +849,7 @@ export function buildReportHtml(p: ReportPayload): string {
       }).join('\n');
 
       blocks.push([
-        '<section class="report-section">',
+        '<section class="report-section" style="break-inside:auto; page-break-inside:auto;">',
         '  <h2>' + tr.multi + ' (Yüzey Bazlı Ayrı Paftalar)</h2>',
         '  <p class="section-intro">Mekandaki projeksiyon yüzeyleri aşağıda bağımsız paftalar halinde detaylandırılmıştır. Zemin ve duvarlar ayrı ayrı ele alınmış olup her yüzeyin matrisi, overlap oranları, net çözünürlükleri ve optik parametreleri sunulmuştur.</p>',
         '  ' + surfaceCardsHtml,
