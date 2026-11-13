@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { download } from '../util';
 import { useProjectStore } from '../projectStore';
 import { usePlannerStore } from '../plannerStore';
+import { resolveSurfaceCrossSlot } from './ContentPlanner';
 import type { CalculatedSurface, PhysicalRoomConfig, SurfaceItem } from './ContentPlanner';
 
 interface PlannerRoom3DProps {
@@ -1197,6 +1198,8 @@ export default function PlannerRoom3D({
   });
   const [selectedHumanId, setSelectedHumanId] = useState<string>('h-1');
   const [draggingHumanId, setDraggingHumanId] = useState<string | null>(null);
+  const [showRoomHandles, setShowRoomHandles] = useState(true);
+  const [draggingRoomHandle, setDraggingRoomHandle] = useState<'left' | 'right' | 'top' | 'bottom' | 'height' | null>(null);
   const [newVariant, setNewVariant] = useState<HumanVariant>('female_dress');
 
   const glRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -1217,12 +1220,20 @@ export default function PlannerRoom3D({
       s => s.geometry === 'cylinder_360' || s.geometry === 'sphere' || s.geometry === 'dome' || s.geometry === 'concave_arc'
     );
 
+    const sideWalls = walls.filter(w => {
+      const slot = resolveSurfaceCrossSlot(w, surfaces);
+      return slot === 'left' || slot === 'right';
+    });
+    const frontBackWalls = walls.filter(w => {
+      const slot = resolveSurfaceCrossSlot(w, surfaces);
+      return slot === 'top' || slot === 'bottom';
+    });
     const roomLengthZ = physicalRoom.enabled
       ? physicalRoom.lengthM
-      : walls[0]?.effectiveWidthM || floor?.effectiveWidthM || 20;
+      : sideWalls[0]?.effectiveWidthM || floor?.effectiveWidthM || walls[0]?.effectiveWidthM || 20;
     const roomWidthX = physicalRoom.enabled
       ? physicalRoom.widthM
-      : walls[1]?.effectiveWidthM || floor?.effectiveHeightM || 7;
+      : frontBackWalls[0]?.effectiveWidthM || floor?.effectiveHeightM || walls[1]?.effectiveWidthM || 7;
     const roomHeightY = physicalRoom.enabled
       ? physicalRoom.heightM
       : walls[0]?.effectiveHeightM || 4.3;
@@ -1412,6 +1423,22 @@ export default function PlannerRoom3D({
   const handleStopDragHuman = () => {
     if (draggingHumanId) {
       setDraggingHumanId(null);
+      if (controlsRef.current) {
+        controlsRef.current.enabled = true;
+      }
+    }
+  };
+
+  const handleStartDragRoom = (handle: 'left' | 'right' | 'top' | 'bottom' | 'height') => {
+    setDraggingRoomHandle(handle);
+    if (controlsRef.current) {
+      controlsRef.current.enabled = false;
+    }
+  };
+
+  const handleStopDragRoom = () => {
+    if (draggingRoomHandle) {
+      setDraggingRoomHandle(null);
       if (controlsRef.current) {
         controlsRef.current.enabled = true;
       }
@@ -1872,6 +1899,14 @@ export default function PlannerRoom3D({
             />
             <span>🏛️ Fiziksel Oda ({physicalRoom.widthM}×{physicalRoom.lengthM}×{physicalRoom.heightM}m)</span>
           </label>
+          <label className="flex items-center gap-1 cursor-pointer text-cyan-300 font-semibold" title="3B odanın duvar ve tavan tutamaçlarını fare ile çekerek boyutlandırın">
+            <input
+              type="checkbox"
+              checked={showRoomHandles}
+              onChange={e => setShowRoomHandles(e.target.checked)}
+            />
+            <span>↔️ Odayı Sürükle</span>
+          </label>
           <label className="flex items-center gap-1 cursor-pointer text-slate-300">
             <input type="checkbox" checked={showBeams} onChange={e => setShowBeams(e.target.checked)} />
             <span>🔦 Işık Konileri</span>
@@ -2191,10 +2226,16 @@ export default function PlannerRoom3D({
       {/* 4. 3B WEBGL SAHNESİ */}
       <div
         className={`flex-1 min-h-[480px] w-full rounded border border-slate-800 bg-slate-950 relative overflow-hidden ${
-          draggingHumanId ? 'cursor-grabbing' : 'cursor-grab'
+          draggingHumanId || draggingRoomHandle ? 'cursor-grabbing' : 'cursor-grab'
         }`}
-        onPointerUp={handleStopDragHuman}
-        onPointerLeave={handleStopDragHuman}
+        onPointerUp={() => {
+          handleStopDragHuman();
+          handleStopDragRoom();
+        }}
+        onPointerLeave={() => {
+          handleStopDragHuman();
+          handleStopDragRoom();
+        }}
       >
         <Canvas
           shadows={showShadows}
@@ -2232,6 +2273,101 @@ export default function PlannerRoom3D({
             infiniteGrid
             fadeDistance={60}
           />
+
+          {/* MOUSE İLE 3B ODA BOYUTLANDIRMA SÜRÜKLEME DÜZLEMLERİ VE TUTAMAÇLARI */}
+          {draggingRoomHandle && draggingRoomHandle !== 'height' && (
+            <mesh
+              position={[0, 0, 0]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              onPointerMove={e => {
+                e.stopPropagation();
+                if (draggingRoomHandle === 'left' || draggingRoomHandle === 'right') {
+                  const nextW = Math.max(2, Math.min(80, +(Math.abs(e.point.x) * 2).toFixed(2)));
+                  onUpdatePhysicalRoom(prev => ({
+                    ...prev,
+                    enabled: true,
+                    widthM: nextW,
+                    lengthM: prev.enabled ? prev.lengthM : +sceneData.roomLengthZ.toFixed(2),
+                    heightM: prev.enabled ? prev.heightM : +sceneData.roomHeightY.toFixed(2),
+                  }));
+                } else {
+                  const nextL = Math.max(2, Math.min(80, +(Math.abs(e.point.z) * 2).toFixed(2)));
+                  onUpdatePhysicalRoom(prev => ({
+                    ...prev,
+                    enabled: true,
+                    widthM: prev.enabled ? prev.widthM : +sceneData.roomWidthX.toFixed(2),
+                    lengthM: nextL,
+                    heightM: prev.enabled ? prev.heightM : +sceneData.roomHeightY.toFixed(2),
+                  }));
+                }
+              }}
+              onPointerUp={e => {
+                e.stopPropagation();
+                handleStopDragRoom();
+              }}
+            >
+              <planeGeometry args={[200, 200]} />
+              <meshBasicMaterial transparent opacity={0} side={THREE.DoubleSide} />
+            </mesh>
+          )}
+
+          {draggingRoomHandle === 'height' && (
+            <mesh
+              position={[0, sceneData.roomHeightY / 2, 0]}
+              rotation={[0, 0, 0]}
+              onPointerMove={e => {
+                e.stopPropagation();
+                const nextH = Math.max(2, Math.min(25, +e.point.y.toFixed(2)));
+                onUpdatePhysicalRoom(prev => ({
+                  ...prev,
+                  enabled: true,
+                  widthM: prev.enabled ? prev.widthM : +sceneData.roomWidthX.toFixed(2),
+                  lengthM: prev.enabled ? prev.lengthM : +sceneData.roomLengthZ.toFixed(2),
+                  heightM: nextH,
+                }));
+              }}
+              onPointerUp={e => {
+                e.stopPropagation();
+                handleStopDragRoom();
+              }}
+            >
+              <planeGeometry args={[200, 100]} />
+              <meshBasicMaterial transparent opacity={0} side={THREE.DoubleSide} />
+            </mesh>
+          )}
+
+          {showRoomHandles && !sceneData.specialSurf && (
+            <group>
+              {(
+                [
+                  { id: 'left', pos: [-sceneData.roomWidthX / 2, 0.3, 0] as [number, number, number], size: [0.35, 0.35, 1.4] as [number, number, number], color: '#22d3ee' },
+                  { id: 'right', pos: [sceneData.roomWidthX / 2, 0.3, 0] as [number, number, number], size: [0.35, 0.35, 1.4] as [number, number, number], color: '#22d3ee' },
+                  { id: 'top', pos: [0, 0.3, -sceneData.roomLengthZ / 2] as [number, number, number], size: [1.4, 0.35, 0.35] as [number, number, number], color: '#22d3ee' },
+                  { id: 'bottom', pos: [0, 0.3, sceneData.roomLengthZ / 2] as [number, number, number], size: [1.4, 0.35, 0.35] as [number, number, number], color: '#22d3ee' },
+                  { id: 'height', pos: [0, sceneData.roomHeightY, 0] as [number, number, number], size: [0.9, 0.25, 0.9] as [number, number, number], color: '#f59e0b' },
+                ] as const
+              ).map(hItem => {
+                const isAct = draggingRoomHandle === hItem.id;
+                return (
+                  <mesh
+                    key={hItem.id}
+                    position={hItem.pos}
+                    onPointerDown={e => {
+                      e.stopPropagation();
+                      handleStartDragRoom(hItem.id);
+                    }}
+                  >
+                    <boxGeometry args={hItem.size} />
+                    <meshStandardMaterial
+                      color={isAct ? '#ffffff' : hItem.color}
+                      emissive={hItem.color}
+                      emissiveIntensity={isAct ? 1.2 : 0.65}
+                    />
+                  </mesh>
+                );
+              })}
+            </group>
+          )}
 
           {/* MOUSE İLE İNSAN SÜRÜKLEME ZEMİN DÜZLEMİ (y = 0, Zeminden Aşağı İnmez) */}
           {draggingHumanId && (
@@ -2370,11 +2506,12 @@ function RoomBoxScene({
   const floor = surfaces.find(s => s.type === 'floor');
 
   const wallPlacements = useMemo(() => {
-    return walls.map((w, idx) => {
+    return walls.map(w => {
       const h = w.effectiveHeightM;
+      const slot = resolveSurfaceCrossSlot(w, surfaces);
 
-      // idx 0: Sol Uzun Duvar (x = -roomWidthX/2, normal +X)
-      if (idx === 0) {
+      // Sol Duvar (x = -roomWidthX/2, normal +X)
+      if (slot === 'left') {
         return {
           surf: w,
           center: [-roomWidthX / 2, h / 2, 0] as [number, number, number],
@@ -2384,8 +2521,8 @@ function RoomBoxScene({
           upDir: [0, 1, 0] as [number, number, number],
         };
       }
-      // idx 1: Ön Kısa Duvar (z = -roomLengthZ/2, normal +Z)
-      if (idx === 1) {
+      // Ön Kısa / Üst Duvar (z = -roomLengthZ/2, normal +Z)
+      if (slot === 'top') {
         return {
           surf: w,
           center: [0, h / 2, -roomLengthZ / 2] as [number, number, number],
@@ -2395,8 +2532,8 @@ function RoomBoxScene({
           upDir: [0, 1, 0] as [number, number, number],
         };
       }
-      // idx 2: Sağ Uzun Duvar (x = +roomWidthX/2, normal -X)
-      if (idx === 2) {
+      // Sağ Duvar (x = +roomWidthX/2, normal -X)
+      if (slot === 'right') {
         return {
           surf: w,
           center: [roomWidthX / 2, h / 2, 0] as [number, number, number],
@@ -2406,7 +2543,7 @@ function RoomBoxScene({
           upDir: [0, 1, 0] as [number, number, number],
         };
       }
-      // idx 3+: Arka Kısa Duvar (z = +roomLengthZ/2, normal -Z)
+      // Arka Kısa / Alt / Ekstra Duvar (z = +roomLengthZ/2, normal -Z)
       return {
         surf: w,
         center: [0, h / 2, roomLengthZ / 2] as [number, number, number],
@@ -2416,7 +2553,7 @@ function RoomBoxScene({
         upDir: [0, 1, 0] as [number, number, number],
       };
     });
-  }, [walls, roomWidthX, roomLengthZ]);
+  }, [walls, surfaces, roomWidthX, roomLengthZ]);
 
   return (
     <group>
