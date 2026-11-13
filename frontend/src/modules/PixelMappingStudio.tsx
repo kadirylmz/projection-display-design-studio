@@ -32,6 +32,11 @@ export default function PixelMappingStudio() {
   const [view, setView] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [msg, setMsg] = useState('');
   const [reportToast, setReportToast] = useState(false);
+  const [blendControlMode, setBlendControlMode] = useState<'auto' | 'manual'>('manual');
+  const [blendUnit, setBlendUnit] = useState<'percent' | 'pixel'>('percent');
+  const [overlapXInput, setOverlapXInput] = useState<number>(15);
+  const [overlapYInput, setOverlapYInput] = useState<number>(15);
+  const [autoCols, setAutoCols] = useState<number>(0); // 0 = tek sıra yatay (tümü yan yana)
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
 
@@ -52,7 +57,73 @@ export default function PixelMappingStudio() {
   };
   const sn = (n: number) => snap && grid > 0 ? Math.round(n / grid) * grid : Math.round(n);
 
-  const update = (id: string, patch: Partial<ProjectorSlot>) => setSlots(slots.map(s => s.id === id ? { ...s, ...patch } : s));
+  const update = (id: string, patch: Partial<ProjectorSlot>) => {
+    if ('x' in patch || 'y' in patch || 'blend' in patch) {
+      setBlendControlMode('manual');
+    }
+    setSlots(slots.map(s => s.id === id ? { ...s, ...patch } : s));
+  };
+
+  const applyAutoOverlapLayout = (
+    targetSlots: ProjectorSlot[],
+    opts?: { unit?: 'percent' | 'pixel'; ovX?: number; ovY?: number; cols?: number }
+  ) => {
+    if (targetSlots.length === 0) return;
+    const unit = opts?.unit ?? blendUnit;
+    const ovX = Math.max(0, opts?.ovX ?? overlapXInput);
+    const ovY = Math.max(0, opts?.ovY ?? overlapYInput);
+    const colsCount = Math.max(1, (opts?.cols ?? autoCols) > 0 ? Math.min(opts?.cols ?? autoCols, targetSlots.length) : targetSlots.length);
+    const rowsCount = Math.ceil(targetSlots.length / colsCount);
+
+    const nextSlots: ProjectorSlot[] = [];
+    let curY = 0;
+    for (let r = 0; r < rowsCount; r++) {
+      let curX = 0;
+      let rowMaxH = 0;
+      const rowEndIdx = Math.min(targetSlots.length, (r + 1) * colsCount);
+      const colsInThisRow = rowEndIdx - r * colsCount;
+
+      for (let c = 0; c < colsInThisRow; c++) {
+        const idx = r * colsCount + c;
+        const item = targetSlots[idx];
+        const ovPxX = unit === 'percent' ? Math.min(item.w - 1, Math.round((item.w * ovX) / 100)) : Math.min(item.w - 1, Math.round(ovX));
+        const ovPxY = unit === 'percent' ? Math.min(item.h - 1, Math.round((item.h * ovY) / 100)) : Math.min(item.h - 1, Math.round(ovY));
+
+        const startX = c === 0 ? 0 : Math.max(0, curX - ovPxX);
+        const startY = r === 0 ? 0 : Math.max(0, curY - ovPxY);
+
+        nextSlots.push({
+          ...item,
+          x: startX,
+          y: startY,
+          blend: {
+            l: c > 0 ? ovPxX : 0,
+            r: c < colsInThisRow - 1 ? ovPxX : 0,
+            t: r > 0 ? ovPxY : 0,
+            b: r < rowsCount - 1 ? ovPxY : 0,
+          },
+        });
+
+        curX = startX + item.w;
+        if (item.h > rowMaxH) rowMaxH = item.h;
+      }
+      const rowOvY = unit === 'percent' ? Math.round((rowMaxH * ovY) / 100) : Math.round(ovY);
+      curY = (r === 0 ? 0 : curY) + rowMaxH - (r < rowsCount - 1 ? 0 : 0);
+      // Bir sonraki satırın Y başlangıcı, mevcut satırın altından dikey overlap kadar geri çekilir
+      if (r === 0) {
+        curY = rowMaxH;
+      } else {
+        curY = nextSlots[r * colsCount].y + rowMaxH;
+      }
+      void rowOvY;
+    }
+
+    const totalW = Math.max(...nextSlots.map(q => q.x + q.w));
+    const totalH = Math.max(...nextSlots.map(q => q.y + q.h));
+    setBlendControlMode('auto');
+    setSlots(nextSlots);
+    setContent({ w: totalW, h: totalH });
+  };
 
   const onDown = (e: React.PointerEvent) => {
     if (!L) return;
@@ -88,7 +159,14 @@ export default function PixelMappingStudio() {
   const add = () => {
     const n = slots.length + 1;
     let id = `P${n}`; while (slots.some(s => s.id === id)) id += '_';
-    setSlots([...slots, { id, label: `Projektör ${n}`, x: 0, y: 0, w: 1920, h: 1080 }]);
+    const refW = slots[0]?.w || 1920;
+    const refH = slots[0]?.h || 1080;
+    const next = [...slots, { id, label: `Projektör ${n}`, x: 0, y: 0, w: refW, h: refH }];
+    if (blendControlMode === 'auto') {
+      applyAutoOverlapLayout(next);
+    } else {
+      setSlots(next);
+    }
     setSel(id);
   };
   const s = slots.find(x => x.id === sel);
@@ -284,6 +362,133 @@ export default function PixelMappingStudio() {
         )}
         {res.err && <p className="text-red-400">⚠ {res.err}</p>}
 
+        {/* Otomatik Overlap & Blend Hesaplayıcı */}
+        <div className="p-2.5 rounded border border-indigo-800/70 bg-slate-950 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold text-indigo-300 text-[11px]">Overlap &amp; Blend Hesaplayıcı</span>
+            <div className="flex rounded overflow-hidden border border-slate-700 text-[10px]">
+              <button
+                type="button"
+                onClick={() => applyAutoOverlapLayout(slots)}
+                className={`px-2 py-0.5 font-semibold ${blendControlMode === 'auto' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+              >
+                Otomatik
+              </button>
+              <button
+                type="button"
+                onClick={() => setBlendControlMode('manual')}
+                className={`px-2 py-0.5 font-semibold ${blendControlMode === 'manual' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+              >
+                Manuel
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1">
+            {[0, 10, 15, 20, 25].map(pct => (
+              <button
+                key={pct}
+                type="button"
+                onClick={() => {
+                  setBlendUnit('percent');
+                  setOverlapXInput(pct);
+                  applyAutoOverlapLayout(slots, { unit: 'percent', ovX: pct });
+                }}
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                  blendControlMode === 'auto' && blendUnit === 'percent' && overlapXInput === pct
+                    ? 'bg-sky-700 border-sky-400 text-white'
+                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                %{pct}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                const nextUnit = blendUnit === 'percent' ? 'pixel' : 'percent';
+                const sampleW = slots[0]?.w || 1920;
+                const convertedX = nextUnit === 'pixel'
+                  ? Math.round((sampleW * overlapXInput) / 100)
+                  : Math.round((overlapXInput / Math.max(1, sampleW)) * 100);
+                setBlendUnit(nextUnit);
+                setOverlapXInput(convertedX);
+                if (blendControlMode === 'auto') {
+                  applyAutoOverlapLayout(slots, { unit: nextUnit, ovX: convertedX });
+                }
+              }}
+              className="ml-auto px-1.5 py-0.5 rounded text-[10px] bg-slate-800 border border-slate-700 text-sky-300 hover:bg-slate-700"
+              title="Yüzde (%) veya Piksel (px) birimi arasında geçiş yap"
+            >
+              Birim: {blendUnit === 'percent' ? '%' : 'px'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5">
+            <label className="text-[10.5px] text-slate-300">
+              Yatay Blend ({blendUnit === 'percent' ? '%' : 'px'})
+              <input
+                className="inp font-mono"
+                type="number"
+                min="0"
+                step={blendUnit === 'percent' ? '1' : '10'}
+                value={overlapXInput}
+                onChange={e => {
+                  const val = Math.max(0, +e.target.value || 0);
+                  setOverlapXInput(val);
+                  applyAutoOverlapLayout(slots, { ovX: val });
+                }}
+              />
+            </label>
+            <label className="text-[10.5px] text-slate-300">
+              Dikey Blend ({blendUnit === 'percent' ? '%' : 'px'})
+              <input
+                className="inp font-mono"
+                type="number"
+                min="0"
+                step={blendUnit === 'percent' ? '1' : '10'}
+                value={overlapYInput}
+                onChange={e => {
+                  const val = Math.max(0, +e.target.value || 0);
+                  setOverlapYInput(val);
+                  applyAutoOverlapLayout(slots, { ovY: val });
+                }}
+              />
+            </label>
+            <label className="text-[10.5px] text-slate-300">
+              Yatay Sütun
+              <select
+                className="inp"
+                value={autoCols}
+                onChange={e => {
+                  const c = +e.target.value;
+                  setAutoCols(c);
+                  applyAutoOverlapLayout(slots, { cols: c });
+                }}
+              >
+                <option value={0}>Tek Sıra ({slots.length})</option>
+                {[1, 2, 3, 4, 5, 6].map(n => (
+                  <option key={n} value={n}>{n} Sütun</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {slots[0] && (
+            <div className="text-[10.5px] font-mono text-emerald-400 bg-slate-900/90 px-2 py-1 rounded flex justify-between items-center">
+              <span>
+                Hesaplanan Yatay Blend:{' '}
+                <b>
+                  {blendUnit === 'percent'
+                    ? `${Math.round((slots[0].w * overlapXInput) / 100)} px (%${overlapXInput})`
+                    : `${overlapXInput} px (%${Math.round((overlapXInput / Math.max(1, slots[0].w)) * 100)})`}
+                </b>
+              </span>
+              <span className="text-slate-400">{blendControlMode === 'auto' ? 'Otomatik' : 'Manuel'}</span>
+            </div>
+          )}
+        </div>
+
         {/* Ekranlar / Çıkışlar Listesi */}
         <div className="flex justify-between items-center pt-1">
           <b className="text-slate-200">Çıkış Ekranları / Projektörler</b>
@@ -323,6 +528,10 @@ export default function PixelMappingStudio() {
               <label>Etiket / İsim<input className="inp" value={s.label} onChange={e => update(s.id, { label: e.target.value })} /></label>
               <label>Donanım Çıkışı (Port)<input className="inp" placeholder="Örn: GPU-1 Out 1" value={s.output ?? ''} onChange={e => update(s.id, { output: e.target.value })} /></label>
               {nf('Başlangıç X (px)', 'x')}{nf('Başlangıç Y (px)', 'y')}{nf('Genişlik W (px)', 'w')}{nf('Yükseklik H (px)', 'h')}
+            </div>
+            <div className="text-[11px] font-mono text-sky-300 bg-slate-900/80 px-2 py-1 rounded border border-slate-800 flex justify-between">
+              <span>Başlangıç: ({s.x}, {s.y}) px</span>
+              <span>Bitiş: ({s.x + s.w}, {s.y + s.h}) px</span>
             </div>
 
             {/* Hızlı Çözünürlük & Küçültme Butonları */}
