@@ -600,8 +600,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
     if (!firstWall) {
       return {
         surfaces: [] as CalculatedSurface[],
-        totalCanvasW: 0,
-        totalCanvasH: 0,
+        totalCanvasW: 100,
+        totalCanvasH: 100,
         totalActivePixels: 0,
         megapixels: 0,
         totalProjectors: 0,

@@ -8,7 +8,7 @@ export type Prim =
   | { t: 'line'; x1: number; y1: number; x2: number; y2: number; layer: string }
   | { t: 'rect'; x: number; y: number; w: number; h: number; layer: string }
   | { t: 'circle'; cx: number; cy: number; r: number; layer: string }
-  | { t: 'text'; x: number; y: number; h: number; text: string; layer: string; anchor?: 'start' | 'middle' };
+  | { t: 'text'; x: number; y: number; h: number; text: string; layer: string; anchor?: 'start' | 'middle'; rotationDeg?: number };
 
 export interface Drawing { name: string; units: string; layers: Layer[]; prims: Prim[]; title?: string }
 
@@ -48,19 +48,22 @@ export function toSvg(d: Drawing, o: { pixelWidth?: number; background?: string;
   const col = (l: string) => d.layers.find(x => x.name === l)?.hex ?? '#e2e8f0';
   const sw = Math.max(W, H) / 700;
   const bg = o.background ?? '#0b1220';
-  const out = d.prims.map(p => {
+  const out = d.prims.map((p, idx) => {
     const c = col(p.layer);
     if (p.t === 'line') return `<line x1="${sx(p.x1)}" y1="${sy(p.y1)}" x2="${sx(p.x2)}" y2="${sy(p.y2)}" stroke="${c}" stroke-width="${sw}"/>`;
     if (p.t === 'rect') return `<rect x="${sx(p.x)}" y="${sy(p.y + p.h)}" width="${p.w}" height="${p.h}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
     if (p.t === 'circle') return `<circle cx="${sx(p.cx)}" cy="${sy(p.cy)}" r="${p.r}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
     const halo = (p.h * 0.18).toFixed(2);
-    return `<text x="${sx(p.x)}" y="${sy(p.y)}" font-size="${p.h}" fill="${c}" paint-order="stroke fill" stroke="${bg}" stroke-width="${halo}" stroke-linejoin="round" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600" text-anchor="${p.anchor ?? 'start'}">${esc(p.text)}</text>`;
+    const tx = sx(p.x);
+    const ty = sy(p.y);
+    const rotAttr = p.rotationDeg ? ` transform="rotate(${-p.rotationDeg}, ${tx}, ${ty})"` : '';
+    return `<text data-prim-idx="${idx}" x="${tx}" y="${ty}" font-size="${p.h}" fill="${c}" paint-order="stroke fill" stroke="${bg}" stroke-width="${halo}" stroke-linejoin="round" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="600" text-anchor="${p.anchor ?? 'start'}"${rotAttr} style="cursor:grab;user-select:none">${esc(p.text)}</text>`;
   });
 
   const rot = ((o.rotationDeg ?? 0) % 360 + 360) % 360;
   let finalW = W;
   let finalH = H;
-  let content = out.join('');
+  let content = `<g data-cad-content="1">${out.join('')}</g>`;
 
   if (rot === 90) {
     finalW = H;
@@ -108,6 +111,7 @@ export function toDxf(d: Drawing): string {
     } else if (p.t === 'circle') { pair(0, 'CIRCLE'); pair(8, p.layer); pair(10, p.cx); pair(20, p.cy); pair(30, 0); pair(40, p.r); }
     else {
       pair(0, 'TEXT'); pair(8, p.layer); pair(10, p.x); pair(20, p.y); pair(30, 0); pair(40, p.h); pair(1, dxfText(p.text));
+      if (p.rotationDeg) pair(50, p.rotationDeg);
       if (p.anchor === 'middle') { pair(72, 1); pair(11, p.x); pair(21, p.y); pair(31, 0); }
     }
   }

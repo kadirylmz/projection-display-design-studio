@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Component, ReactNode, ErrorInfo } from 'react';
 import ProjectorCalculator from './modules/ProjectorCalculator';
 import LuxCalculator from './modules/LuxCalculator';
 import PixelMappingStudio from './modules/PixelMappingStudio';
@@ -13,6 +13,37 @@ import ElectricalDrawingStudio from './modules/ElectricalDrawingStudio';
 import { LengthUnit } from './engine/units';
 
 interface Mod { id: string; name: string; ready: boolean; phase: number }
+
+class ModuleErrorBoundary extends Component<{ name: string; children: ReactNode }, { hasError: boolean; message: string }> {
+  constructor(props: { name: string; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || 'Bilinmeyen hata' };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(`[${this.props.name}] Modül hatası:`, error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6 m-4 rounded-xl border border-rose-500/40 bg-rose-950/30 text-rose-200 space-y-3">
+          <div className="font-semibold text-base">"{this.props.name}" modülü yüklenirken bir hata oluştu</div>
+          <div className="text-xs font-mono text-rose-300/90 bg-black/30 p-2 rounded">{this.state.message}</div>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, message: '' })}
+            className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium"
+          >
+            Yeniden Dene
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 const MODULES: Mod[] = [
   { id: 'projector', name: 'Ekran, Projektör & Lens', ready: true, phase: 1 },
   { id: 'lux', name: 'Lux & Parlaklık', ready: true, phase: 2 },
@@ -88,17 +119,17 @@ export default function App() {
           </div>
         </aside>
         <main className="flex-1 p-4 overflow-auto">
-          {visited.has('projector') && <div className={active === 'projector' ? 'h-full' : 'hidden'}><ProjectorCalculator unit={unit} /></div>}
-          {visited.has('lux') && <div className={active === 'lux' ? 'h-full' : 'hidden'}><LuxCalculator unit={unit} /></div>}
-          {visited.has('content') && <div className={active === 'content' ? 'h-full' : 'hidden'}><ContentPlanner unit={unit} /></div>}
-          {visited.has('pixel') && <div className={active === 'pixel' ? 'h-full' : 'hidden'}><PixelMappingStudio /></div>}
-          {visited.has('led') && <div className={active === 'led' ? 'h-full' : 'hidden'}><LedCalculator unit={unit} /></div>}
-          {visited.has('lcd') && <div className={active === 'lcd' ? 'h-full' : 'hidden'}><LcdCalculator unit={unit} /></div>}
-          {visited.has('equipment') && <div className={active === 'equipment' ? 'h-full' : 'hidden'}><EquipmentDatabase /></div>}
-          {visited.has('camera') && <div className={active === 'camera' ? 'h-full' : 'hidden'}><CameraCalculator unit={unit} /></div>}
-          {visited.has('report') && <div className={active === 'report' ? 'h-full' : 'hidden'}><ReportGenerator /></div>}
-          {visited.has('projects') && <div className={active === 'projects' ? 'h-full' : 'hidden'}><ProjectManager /></div>}
-          {visited.has('electrical') && <div className={active === 'electrical' ? 'h-full' : 'hidden'}><ElectricalDrawingStudio /></div>}
+          {visited.has('projector') && <div className={active === 'projector' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Ekran, Projektör & Lens"><ProjectorCalculator unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('lux') && <div className={active === 'lux' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Lux & Parlaklık"><LuxCalculator unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('content') && <div className={active === 'content' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="İçerik Çözünürlüğü Planlayıcı"><ContentPlanner unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('pixel') && <div className={active === 'pixel' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Çoklu Projektör & Piksel Haritalama"><PixelMappingStudio /></ModuleErrorBoundary></div>}
+          {visited.has('led') && <div className={active === 'led' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="LED Duvar"><LedCalculator unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('lcd') && <div className={active === 'lcd' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="LCD Video Duvarı"><LcdCalculator unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('equipment') && <div className={active === 'equipment' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Ekipman Veritabanı"><EquipmentDatabase /></ModuleErrorBoundary></div>}
+          {visited.has('camera') && <div className={active === 'camera' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Kamera & FOV"><CameraCalculator unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('report') && <div className={active === 'report' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Rapor & Çizim (PDF)"><ReportGenerator /></ModuleErrorBoundary></div>}
+          {visited.has('projects') && <div className={active === 'projects' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Projeler & Revizyonlar"><ProjectManager /></ModuleErrorBoundary></div>}
+          {visited.has('electrical') && <div className={active === 'electrical' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="CAD & Elektrik Şeması"><ElectricalDrawingStudio /></ModuleErrorBoundary></div>}
         </main>
       </div>
     </div>

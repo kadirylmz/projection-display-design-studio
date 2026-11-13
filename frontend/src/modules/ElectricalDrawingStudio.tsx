@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analyze, Circuit, Load } from '../engine/electrical';
 import { toDxf, toSvg } from '../engine/drawing';
 import { electricalSingleLine, contentPlannerRoomPlan } from '../engine/drawings';
@@ -60,6 +60,35 @@ export default function ElectricalDrawingStudio() {
   const [elColumnSpacing, setElColumnSpacing] = useState<number>(145);
   const [elTextShiftY, setElTextShiftY] = useState<number>(0);
   const [reportCadToast, setReportCadToast] = useState<boolean>(false);
+
+  // 4) Her yazıyı bağımsız olarak mouse ile sürükleme ve yön (açı) değiştirme
+  type TextOverride = { dx: number; dy: number; rotationDeg: number };
+  const [textOverrides, setTextOverrides] = useState<Record<string, TextOverride>>(() => {
+    try {
+      const saved = localStorage.getItem('cad_text_overrides_v1');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('cad_text_overrides_v1', JSON.stringify(textOverrides));
+    } catch { /* ignore */ }
+  }, [textOverrides]);
+
+  const [selectedTextIdx, setSelectedTextIdx] = useState<number | null>(null);
+  const svgContainerRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    key: string;
+    primIdx: number;
+    startX: number;
+    startY: number;
+    origDx: number;
+    origDy: number;
+    origRot: number;
+    inv: DOMMatrix | null;
+  } | null>(null);
 
   const { loads, circuits, supply } = electrical;
 
@@ -220,7 +249,7 @@ export default function ElectricalDrawingStudio() {
   }, [loads, circuits, supply]);
 
   // CAD Paftası Üretimi (Ölçülendirmeler, Prizler ve Frustumlar ile)
-  const activeDrawing = useMemo(() => {
+  const baseDrawing = useMemo(() => {
     try {
       if (sheet === 'room') {
         return contentPlannerRoomPlan(physicalRoom, surfaces, {
@@ -283,6 +312,111 @@ export default function ElectricalDrawingStudio() {
     elColumnSpacing,
     elTextShiftY,
   ]);
+
+  // Kullanıcının sürüklediği / döndürdüğü yazıları uygula (SVG, DXF ve PNG çıktılarının tamamına yansır)
+  const activeDrawing = useMemo(() => {
+    if (!baseDrawing) return null;
+    return {
+      ...baseDrawing,
+      prims: baseDrawing.prims.map((p, idx) => {
+        if (p.t !== 'text') return p;
+        const ov = textOverrides[`${sheet}::${idx}`];
+        if (!ov) return p;
+        return {
+          ...p,
+          x: p.x + ov.dx,
+          y: p.y + ov.dy,
+          rotationDeg: ov.rotationDeg,
+        };
+      }),
+    };
+  }, [baseDrawing, textOverrides, sheet]);
+
+  // Mouse ile yazı sürükleme olayları
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      let dSvgX = e.clientX - drag.startX;
+      let dSvgY = e.clientY - drag.startY;
+      if (drag.inv) {
+        const p1 = new DOMPoint(drag.startX, drag.startY).matrixTransform(drag.inv);
+        const p2 = new DOMPoint(e.clientX, e.clientY).matrixTransform(drag.inv);
+        dSvgX = p2.x - p1.x;
+        dSvgY = p2.y - p1.y;
+      }
+      // CAD Y ekseni SVG Y ekseninin tersidir
+      const nextDx = Math.round(drag.origDx + dSvgX);
+      const nextDy = Math.round(drag.origDy - dSvgY);
+      setTextOverrides(prev => ({
+        ...prev,
+        [drag.key]: {
+          dx: nextDx,
+          dy: nextDy,
+          rotationDeg: prev[drag.key]?.rotationDeg ?? drag.origRot,
+        },
+      }));
+    };
+    const onMouseUp = () => {
+      dragRef.current = null;
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  const handleSvgMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = (e.target as Element | null)?.closest?.('text[data-prim-idx]');
+    if (!target) return;
+    const idxAttr = target.getAttribute('data-prim-idx');
+    if (idxAttr === null) return;
+    const primIdx = Number(idxAttr);
+    if (!Number.isFinite(primIdx)) return;
+
+    e.preventDefault();
+    setSelectedTextIdx(primIdx);
+
+    const key = `${sheet}::${primIdx}`;
+    const existing = textOverrides[key] ?? { dx: 0, dy: 0, rotationDeg: 0 };
+    const svgEl = svgContainerRef.current?.querySelector('svg');
+    const contentG = svgEl?.querySelector('g[data-cad-content="1"]') as SVGGElement | null;
+    const ctm = (contentG || svgEl)?.getScreenCTM() ?? null;
+    const inv = ctm ? ctm.inverse() : null;
+
+    dragRef.current = {
+      key,
+      primIdx,
+      startX: e.clientX,
+      startY: e.clientY,
+      origDx: existing.dx,
+      origDy: existing.dy,
+      origRot: existing.rotationDeg,
+      inv,
+    };
+  };
+
+  const selectedTextPrim = useMemo(() => {
+    if (selectedTextIdx === null || !activeDrawing) return null;
+    const p = activeDrawing.prims[selectedTextIdx];
+    return p && p.t === 'text' ? p : null;
+  }, [selectedTextIdx, activeDrawing]);
+
+  const selectedKey = selectedTextIdx !== null ? `${sheet}::${selectedTextIdx}` : null;
+  const selectedOverride = selectedKey ? (textOverrides[selectedKey] ?? { dx: 0, dy: 0, rotationDeg: 0 }) : null;
+
+  const setSelectedRotation = (deg: number) => {
+    if (!selectedKey) return;
+    const norm = ((deg % 360) + 360) % 360;
+    setTextOverrides(prev => {
+      const cur = prev[selectedKey] ?? { dx: 0, dy: 0, rotationDeg: 0 };
+      return { ...prev, [selectedKey]: { ...cur, rotationDeg: norm } };
+    });
+  };
+
+  const sheetHasOverrides = Object.keys(textOverrides).some(k => k.startsWith(`${sheet}::`));
 
   const svg = useMemo(
     () => (activeDrawing ? toSvg(activeDrawing, { background: '#0b1220', rotationDeg: cadRotation }) : ''),
@@ -1019,12 +1153,112 @@ export default function ElectricalDrawingStudio() {
           )}
         </div>
 
+        {/* YAZI SÜRÜKLEME & YÖN KONTROL ÇUBUĞU */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          {selectedTextPrim && selectedOverride ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2 py-0.5 rounded bg-sky-950 border border-sky-700/60 text-sky-300 font-semibold max-w-[280px] truncate" title={selectedTextPrim.text}>
+                Seçili Yazı: {selectedTextPrim.text}
+              </span>
+              <span className="text-slate-400">Yön:</span>
+              <div className="flex items-center gap-1">
+                {[
+                  { deg: 0, label: '0° Yatay' },
+                  { deg: 90, label: '90° Dikey ↑' },
+                  { deg: 180, label: '180° Ters' },
+                  { deg: 270, label: '270° Dikey ↓' },
+                ].map(opt => (
+                  <button
+                    key={opt.deg}
+                    type="button"
+                    onClick={() => setSelectedRotation(opt.deg)}
+                    className={`px-2 py-0.5 rounded border text-[10.5px] font-medium transition ${
+                      selectedOverride.rotationDeg === opt.deg
+                        ? 'bg-sky-600 border-sky-500 text-white'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setSelectedRotation(selectedOverride.rotationDeg - 15)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200"
+                  title="Saat yönünde 15° döndür"
+                >
+                  ↻ -15°
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRotation(selectedOverride.rotationDeg + 15)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200"
+                  title="Saat yönünün tersine 15° döndür"
+                >
+                  ↺ +15°
+                </button>
+                <input
+                  type="number"
+                  value={selectedOverride.rotationDeg}
+                  onChange={e => setSelectedRotation(Number(e.target.value) || 0)}
+                  className="w-14 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-amber-300"
+                  title="Serbest açı (derece)"
+                />
+                <span className="text-slate-500">°</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedKey) return;
+                  setTextOverrides(prev => {
+                    const next = { ...prev };
+                    delete next[selectedKey];
+                    return next;
+                  });
+                }}
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 text-[10.5px]"
+              >
+                Bu Yazıyı Sıfırla
+              </button>
+            </div>
+          ) : (
+            <span className="text-slate-400">
+              💡 <strong className="text-slate-200">Mouse ile Taşı &amp; Döndür:</strong> Çizimdeki herhangi bir yazıyı (örn. <code className="text-sky-300">PJ-Sol.1</code>, <code className="text-sky-300">D = 5.00 m</code>, <code className="text-sky-300">ODA GENİŞLİĞİ</code>, başlık) tutup istediğiniz yere sürükleyin veya tıklayıp yönünü değiştirin.
+            </span>
+          )}
+
+          {sheetHasOverrides && (
+            <button
+              type="button"
+              onClick={() => {
+                setTextOverrides(prev => {
+                  const next: Record<string, TextOverride> = {};
+                  for (const [k, v] of Object.entries(prev)) {
+                    if (!k.startsWith(`${sheet}::`)) next[k] = v;
+                  }
+                  return next;
+                });
+                setSelectedTextIdx(null);
+              }}
+              className="px-2.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10.5px] font-semibold"
+            >
+              ⟲ Tüm Yazı Konum/Yönlerini Sıfırla
+            </button>
+          )}
+        </div>
+
         {/* CAD ÇİZİM GÖRSELLEŞTİRME PENCERESİ */}
         {svg && (
           <div
-            className="border border-slate-800 rounded bg-slate-950 p-3 flex-1 min-h-[480px] overflow-auto flex items-center justify-center drop-shadow"
-            dangerouslySetInnerHTML={{ __html: svg }}
-          />
+            ref={svgContainerRef}
+            onMouseDown={handleSvgMouseDown}
+            className="border border-slate-800 rounded bg-slate-950 p-3 flex-1 min-h-[480px] overflow-auto flex items-center justify-center drop-shadow relative"
+          >
+            {selectedTextIdx !== null && (
+              <style>{`text[data-prim-idx="${selectedTextIdx}"] { filter: drop-shadow(0 0 6px #38bdf8) drop-shadow(0 0 2px #ffffff); cursor: grabbing !important; }`}</style>
+            )}
+            <div className="w-full h-full flex items-center justify-center" dangerouslySetInnerHTML={{ __html: svg }} />
+          </div>
         )}
       </div>
     </div>
