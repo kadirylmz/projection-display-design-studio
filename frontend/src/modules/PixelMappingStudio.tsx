@@ -187,6 +187,43 @@ export default function PixelMappingStudio() {
     setContent({ w: totalW, h: totalH });
   };
 
+  const applyPerSlotPct = (targetId: string, pctVal: number) => {
+    const pct = Math.max(0, Math.min(80, pctVal));
+    const nextMap = { ...slotPctMap, [targetId]: pct };
+    setSlotPctMap(nextMap);
+
+    const nextSlots = slots.map(q => ({
+      ...q,
+      blend: { l: q.blend?.l ?? 0, r: q.blend?.r ?? 0, t: q.blend?.t ?? 0, b: q.blend?.b ?? 0 },
+    }));
+
+    const targetIdx = nextSlots.findIndex(q => q.id === targetId);
+    if (targetIdx < 0) return;
+
+    if (targetIdx === 0) {
+      const ov0 = Math.round((nextSlots[0].w * pct) / 100);
+      nextSlots[0].blend!.l = ov0;
+    } else {
+      // Sadece targetIdx ve sonrasındaki zinciri kendi yüzdeleriyle hizala
+      for (let i = targetIdx; i < nextSlots.length; i++) {
+        const cur = nextSlots[i];
+        const prev = nextSlots[i - 1];
+        const curPct = nextMap[cur.id] ?? Math.round(((cur.blend?.l ?? 0) / Math.max(1, cur.w)) * 100);
+        const ovPx = Math.min(prev.w - 1, cur.w - 1, Math.round((cur.w * curPct) / 100));
+        cur.x = Math.max(0, prev.x + prev.w - ovPx);
+        cur.y = prev.y;
+        cur.blend!.l = ovPx;
+        prev.blend!.r = ovPx;
+      }
+    }
+
+    setBlendControlMode('manual');
+    setSlots(nextSlots);
+    const totalW = Math.max(...nextSlots.map(q => q.x + q.w));
+    const totalH = Math.max(...nextSlots.map(q => q.y + q.h));
+    setContent({ w: totalW, h: totalH });
+  };
+
   const onDown = (e: React.PointerEvent) => {
     if (!L) return;
     const p = pt(e);
@@ -557,13 +594,26 @@ export default function PixelMappingStudio() {
           <button className="px-2.5 py-0.5 bg-sky-700 hover:bg-sky-600 rounded text-white" onClick={add}>+ Çıkış Ekle</button>
         </div>
         <div className="space-y-1">
-          {slots.map(x => (
+          {slots.map((x, idx) => {
+            const curPct = slotPctMap[x.id] ?? (idx === 0 ? 0 : Math.round(((x.blend?.l ?? 0) / Math.max(1, x.w)) * 100));
+            return (
             <div key={x.id} onClick={() => setSel(x.id)} className={`px-2 py-1.5 rounded cursor-pointer flex justify-between items-center gap-2 ${sel === x.id ? 'bg-sky-950/80 border border-sky-400' : 'bg-slate-800 hover:bg-slate-750'}`}>
               <div className="min-w-0 truncate">
                 <span className="font-semibold text-slate-200">{x.label}</span>
                 {x.output && <span className="ml-1.5 text-[10px] px-1 py-0.5 bg-slate-700 text-sky-300 rounded font-mono">{x.output}</span>}
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+                <label className="flex items-center gap-0.5 text-[10px] text-amber-300 bg-slate-900/90 border border-slate-700 rounded px-1 py-0.5" title="Bu projektörün kendi overlap/blend yüzdesi (%)">
+                  <span>%</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="80"
+                    value={curPct}
+                    onChange={e => applyPerSlotPct(x.id, Math.max(0, Math.min(80, +e.target.value || 0)))}
+                    className="w-9 bg-transparent text-right font-mono font-bold text-amber-300 focus:outline-none"
+                  />
+                </label>
                 <span className="font-mono text-slate-300 text-[11px]">{x.w}×{x.h} @ [{x.x}, {x.y}]</span>
                 <button
                   type="button"
@@ -580,7 +630,8 @@ export default function PixelMappingStudio() {
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Seçili Ekran Detayları */}
