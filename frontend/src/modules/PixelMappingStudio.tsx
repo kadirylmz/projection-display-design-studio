@@ -34,6 +34,7 @@ export default function PixelMappingStudio() {
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
 
   const res = useMemo(() => {
+    if (slots.length === 0) return { L: null, err: null as string | null };
     try { return { L: computeLayout(slots), err: null as string | null }; }
     catch (e) { return { L: null, err: (e as Error).message }; }
   }, [slots]);
@@ -91,7 +92,10 @@ export default function PixelMappingStudio() {
   const s = slots.find(x => x.id === sel);
   const density = s ? calculatePixelDensity(s.w, s.h, s.physicalWidthM, s.physicalHeightM) : null;
   const nf = (label: string, key: 'x' | 'y' | 'w' | 'h') => (
-    <label className="text-xs">{label}<input className="inp" type="number" value={s![key]} onChange={e => update(s!.id, { [key]: Math.round(+e.target.value) })} /></label>);
+    <label className="text-xs">{label}<input className="inp" type="number" min={key === 'w' || key === 'h' ? 1 : undefined} value={s![key]} onChange={e => {
+      const val = Math.round(+e.target.value);
+      update(s!.id, { [key]: (key === 'w' || key === 'h') ? Math.max(1, val || 1) : (Number.isFinite(val) ? val : 0) });
+    }} /></label>);
   const cropField = (label: string, key: 'l' | 'r' | 't' | 'b') => (
     <label className="text-xs">{label}<input className="inp" type="number" min="0" value={s!.crop?.[key] ?? 0}
       onChange={e => update(s!.id, { crop: { l: 0, r: 0, t: 0, b: 0, ...s!.crop, [key]: Math.max(0, Math.round(+e.target.value)) } })} /></label>);
@@ -285,12 +289,27 @@ export default function PixelMappingStudio() {
         </div>
         <div className="space-y-1">
           {slots.map(x => (
-            <div key={x.id} onClick={() => setSel(x.id)} className={`px-2 py-1.5 rounded cursor-pointer flex justify-between items-center ${sel === x.id ? 'bg-sky-950/80 border border-sky-400' : 'bg-slate-800 hover:bg-slate-750'}`}>
-              <div>
+            <div key={x.id} onClick={() => setSel(x.id)} className={`px-2 py-1.5 rounded cursor-pointer flex justify-between items-center gap-2 ${sel === x.id ? 'bg-sky-950/80 border border-sky-400' : 'bg-slate-800 hover:bg-slate-750'}`}>
+              <div className="min-w-0 truncate">
                 <span className="font-semibold text-slate-200">{x.label}</span>
                 {x.output && <span className="ml-1.5 text-[10px] px-1 py-0.5 bg-slate-700 text-sky-300 rounded font-mono">{x.output}</span>}
               </div>
-              <span className="font-mono text-slate-300">{x.w}×{x.h} @ [{x.x}, {x.y}]</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="font-mono text-slate-300 text-[11px]">{x.w}×{x.h} @ [{x.x}, {x.y}]</span>
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    const next = slots.filter(q => q.id !== x.id);
+                    setSlots(next);
+                    if (sel === x.id) setSel(next[0]?.id ?? null);
+                  }}
+                  className="px-1.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 text-[10px]"
+                  title={`${x.label} çıkışını kaldır`}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -302,6 +321,50 @@ export default function PixelMappingStudio() {
               <label>Etiket / İsim<input className="inp" value={s.label} onChange={e => update(s.id, { label: e.target.value })} /></label>
               <label>Donanım Çıkışı (Port)<input className="inp" placeholder="Örn: GPU-1 Out 1" value={s.output ?? ''} onChange={e => update(s.id, { output: e.target.value })} /></label>
               {nf('Başlangıç X (px)', 'x')}{nf('Başlangıç Y (px)', 'y')}{nf('Genişlik W (px)', 'w')}{nf('Yükseklik H (px)', 'h')}
+            </div>
+
+            {/* Hızlı Çözünürlük & Küçültme Butonları */}
+            <div className="space-y-1">
+              <div className="text-[10.5px] text-slate-400 font-semibold">Hızlı Çözünürlük / Küçültme</div>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { label: '4K', w: 3840, h: 2160 },
+                  { label: 'WUXGA', w: 1920, h: 1200 },
+                  { label: 'FHD', w: 1920, h: 1080 },
+                  { label: 'WXGA', w: 1280, h: 800 },
+                  { label: 'XGA', w: 1024, h: 768 },
+                  { label: '800×600', w: 800, h: 600 },
+                ].map(p => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => update(s.id, { w: p.w, h: p.h })}
+                    className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                      s.w === p.w && s.h === p.h
+                        ? 'bg-sky-700 border-sky-500 text-white'
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { w: Math.max(100, Math.round(s.w * 0.5)), h: Math.max(100, Math.round(s.h * 0.5)) })}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-300"
+                  title="Çözünürlüğü yarıya (%50) küçült"
+                >
+                  %50 Küçült
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { w: Math.max(100, Math.round(s.w * 0.75)), h: Math.max(100, Math.round(s.h * 0.75)) })}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-300"
+                  title="Çözünürlüğü %75'e küçült"
+                >
+                  %75 Küçült
+                </button>
+              </div>
             </div>
 
             {/* Fiziksel Ölçüler & PPI (Piksel Yoğunluğu) */}
@@ -350,7 +413,14 @@ export default function PixelMappingStudio() {
               >
                 {s.label} Test Deseni (PNG)
               </button>
-              <button className="px-2.5 py-1 bg-red-900/80 hover:bg-red-800 rounded ml-auto text-white" disabled={slots.length < 2} onClick={() => { setSlots(slots.filter(q => q.id !== s.id)); setSel(null); }}>
+              <button
+                className="px-2.5 py-1 bg-red-900/80 hover:bg-red-800 rounded ml-auto text-white"
+                onClick={() => {
+                  const next = slots.filter(q => q.id !== s.id);
+                  setSlots(next);
+                  setSel(next[0]?.id ?? null);
+                }}
+              >
                 Çıkışı Sil
               </button>
             </div>
