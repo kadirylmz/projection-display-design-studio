@@ -219,7 +219,11 @@ export default function PixelMappingStudio() {
                     const f = e.target.files?.[0];
                     if (!f) return;
                     const reader = new FileReader();
-                    reader.onload = () => updateScreen(activeScreen.id, { photoUrl: reader.result as string });
+                    reader.onload = () => {
+                      updateScreen(activeScreen.id, { photoUrl: reader.result as string });
+                      setMsg(`"${activeScreen.name}" için foto/logo yüklendi`);
+                    };
+                    reader.onerror = () => setMsg('Fotoğraf okunamadı');
                     reader.readAsDataURL(f);
                     e.target.value = '';
                   }}
@@ -369,14 +373,36 @@ export default function PixelMappingStudio() {
         {/* Görsel Canvas Çalışma Alanı */}
         <div
           ref={host}
-          className="border border-slate-700 rounded bg-slate-950 touch-none select-none relative overflow-hidden"
+          className="border border-slate-700 rounded bg-slate-950 touch-none select-none relative overflow-hidden flex items-center justify-center"
           style={{ height: '54vh' }}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
           onWheel={onWheel}
-          dangerouslySetInnerHTML={{ __html: svg.replace('<svg ', '<svg style="width:100%;height:100%" ') }}
-        />
+        >
+          {activeScreen?.photoUrl && (
+            <img
+              src={activeScreen.photoUrl}
+              alt={activeScreen.name}
+              className={`pointer-events-none select-none max-w-full max-h-full object-contain ${svg ? 'absolute inset-0 w-full h-full opacity-35' : ''}`}
+            />
+          )}
+          {svg ? (
+            <div
+              className="relative w-full h-full"
+              dangerouslySetInnerHTML={{
+                __html: svg
+                  .replace('<svg ', '<svg style="width:100%;height:100%" ')
+                  .replace(/fill="#0b1220"/g, activeScreen?.photoUrl ? 'fill="transparent"' : 'fill="#0b1220"')
+                  .replace(/fill="#0f172a"/g, activeScreen?.photoUrl ? 'fill="transparent"' : 'fill="#0f172a"'),
+              }}
+            />
+          ) : !activeScreen?.photoUrl ? (
+            <div className="text-xs text-slate-500 text-center px-4">
+              Başlamak için soldan <b className="text-slate-300">+ Çıkış Ekle</b> veya <b className="text-slate-300">Foto veya Logo Ekle</b> kullanın.
+            </div>
+          ) : null}
+        </div>
 
         {/* Teknik Çıkış & Piksel Koordinat Tablosu (Resolume / Watchout Haritası) */}
         {L && (
