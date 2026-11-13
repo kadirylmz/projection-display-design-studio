@@ -169,7 +169,7 @@ export default function ReportGenerator() {
 
     const plannerIds = new Set(ipSurfaces.map(s => s.id));
     const standaloneSurfaces = Object.values(surfacePhotometrics).filter(p => !plannerIds.has(p.surfaceId));
-    const norm = (name: string) => name.trim().replace(/^\d+\.\s*/, '').toLocaleLowerCase('tr-TR');
+    const norm = (name: string) => name.trim().toLocaleLowerCase('tr-TR');
     const standaloneNames = new Set(standaloneSurfaces.map(p => norm(p.surfaceName)));
 
     // Aynı duvar adı Lux Hesaplayıcı'dan aktarılmışsa İçerik Planlayıcı'dan otomatik türetilen kopyayı ekleme
