@@ -39,6 +39,7 @@ export default function PixelMappingStudio() {
   const [autoCols, setAutoCols] = useState<number>(0); // 0 = tek sıra yatay (tümü yan yana)
   const [slotRefMap, setSlotRefMap] = useState<Record<string, string>>({});
   const [slotPctMap, setSlotPctMap] = useState<Record<string, number>>({});
+  const [slotAxisMap, setSlotAxisMap] = useState<Record<string, 'h' | 'v'>>({});
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
 
@@ -181,16 +182,32 @@ export default function PixelMappingStudio() {
     });
 
     setBlendControlMode('manual');
+    setSlotAxisMap(prev => ({ ...prev, [targetId]: dir === 'bottom' ? 'v' : 'h' }));
     setSlots(nextSlots);
     const totalW = Math.max(...nextSlots.map(q => q.x + q.w));
     const totalH = Math.max(...nextSlots.map(q => q.y + q.h));
     setContent({ w: totalW, h: totalH });
   };
 
-  const applyPerSlotPct = (targetId: string, pctVal: number) => {
+  const getSlotAxis = (slot: ProjectorSlot, prevSlot?: ProjectorSlot): 'h' | 'v' => {
+    if (slotAxisMap[slot.id]) return slotAxisMap[slot.id];
+    if (prevSlot && slot.y > prevSlot.y + prevSlot.h * 0.25 && Math.abs(slot.x - prevSlot.x) < prevSlot.w * 0.5) {
+      return 'v';
+    }
+    if ((slot.blend?.t ?? 0) > 0 && (slot.blend?.l ?? 0) === 0) return 'v';
+    return 'h';
+  };
+
+  const applyPerSlotPct = (targetId: string, pctVal: number, forceAxis?: 'h' | 'v') => {
     const pct = Math.max(0, Math.min(80, pctVal));
     const nextMap = { ...slotPctMap, [targetId]: pct };
     setSlotPctMap(nextMap);
+
+    const nextAxisMap = { ...slotAxisMap };
+    if (forceAxis) {
+      nextAxisMap[targetId] = forceAxis;
+      setSlotAxisMap(nextAxisMap);
+    }
 
     const nextSlots = slots.map(q => ({
       ...q,
@@ -204,16 +221,35 @@ export default function PixelMappingStudio() {
       const ov0 = Math.round((nextSlots[0].w * pct) / 100);
       nextSlots[0].blend!.l = ov0;
     } else {
-      // Sadece targetIdx ve sonrasındaki zinciri kendi yüzdeleriyle hizala
       for (let i = targetIdx; i < nextSlots.length; i++) {
         const cur = nextSlots[i];
         const prev = nextSlots[i - 1];
-        const curPct = nextMap[cur.id] ?? Math.round(((cur.blend?.l ?? 0) / Math.max(1, cur.w)) * 100);
-        const ovPx = Math.min(prev.w - 1, cur.w - 1, Math.round((cur.w * curPct) / 100));
-        cur.x = Math.max(0, prev.x + prev.w - ovPx);
-        cur.y = prev.y;
-        cur.blend!.l = ovPx;
-        prev.blend!.r = ovPx;
+        const axis = i === targetIdx && forceAxis
+          ? forceAxis
+          : (nextAxisMap[cur.id] ?? getSlotAxis(slots[i], slots[i - 1]));
+        const curPct = nextMap[cur.id] ?? (
+          axis === 'v'
+            ? Math.round(((cur.blend?.t ?? 0) / Math.max(1, cur.h)) * 100)
+            : Math.round(((cur.blend?.l ?? 0) / Math.max(1, cur.w)) * 100)
+        );
+
+        if (axis === 'v') {
+          const ovPxY = Math.min(prev.h - 1, cur.h - 1, Math.round((cur.h * curPct) / 100));
+          cur.x = prev.x;
+          cur.y = Math.max(0, prev.y + prev.h - ovPxY);
+          cur.blend!.t = ovPxY;
+          cur.blend!.l = 0;
+          prev.blend!.b = ovPxY;
+          if (i === targetIdx) prev.blend!.r = 0;
+        } else {
+          const ovPxX = Math.min(prev.w - 1, cur.w - 1, Math.round((cur.w * curPct) / 100));
+          cur.x = Math.max(0, prev.x + prev.w - ovPxX);
+          cur.y = prev.y;
+          cur.blend!.l = ovPxX;
+          cur.blend!.t = 0;
+          prev.blend!.r = ovPxX;
+          if (i === targetIdx) prev.blend!.b = 0;
+        }
       }
     }
 
@@ -595,7 +631,15 @@ export default function PixelMappingStudio() {
         </div>
         <div className="space-y-1">
           {slots.map((x, idx) => {
-            const curPct = slotPctMap[x.id] ?? (idx === 0 ? 0 : Math.round(((x.blend?.l ?? 0) / Math.max(1, x.w)) * 100));
+            const prevX = idx > 0 ? slots[idx - 1] : undefined;
+            const axis = idx > 0 ? getSlotAxis(x, prevX) : 'h';
+            const curPct = slotPctMap[x.id] ?? (
+              idx === 0
+                ? 0
+                : axis === 'v'
+                  ? Math.round(((x.blend?.t ?? 0) / Math.max(1, x.h)) * 100)
+                  : Math.round(((x.blend?.l ?? 0) / Math.max(1, x.w)) * 100)
+            );
             return (
             <div key={x.id} onClick={() => setSel(x.id)} className={`px-2 py-1.5 rounded cursor-pointer flex justify-between items-center gap-2 ${sel === x.id ? 'bg-sky-950/80 border border-sky-400' : 'bg-slate-800 hover:bg-slate-750'}`}>
               <div className="min-w-0 truncate">
@@ -603,6 +647,20 @@ export default function PixelMappingStudio() {
                 {x.output && <span className="ml-1.5 text-[10px] px-1 py-0.5 bg-slate-700 text-sky-300 rounded font-mono">{x.output}</span>}
               </div>
               <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+                {idx > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => applyPerSlotPct(x.id, curPct, axis === 'h' ? 'v' : 'h')}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                      axis === 'v'
+                        ? 'bg-indigo-800 border-indigo-500 text-white'
+                        : 'bg-sky-900/80 border-sky-600 text-sky-200'
+                    }`}
+                    title={axis === 'v' ? 'Dikey (Alt Alta) — Yataya çevirmek için tıkla' : 'Yatay (Yan Yana) — Dikeye çevirmek için tıkla'}
+                  >
+                    {axis === 'v' ? '↓ Dikey' : '→ Yatay'}
+                  </button>
+                )}
                 <label className="flex items-center gap-0.5 text-[10px] text-amber-300 bg-slate-900/90 border border-slate-700 rounded px-1 py-0.5" title="Bu projektörün kendi overlap/blend yüzdesi (%)">
                   <span>%</span>
                   <input
@@ -728,7 +786,8 @@ export default function PixelMappingStudio() {
                   ? slotRefMap[s.id]
                   : defaultRef;
                 const pjPct = slotPctMap[s.id] ?? 15;
-                const calcPxW = Math.round((s.w * pjPct) / 100);
+                const curAxis = getSlotAxis(s, sIdx > 0 ? slots[sIdx - 1] : undefined);
+                const calcPxW = Math.round(((curAxis === 'v' ? s.h : s.w) * pjPct) / 100);
                 return (
                   <div className="p-2 rounded bg-slate-900/90 border border-slate-800 space-y-1.5">
                     <div className="flex items-center justify-between gap-1.5 text-[10.5px]">
@@ -765,7 +824,7 @@ export default function PixelMappingStudio() {
                           type="button"
                           onClick={() => {
                             setSlotPctMap(prev => ({ ...prev, [s.id]: pct }));
-                            snapSlotToRef(s.id, refId, 'right', pct);
+                            snapSlotToRef(s.id, refId, curAxis === 'v' ? 'bottom' : 'right', pct);
                           }}
                           className={`px-1.5 py-0.5 rounded text-[10px] border ${
                             pjPct === pct
