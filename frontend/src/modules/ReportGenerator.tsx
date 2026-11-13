@@ -169,8 +169,22 @@ export default function ReportGenerator() {
 
     const plannerIds = new Set(ipSurfaces.map(s => s.id));
     const standaloneSurfaces = Object.values(surfacePhotometrics).filter(p => !plannerIds.has(p.surfaceId));
+    const norm = (name: string) => name.trim().replace(/^\d+\.\s*/, '').toLocaleLowerCase('tr-TR');
+    const standaloneNames = new Set(standaloneSurfaces.map(p => norm(p.surfaceName)));
 
-    return [...fromPlanner, ...standaloneSurfaces];
+    // Aynı duvar adı Lux Hesaplayıcı'dan aktarılmışsa İçerik Planlayıcı'dan otomatik türetilen kopyayı ekleme
+    const filteredPlanner = fromPlanner.filter(p => !standaloneNames.has(norm(p.surfaceName)));
+    const combined = [...filteredPlanner, ...standaloneSurfaces];
+
+    const seenIds = new Set<string>();
+    const seenNames = new Set<string>();
+    return combined.filter(item => {
+      const n = norm(item.surfaceName);
+      if (seenIds.has(item.surfaceId) || seenNames.has(n)) return false;
+      seenIds.add(item.surfaceId);
+      seenNames.add(n);
+      return true;
+    });
   }, [ipSurfaces, surfacePhotometrics]);
 
   // 3. HTML RAPORUNU OLUŞTUR

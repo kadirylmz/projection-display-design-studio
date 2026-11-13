@@ -634,7 +634,7 @@ export function buildReportHtml(p: ReportPayload): string {
         <div class="photometric-report-card">
           <div class="photometric-card-header">
             <div>
-              <h3 class="surface-multi-card-title">${idx + 1}. ${esc(s.surfaceName)} — Fotometrik Aydınlık Analizi</h3>
+              <h3 class="surface-multi-card-title">${/^\d+\.\s*/.test(s.surfaceName) ? esc(s.surfaceName) : `${idx + 1}. ${esc(s.surfaceName)}`} — Fotometrik Aydınlık Analizi</h3>
               <div style="font-size: 11px; color: #475569; margin-top: 2px; display:flex; align-items:center; gap:8px;">
                 <span>${s.widthM}m × ${s.heightM}m</span>
                 <span style="background:#dcfce7; color:#166534; font-weight:700; padding:1px 6px; border-radius:4px; border:1px solid #bbf7d0;">
