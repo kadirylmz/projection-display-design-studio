@@ -10,9 +10,9 @@ import { toSvg } from '../engine/drawing';
 import { download } from '../util';
 
 export default function ReportGenerator() {
-  const { meta, setMeta, projectionSnap, projectionScreens, luxSnap, ledSnap, electrical, equipmentList } = useProjectStore();
+  const { meta, setMeta, projectionSnap, projectionScreens, updateProjectionScreen, luxSnap, ledSnap, electrical, equipmentList } = useProjectStore();
   const { surfaces, calculatedSurfaces, physicalRoom } = usePlannerStore();
-  const { slots, screens: mappingScreens } = useMapping();
+  const { slots, screens: mappingScreens, updateScreen: updateMappingScreen } = useMapping();
   const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
 
   const [lang, setLang] = useState<ReportLang>('tr');
@@ -460,22 +460,42 @@ export default function ReportGenerator() {
           {([
             ['summary', '1. Proje Özeti & Metrikler'],
             ['room3d', '2. 3B Simülasyon & 2B Görsel Paftalar'],
-            ['interProjector', '3. Projeksiyonlar Arası Eksen & Mesafe Cetveli'],
             ['architecturalPlan', '3. 2B Mimari Yerleşim & CAD Paftası'],
-            ['projection', '4. Projektör & Lens Hesapları'],
+            ['projection', '4. Ekran, Projektör & Lens Hesapları'],
             ['lux', '5. Lux & Parlaklık Analizi'],
-            ['multiProjector', '6. Çoklu Projektör & Kanvas Haritası'],
+            ['multiProjector', '6. Çoklu Projektör & Piksel Haritalama'],
             ['led', '7. LED Duvar Spesifikasyonları'],
             ['electrical', '8. Elektrik Yük & Tek Hat Dağıtım Şeması'],
-            ['drawings2d', '10. 2B CAD Teknik Çizimler'],
-            ['equipmentList', '11. Ekipman Listesi (BOM)'],
             ['assumptionsAndWarnings', '9. Şantiye Standartları & Teknik Uyarılar'],
-          ] as [keyof ReportSectionFlags, string][]).filter(([k]) => k !== 'interProjector' && k !== 'drawings2d' && k !== 'equipmentList').map(([k, label]) => (
+          ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
             <div key={k} className="space-y-1">
               <label className="flex items-center gap-2 cursor-pointer hover:text-white transition">
                 <input type="checkbox" checked={sections[k]} onChange={() => toggle(k)} />
                 <span className={k === 'led' ? (sections.led ? 'text-amber-300 font-bold' : 'text-slate-400') : ''}>{label}</span>
               </label>
+              {k === 'projection' && sections.projection && projectionScreens.length > 0 && (
+                <div className="ml-6 mt-1 p-2 space-y-1 rounded bg-slate-900 border border-slate-800 text-[11px]">
+                  <span className="text-sky-300 font-bold block text-[10.5px]">
+                    Ekran, Projektör &amp; Lens Duvarları ({projectionScreens.filter(s => s.includeInReport).length}/{projectionScreens.length}):
+                  </span>
+                  {projectionScreens.map(sc => (
+                    <label key={sc.id} className="flex items-center justify-between gap-2 cursor-pointer text-slate-300 hover:text-white">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={sc.includeInReport}
+                          onChange={e => updateProjectionScreen(sc.id, { includeInReport: e.target.checked })}
+                          className="accent-emerald-500"
+                        />
+                        <span className="truncate">{sc.name}</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                        {sc.snap?.imageWidthM > 0 ? `${sc.snap.imageWidthM.toFixed(2)}m` : 'Boş'}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
               {k === 'lux' && sections.lux && (
                 <div className="ml-6 mt-1 p-2 space-y-1 rounded bg-slate-900 border border-slate-800 text-[11px]">
                   <span className="text-emerald-400 font-bold block text-[10.5px]">
@@ -524,28 +544,53 @@ export default function ReportGenerator() {
               )}
               {k === 'multiProjector' && sections.multiProjector && (
                 <div className="ml-6 mt-1 p-2 space-y-1.5 rounded bg-slate-900 border border-slate-800 text-[11px]">
-                  <span className="text-amber-300 font-bold block text-[10.5px]">Ayrı Eklenecek Yüzeyler:</span>
-                  {ipSurfaces.map(s => {
-                    const isChecked = enabledSurfaceIds.includes(s.id);
-                    return (
-                      <label key={s.id} className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={e => {
-                            if (e.target.checked) {
-                              setEnabledSurfaceIds(prev => [...prev, s.id]);
-                            } else {
-                              setEnabledSurfaceIds(prev => prev.filter(id => id !== s.id));
-                            }
-                          }}
-                        />
-                        <span className={isChecked ? 'text-sky-300 font-semibold' : 'text-slate-400'}>
-                          {s.name} ({s.cols}×{s.rows} PJ)
-                        </span>
-                      </label>
-                    );
-                  })}
+                  {mappingScreens.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="text-sky-300 font-bold block text-[10.5px]">Piksel Haritalama Ekranları:</span>
+                      {mappingScreens.map(ms => (
+                        <label key={ms.id} className="flex items-center justify-between gap-2 cursor-pointer text-slate-300 hover:text-white">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={ms.includeInReport}
+                              onChange={e => updateMappingScreen(ms.id, { includeInReport: e.target.checked })}
+                              className="accent-emerald-500"
+                            />
+                            <span className="truncate">{ms.name}</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                            {ms.slots.length} PJ{ms.photoUrl ? ' · 🖼️' : ''}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {ipSurfaces.length > 0 && (
+                    <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                      <span className="text-amber-300 font-bold block text-[10.5px]">İçerik Planlayıcı Yüzeyleri:</span>
+                      {ipSurfaces.map(s => {
+                        const isChecked = enabledSurfaceIds.includes(s.id);
+                        return (
+                          <label key={s.id} className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setEnabledSurfaceIds(prev => [...prev, s.id]);
+                                } else {
+                                  setEnabledSurfaceIds(prev => prev.filter(id => id !== s.id));
+                                }
+                              }}
+                            />
+                            <span className={isChecked ? 'text-sky-300 font-semibold' : 'text-slate-400'}>
+                              {s.name} ({s.cols}×{s.rows} PJ)
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
