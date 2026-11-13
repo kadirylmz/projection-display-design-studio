@@ -226,9 +226,11 @@ function Photometric3DScene({
 
 
 export function getFootprint(pj: Projector3DConfig, surface: Surface3DConfig) {
-  const halfW = surface.widthM / 2;
-  const halfH = surface.heightM / 2;
-  const tr = pj.throwRatio || 0.8;
+  const safeW = Math.max(0.1, surface.widthM || 0);
+  const safeH = Math.max(0.1, surface.heightM || 0);
+  const halfW = safeW / 2;
+  const halfH = safeH / 2;
+  const tr = Math.max(0.2, pj.throwRatio || 0.8);
   const dist = Math.hypot(
     pj.pos[0] - pj.target[0],
     pj.pos[1] - pj.target[1],
@@ -244,9 +246,9 @@ export function getFootprint(pj: Projector3DConfig, surface: Surface3DConfig) {
   }
 
   const startX = Math.max(0, centerX - beamW / 2);
-  const endX = Math.min(surface.widthM, centerX + beamW / 2);
+  const endX = Math.min(safeW, centerX + beamW / 2);
   const startY = Math.max(0, centerY - beamH / 2);
-  const endY = Math.min(surface.heightM, centerY + beamH / 2);
+  const endY = Math.min(safeH, centerY + beamH / 2);
 
   return { dist, beamW, beamH, centerX, centerY, startX, endX, startY, endY };
 }
@@ -532,6 +534,15 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      const safeW = Math.max(0.1, surfaceConfig.widthM || 0);
+      const safeH = Math.max(0.1, surfaceConfig.heightM || 0);
+      const targetW = 720;
+      const targetH = Math.max(220, Math.min(720, Math.round(targetW * (safeH / safeW))));
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
@@ -590,7 +601,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
             ctx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
           }
 
-          ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
+          const drawY = h - (r + 1) * cellH;
+          ctx.fillRect(c * cellW, drawY, cellW + 0.5, cellH + 0.5);
         }
       }
 
@@ -613,10 +625,10 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           if (isSolo && pj.id !== viewMode) return;
 
           const fp = getFootprint(pj, surfaceConfig);
-          const px1 = (fp.startX / surfaceConfig.widthM) * w;
-          const px2 = (fp.endX / surfaceConfig.widthM) * w;
-          const pyTop = ((surfaceConfig.heightM - fp.endY) / surfaceConfig.heightM) * h;
-          const pyBottom = ((surfaceConfig.heightM - fp.startY) / surfaceConfig.heightM) * h;
+          const px1 = (fp.startX / safeW) * w;
+          const px2 = (fp.endX / safeW) * w;
+          const pyTop = ((safeH - fp.endY) / safeH) * h;
+          const pyBottom = ((safeH - fp.startY) / safeH) * h;
 
           const boxW = Math.max(4, px2 - px1);
           const boxH = Math.max(4, pyBottom - pyTop);
@@ -628,8 +640,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           ctx.strokeRect(px1, pyTop, boxW, boxH);
 
           // Optik Merkez Artısı (+)
-          const pcx = (fp.centerX / surfaceConfig.widthM) * w;
-          const pcy = ((surfaceConfig.heightM - fp.centerY) / surfaceConfig.heightM) * h;
+          const pcx = (fp.centerX / safeW) * w;
+          const pcy = ((safeH - fp.centerY) / safeH) * h;
           ctx.setLineDash([]);
           ctx.beginPath();
           ctx.moveTo(pcx - 8, pcy);
@@ -661,8 +673,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       // Hotspot & Darkspot Göstergeleri (Yalnızca kombine modda)
       if (showHotDarkSpots && viewMode === 'combined' && simResult.hotspot && simResult.darkspot) {
         // Hotspot (Maksimum)
-        const hotNormX = simResult.hotspot.xM / surfaceConfig.widthM;
-        const hotNormY = simResult.hotspot.yM / surfaceConfig.heightM;
+        const hotNormX = simResult.hotspot.xM / safeW;
+        const hotNormY = 1 - simResult.hotspot.yM / safeH;
         const hx = hotNormX * w;
         const hy = hotNormY * h;
 
@@ -684,8 +696,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
         ctx.restore();
 
         // Darkspot (Minimum)
-        const darkNormX = simResult.darkspot.xM / surfaceConfig.widthM;
-        const darkNormY = simResult.darkspot.yM / surfaceConfig.heightM;
+        const darkNormX = simResult.darkspot.xM / safeW;
+        const darkNormY = 1 - simResult.darkspot.yM / safeH;
         const dx = darkNormX * w;
         const dy = darkNormY * h;
 
@@ -723,6 +735,15 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      const safeW = Math.max(0.1, surfaceConfig.widthM || 0);
+      const safeH = Math.max(0.1, surfaceConfig.heightM || 0);
+      const targetW = 720;
+      const targetH = Math.max(220, Math.min(720, Math.round(targetW * (safeH / safeW))));
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
@@ -743,7 +764,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           } else {
             ctx.fillStyle = '#0f172a';
           }
-          ctx.fillRect(c * cellW, r * cellH, cellW + 0.5, cellH + 0.5);
+          const drawY = h - (r + 1) * cellH;
+          ctx.fillRect(c * cellW, drawY, cellW + 0.5, cellH + 0.5);
         }
       }
     };
@@ -758,11 +780,12 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     const canvas = heatmapCanvasRef.current;
     if (!canvas || !simResult) return;
     const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
     const px = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
     const py = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
 
-    const col = Math.min(Math.floor((px / rect.width) * simResult.cols), simResult.cols - 1);
-    const row = Math.min(Math.floor((py / rect.height) * simResult.rows), simResult.rows - 1);
+    const col = Math.min(Math.max(0, Math.floor((px / rect.width) * simResult.cols)), simResult.cols - 1);
+    const row = Math.min(Math.max(0, Math.floor((1 - py / rect.height) * simResult.rows)), simResult.rows - 1);
 
     const idx = row * simResult.cols + col;
     const cell = simResult.grid[idx];
@@ -1514,7 +1537,10 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
           <div className="space-y-3">
             {/* Isı Haritası Tuvali */}
             <div className="relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center shadow-lg">
-              <div className="relative w-full max-w-[840px] aspect-[16/9] flex items-center justify-center bg-black/50 rounded-lg overflow-hidden border border-slate-800/80">
+              <div
+                className="relative w-full max-w-[840px] max-h-[520px] flex items-center justify-center bg-black/50 rounded-lg overflow-hidden border border-slate-800/80"
+                style={{ aspectRatio: `${Math.max(0.1, surfaceConfig.widthM || 0)} / ${Math.max(0.1, surfaceConfig.heightM || 0)}` }}
+              >
                 <canvas
                   ref={heatmapCanvasRef}
                   width={640}

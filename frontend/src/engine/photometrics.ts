@@ -263,8 +263,10 @@ export function getSurfacePoint3D(
   xM: number,
   yM: number
 ): { pos: [number, number, number]; normal: [number, number, number] } {
-  const halfW = surface.widthM / 2;
-  const halfH = surface.heightM / 2;
+  const safeW = Math.max(0.1, surface.widthM || 0);
+  const safeH = Math.max(0.1, surface.heightM || 0);
+  const halfW = safeW / 2;
+  const halfH = safeH / 2;
   const localX = xM - halfW;
   const localY = yM - halfH;
 
@@ -277,9 +279,9 @@ export function getSurfacePoint3D(
       };
 
     case 'ceiling':
-      // Tavan: Y = heightM, normal aşağı bakar
+      // Tavan: Y = safeH, normal aşağı bakar
       return {
-        pos: [localX, surface.heightM, localY],
+        pos: [localX, safeH, localY],
         normal: [0, -1, 0], // Aşağı bakar
       };
 
@@ -345,6 +347,14 @@ function sub3(a: [number, number, number], b: [number, number, number]): [number
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
 
+function cross3(a: [number, number, number], b: [number, number, number]): [number, number, number] {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
 /**
  * Noktadan Noktaya Profesyonel Fotometrik Lux Simülasyonu (Point-by-Point Photometric Engine)
  */
@@ -355,13 +365,29 @@ export function simulatePhotometricLux(
   gridRows: number = 20,
   enableBlending: boolean = true
 ): PhotometricSimulationResult {
+  const safeW = Math.max(0.1, surface.widthM || 0);
+  const safeH = Math.max(0.1, surface.heightM || 0);
+  const safeSurface: Surface3DConfig = { ...surface, widthM: safeW, heightM: safeH };
   const cols = Math.max(5, Math.min(150, gridCols));
   const rows = Math.max(5, Math.min(150, gridRows));
-  const cellW = surface.widthM / cols;
-  const cellH = surface.heightM / rows;
+  const cellW = safeW / cols;
+  const cellH = safeH / rows;
 
   const grid: LuxGridCell[] = [];
   const activeProjectors = projectors.filter(p => p.enabled);
+
+  // Her projektör için optik eksen ve dikdörtgen frustum baz vektörlerini ön-hesapla
+  const pjBasis = activeProjectors.map(pj => {
+    const axisVec = normalize3(sub3(pj.target, pj.pos));
+    const worldUp: [number, number, number] = Math.abs(axisVec[1]) < 0.99 ? [0, 1, 0] : [0, 0, -1];
+    const rightVec = normalize3(cross3(axisVec, worldUp));
+    const upVec = normalize3(cross3(rightVec, axisVec));
+    const tr = Math.max(0.2, pj.throwRatio || 0.8);
+    const halfTanW = 1 / (2 * tr);
+    const halfTanH = halfTanW / 1.6;
+    const halfAngleRad = Math.atan(halfTanW);
+    return { pj, axisVec, rightVec, upVec, halfTanW, halfTanH, halfAngleRad };
+  });
 
   let minLux = Infinity;
   let maxLux = -Infinity;
@@ -378,18 +404,16 @@ export function simulatePhotometricLux(
       const xM = (c + 0.5) * cellW;
       const yM = (r + 0.5) * cellH;
 
-      const { pos: cellPos, normal: cellNorm } = getSurfacePoint3D(surface, xM, yM);
+      const { pos: cellPos, normal: cellNorm } = getSurfacePoint3D(safeSurface, xM, yM);
       const perProjLux: number[] = [];
       let cellTotalLux = 0;
       let activeCount = 0;
 
-      for (let pIdx = 0; pIdx < activeProjectors.length; pIdx++) {
-        const pj = activeProjectors[pIdx];
+      for (let pIdx = 0; pIdx < pjBasis.length; pIdx++) {
+        const { pj, axisVec, rightVec, upVec, halfTanW, halfTanH, halfAngleRad } = pjBasis[pIdx];
 
-        // Projektör konumu ve optik ekseni
+        // Projektör konumu
         const pPos = pj.pos;
-        const pTarget = pj.target;
-        const axisVec = normalize3(sub3(pTarget, pPos));
 
         // Işın vektörü (projektörden yüzey noktasına)
         const rayVecRaw = sub3(cellPos, pPos);
@@ -403,12 +427,9 @@ export function simulatePhotometricLux(
         const rayDir = normalize3(rayVecRaw);
 
         // 1. Işın ile projektör optik ekseni arasındaki açı θ
-        const cosTheta = Math.max(-1, Math.min(1, dot3(rayDir, axisVec)));
+        const forwardProj = dot3(rayDir, axisVec);
+        const cosTheta = Math.max(-1, Math.min(1, forwardProj));
         const thetaRad = Math.acos(cosTheta);
-
-        // Throw Ratio ve Görüntü Açısı (FOV) Sınırı
-        // TR = D / W => tan(halfAngle) = 1 / (2 * TR)
-        const halfAngleRad = Math.atan(1 / (2 * Math.max(0.2, pj.throwRatio)));
 
         // 2. Işın ile yüzey normali arasındaki geliş açısı α (Lambertian Kosinüs Kanunu)
         // Işın yüzeye doğru gidiyor, normal yüzeyden dışarı doğru bakıyor
@@ -416,8 +437,17 @@ export function simulatePhotometricLux(
 
         let luxContribution = 0;
 
-        // Işın projektörün atım konisinin sınırları içinde mi? (16:9 / 16:10 format köşegen açısı 1.35x)
-        if (thetaRad <= halfAngleRad * 1.35 && cosAlpha > 0.001) {
+        // Dikdörtgen projeksiyon frustum sınırı (TR ve 16:10 panel oranı) veya IES koni sınırı
+        const inRectFrustum =
+          forwardProj > 0.001 &&
+          Math.abs(dot3(rayDir, rightVec)) / forwardProj <= halfTanW &&
+          Math.abs(dot3(rayDir, upVec)) / forwardProj <= halfTanH;
+        const inBeam =
+          pj.photometricSource === 'ies' && pj.iesData
+            ? thetaRad <= halfAngleRad * 1.35
+            : inRectFrustum;
+
+        if (inBeam && cosAlpha > 0.001) {
           let candela = 0;
 
           if (pj.photometricSource === 'ies' && pj.iesData) {
