@@ -10,9 +10,9 @@ import { toSvg } from '../engine/drawing';
 import { download } from '../util';
 
 export default function ReportGenerator() {
-  const { meta, setMeta, projectionSnap, luxSnap, ledSnap, electrical, equipmentList } = useProjectStore();
+  const { meta, setMeta, projectionSnap, projectionScreens, luxSnap, ledSnap, electrical, equipmentList } = useProjectStore();
   const { surfaces, calculatedSurfaces, physicalRoom } = usePlannerStore();
-  const { slots } = useMapping();
+  const { slots, screens: mappingScreens } = useMapping();
   const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
 
   const [lang, setLang] = useState<ReportLang>('tr');
@@ -183,9 +183,25 @@ export default function ReportGenerator() {
     architecturalPlanSvg,
     interProjectorAnalysis,
     projection: projectionSnap,
+    projectionScreens: projectionScreens
+      .filter(sc => sc.includeInReport && sc.snap.imageWidthM > 0 && sc.snap.distanceM > 0)
+      .map(sc => ({
+        ...sc.snap,
+        screenName: sc.name || sc.snap.screenName,
+        screenPhotoUrl: sc.photoUrl ?? sc.snap.screenPhotoUrl,
+      })),
     lux: luxSnap,
     photometricSurfaces: reportPhotometricSurfaces,
     mappingSlots: slots,
+    mappingScreens: mappingScreens
+      .filter(sc => sc.includeInReport && (sc.slots.length > 0 || sc.photoUrl))
+      .map(sc => ({
+        name: sc.name,
+        photoUrl: sc.photoUrl,
+        slots: sc.slots,
+        content: sc.content,
+        gamma: sc.gamma,
+      })),
     led: ledSnap,
     electrical,
     equipmentList,
@@ -199,9 +215,11 @@ export default function ReportGenerator() {
     architecturalPlanSvg,
     interProjectorAnalysis,
     projectionSnap,
+    projectionScreens,
     luxSnap,
     reportPhotometricSurfaces,
     slots,
+    mappingScreens,
     ledSnap,
     electrical,
     equipmentList,

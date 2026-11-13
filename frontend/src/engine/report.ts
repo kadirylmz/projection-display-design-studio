@@ -132,7 +132,15 @@ export interface ReportPayload {
     ambientLux: number;
   };
   photometricSurfaces?: PhotometricReportSurface[];
+  projectionScreens?: Array<NonNullable<ReportPayload['projection']>>;
   mappingSlots?: ProjectorSlot[];
+  mappingScreens?: {
+    name: string;
+    photoUrl?: string;
+    slots: ProjectorSlot[];
+    content?: { w: number; h: number };
+    gamma?: number;
+  }[];
   led?: {
     cabinet: Cabinet;
     cols: number;
@@ -522,9 +530,14 @@ export function buildReportHtml(p: ReportPayload): string {
   }
 
   // 4. PROJEKSİYON & LENS HESAPLARI
-  if (p.sections.projection && p.projection && p.projection.imageWidthM > 0 && p.projection.distanceM > 0) {
-    const pr = p.projection;
-    const res = solveProjection({
+  const projectionList = (p.projectionScreens && p.projectionScreens.length > 0)
+    ? p.projectionScreens.filter(x => x.imageWidthM > 0 && x.distanceM > 0)
+    : (p.projection && p.projection.imageWidthM > 0 && p.projection.distanceM > 0 ? [p.projection] : []);
+  if (p.sections.projection && projectionList.length > 0) {
+    const pr = projectionList[0];
+    const projCardsHtml = projectionList.map((prItem, prIdx) => {
+      const pr = prItem;
+      const res = solveProjection({
       imageWidth: pr.imageWidthM,
       distance: pr.distanceM,
       aspect: { w: pr.aspectW, h: pr.aspectH },
@@ -533,10 +546,9 @@ export function buildReportHtml(p: ReportPayload): string {
     });
     warnings.push(...res.warnings);
     assumptions.push(...res.approximations);
-    blocks.push(`<section class="report-section">
-      <h2>${tr.projection}</h2>
+      return `<div class="surface-multi-card" style="margin-bottom:16px;">
+      <div class="surface-multi-card-header"><h3 class="surface-multi-card-title">${pr.screenName ? esc(pr.screenName) : `Ekran / Duvar #${prIdx + 1}`}</h3><span class="surface-multi-card-badge">${round(res.imageWidth, 2)} × ${round(res.imageHeight, 2)} m</span></div>
       <table><tbody>
-        ${pr.screenName ? `<tr><th>${p.lang === 'en' ? 'Screen Name' : 'Ekran Adı'}</th><td colspan="3"><b>${esc(pr.screenName)}</b></td></tr>` : ''}
         <tr><th>${tr.projector}</th><td>${esc(pr.projectorName)}</td><th>${tr.lens}</th><td>${esc(pr.lensName)}</td></tr>
         <tr><th>${tr.imgSize} &amp; ${p.lang === 'en' ? 'Area' : 'Alan'}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m · <b>${round(res.imageWidth * res.imageHeight, 2)} m²</b></td><th>${tr.diagonal}</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 3)} m)</td></tr>
         <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m${Math.abs(res.chassisFrontToSurface - res.lensToSurface) > 0.005 ? ` (${p.lang === 'en' ? 'Chassis' : 'Şasi'}: ${round(res.chassisFrontToSurface, 3)} m)` : ''}</td></tr>
@@ -587,7 +599,10 @@ export function buildReportHtml(p: ReportPayload): string {
           </div>
         </div>`;
       })()}
-    </section>`);
+      </div>`;
+    }).join('');
+    void pr;
+    blocks.push(`<section class="report-section" style="break-inside:auto; page-break-inside:auto;"><h2>${tr.projection}</h2>${projCardsHtml}</section>`);
   }
 
   // 5. FOTOMETRİK LUX & PARLAKLIK ANALİZİ (YÜZEY BAZLI AYRI LUX HARİTALARI & DAĞILIM CETVELLERİ)
@@ -822,6 +837,22 @@ export function buildReportHtml(p: ReportPayload): string {
       warnings.push(...L.warnings);
       const svg = layoutToSvg(L, { gridStep: 200, showCoords: true });
       blocks.push('<section class="report-section"><h2>' + tr.multi + '</h2><p><b>' + tr.canvasRes + ':</b> ' + L.canvasW + ' × ' + L.canvasH + ' px &nbsp;|&nbsp; <b>' + tr.overlapCount + ':</b> ' + L.overlaps.length + '</p><div class="diagram">' + svg + '</div></section>');
+    }
+    if (p.mappingScreens && p.mappingScreens.length > 0) {
+      const mapCards = p.mappingScreens.map((ms, idx) => {
+        const L = ms.slots && ms.slots.length > 0 ? computeLayout(ms.slots) : null;
+        if (L) warnings.push(...L.warnings);
+        const svg = L ? layoutToSvg(L, { gridStep: 200, showCoords: true }) : '';
+        return `<div class="surface-multi-card" style="margin-bottom:18px;">
+          <div class="surface-multi-card-header">
+            <h3 class="surface-multi-card-title">${esc(ms.name || `Ekran / Duvar #${idx + 1}`)}</h3>
+            <span class="surface-multi-card-badge">${L ? `${L.canvasW} × ${L.canvasH} px · ${L.slots.length} Projektör` : 'Görsel / Logo'}</span>
+          </div>
+          ${ms.photoUrl ? `<div class="three-d-card" style="margin-bottom:12px;"><img src="${esc(ms.photoUrl)}" alt="${esc(ms.name)}" class="three-d-img" /></div>` : ''}
+          ${L ? `<p style="font-size:12px;"><b>${tr.canvasRes}:</b> ${L.canvasW} × ${L.canvasH} px &nbsp;|&nbsp; <b>${tr.overlapCount}:</b> ${L.overlaps.length} &nbsp;|&nbsp; <b>Gamma:</b> ${ms.gamma ?? 2.2}</p><div class="diagram">${svg}</div>` : ''}
+        </div>`;
+      }).join('');
+      blocks.push(`<section class="report-section" style="break-inside:auto; page-break-inside:auto;"><h2>${tr.multi} — Piksel Haritalama Ekranları</h2>${mapCards}</section>`);
     }
   }
 

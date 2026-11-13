@@ -292,8 +292,47 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
     download(`geometri-${geoView}.png`, blob);
   };
 
-  const setProjectionSnap = useProjectStore(s => s.setProjectionSnap);
+  const {
+    setProjectionSnap,
+    projectionScreens,
+    activeProjectionScreenId,
+    setActiveProjectionScreenId,
+    addProjectionScreen,
+    updateProjectionScreen,
+    removeProjectionScreen,
+    setAllProjectionScreensInReport,
+  } = useProjectStore();
+  const [newProjScreenName, setNewProjScreenName] = useState('');
+  const isHydratingScreenRef = useRef(false);
   const [reportToast, setReportToast] = useState<string | null>(null);
+
+  // Aktif ekran değiştiğinde form değerlerini store'dan yükle
+  const loadScreenToForm = (id: string) => {
+    const sc = useProjectStore.getState().projectionScreens.find(x => x.id === id);
+    if (!sc) return;
+    isHydratingScreenRef.current = true;
+    setScreenName(sc.name);
+    setBgPhoto(sc.photoUrl ?? null);
+    setCalcMode(sc.calcMode);
+    setSizeMode(sc.sizeMode);
+    setInUnit(sc.inUnit);
+    setAr(sc.ar);
+    setCw(sc.cw);
+    setCh(sc.ch);
+    setDimA(sc.dimA);
+    setDimB(sc.dimB);
+    setDist(sc.dist);
+    setCatProjId(sc.catProjId);
+    setCatLensId(sc.catLensId);
+    setCustomLensName(sc.customLensName);
+    setPresetId(sc.presetId);
+    setTrMin(sc.trMin);
+    setTrMax(sc.trMax);
+    setTr(sc.tr);
+    setVOff(sc.vOff);
+    setProtr(sc.protr);
+    setTimeout(() => { isHydratingScreenRef.current = false; }, 0);
+  };
 
   const buildReportProjection = () => {
     if (!out.r) return null;
@@ -339,14 +378,43 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
 
   useEffect(() => {
     const snap = buildReportProjection();
-    if (snap) setProjectionSnap(snap);
-  }, [out.r, screenName, bgPhoto, catProj, proj, catLensId, customLensName, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit]);
+    if (!snap) return;
+    setProjectionSnap(snap);
+    if (!isHydratingScreenRef.current && activeProjectionScreenId) {
+      updateProjectionScreen(activeProjectionScreenId, {
+        name: screenName.trim() || useProjectStore.getState().projectionScreens.find(x => x.id === activeProjectionScreenId)?.name || 'Ekran / Duvar',
+        photoUrl: bgPhoto ?? undefined,
+        calcMode,
+        sizeMode,
+        inUnit,
+        ar,
+        cw,
+        ch,
+        dimA,
+        dimB,
+        dist,
+        catProjId,
+        catLensId,
+        customLensName,
+        presetId,
+        trMin,
+        trMax,
+        tr,
+        vOff,
+        protr,
+        snap,
+      });
+    }
+  }, [out.r, screenName, bgPhoto, catProj, proj, catLensId, customLensName, dbLens, presetId, range.min, range.max, protr, vOff, hOff, inUnit, calcMode, sizeMode, ar, cw, ch, dimA, dimB, dist, catProjId, trMin, trMax, tr, activeProjectionScreenId]);
 
   const handleSendToReport = () => {
     const snap = buildReportProjection();
     if (!snap) return;
     setProjectionSnap(snap);
-    setReportToast('✔ Ekran, Projektör & Lens rapora eklendi');
+    if (activeProjectionScreenId) {
+      updateProjectionScreen(activeProjectionScreenId, { includeInReport: true, snap });
+    }
+    setReportToast('✔ Aktif ekran rapora dahil edildi');
     setTimeout(() => setReportToast(null), 2600);
   };
 
@@ -446,6 +514,105 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
           >
             {UNITS.map(u => <option key={u} value={u}>Birim: {u}</option>)}
           </select>
+        </div>
+
+        {/* Duvarlar / Ekranlar Çoklu Listesi */}
+        <div className="p-2.5 rounded bg-slate-950/80 border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="font-semibold text-sky-300">Duvarlar / Ekranlar ({projectionScreens.length})</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setAllProjectionScreensInReport(true)}
+                className="px-1.5 py-0.5 rounded bg-emerald-900/60 hover:bg-emerald-800 text-emerald-300 text-[10px]"
+              >
+                Tümünü Rapora Ekle
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllProjectionScreensInReport(false)}
+                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+              >
+                Tümünü Çıkar
+              </button>
+            </div>
+          </div>
+          <div className="flex gap-1.5 text-xs">
+            <input
+              type="text"
+              className="inp flex-1"
+              placeholder="Yeni duvar / ekran adı (örn: Sol Duvar)"
+              value={newProjScreenName}
+              onChange={e => setNewProjScreenName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  const created = addProjectionScreen(newProjScreenName);
+                  setNewProjScreenName('');
+                  loadScreenToForm(created.id);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const created = addProjectionScreen(newProjScreenName);
+                setNewProjScreenName('');
+                loadScreenToForm(created.id);
+              }}
+              className="px-2.5 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-semibold whitespace-nowrap"
+            >
+              + Ekran Ekle
+            </button>
+          </div>
+          <div className="space-y-1 max-h-36 overflow-y-auto pr-0.5 text-xs">
+            {projectionScreens.map(sc => {
+              const isAct = sc.id === activeProjectionScreenId;
+              return (
+                <div
+                  key={sc.id}
+                  onClick={() => { setActiveProjectionScreenId(sc.id); loadScreenToForm(sc.id); }}
+                  className={`px-2 py-1 rounded border cursor-pointer flex items-center justify-between gap-2 ${
+                    isAct ? 'bg-sky-950/70 border-sky-500' : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={sc.includeInReport}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateProjectionScreen(sc.id, { includeInReport: e.target.checked })}
+                      title="Rapora Dahil Et"
+                      className="accent-emerald-500"
+                    />
+                    <span className="truncate font-medium text-slate-200">{sc.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {sc.photoUrl && <span className="text-[10px]" title="Fotoğraf eklendi">📷</span>}
+                    {sc.snap?.imageWidthM > 0 && (
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {round(sc.snap.imageWidthM, 2)}m
+                      </span>
+                    )}
+                    {projectionScreens.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={e => {
+                          e.stopPropagation();
+                          const remaining = projectionScreens.filter(x => x.id !== sc.id);
+                          removeProjectionScreen(sc.id);
+                          if (isAct && remaining[0]) loadScreenToForm(remaining[0].id);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 text-rose-300 text-[10px]"
+                        title="Ekranı Sil"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Ekran Adı & Fotoğrafı */}

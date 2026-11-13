@@ -1,20 +1,28 @@
 import { useMemo, useRef, useState } from 'react';
-import { calculatePixelDensity, computeLayout, gridLayout, pctToPx, ProjectorSlot } from '../engine/multiproj';
+import { calculatePixelDensity, computeLayout, ProjectorSlot } from '../engine/multiproj';
 import { fromConfig, layoutToSvg, toConfig } from '../engine/exporters';
 import { useMapping } from '../mappingStore';
 import { download, renderCanvasPixelMapPattern, renderTestPattern, svgToPng } from '../util';
 
 export default function PixelMappingStudio() {
-  const { slots, setSlots, content, setContent, gamma, setGamma } = useMapping();
+  const {
+    screens,
+    activeScreenId,
+    slots,
+    setSlots,
+    content,
+    setContent,
+    gamma,
+    setGamma,
+    selectScreen,
+    addScreen,
+    removeScreen,
+    updateScreen,
+    setAllScreensInReport,
+  } = useMapping();
 
-  // Çoklu Projektör Hızlı Izgara Oluşturucu state'leri
-  const [cols, setCols] = useState(2);
-  const [rows, setRows] = useState(1);
-  const [gridW, setGridW] = useState(1920);
-  const [gridH, setGridH] = useState(1200);
-  const [pctX, setPctX] = useState(10);
-  const [pctY, setPctY] = useState(10);
-  const [outs, setOuts] = useState('');
+  const activeScreen = screens.find(sc => sc.id === activeScreenId) ?? screens[0];
+  const [newScreenName, setNewScreenName] = useState('');
 
   const [grid, setGrid] = useState(100), [snap, setSnap] = useState(true), [safe, setSafe] = useState(90);
   const [showSafe, setShowSafe] = useState(false), [rulers, setRulers] = useState(true);
@@ -24,28 +32,6 @@ export default function PixelMappingStudio() {
   const [msg, setMsg] = useState('');
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
-
-  const builtGrid = useMemo(() => {
-    try {
-      const ox = cols > 1 ? pctToPx(pctX, gridW) : 0;
-      const oy = rows > 1 ? pctToPx(pctY, gridH) : 0;
-      const outputs = outs.split(',').map(s => s.trim()).filter(Boolean);
-      const s = gridLayout({ cols, rows, w: gridW, h: gridH, overlapX: ox, overlapY: oy, outputs });
-      return { ox, oy, L: computeLayout(s), s, err: null as string | null };
-    } catch (e) {
-      return { ox: 0, oy: 0, L: null, s: null, err: (e as Error).message };
-    }
-  }, [cols, rows, gridW, gridH, pctX, pctY, outs]);
-
-  const applyGridLayout = () => {
-    if (builtGrid.s && builtGrid.L) {
-      setSlots(builtGrid.s);
-      setContent({ w: builtGrid.L.canvasW, h: builtGrid.L.canvasH });
-      setSel(builtGrid.s[0]?.id ?? null);
-      setView(null);
-      setMsg(`${cols}×${rows} çoklu projektör düzeni uygulandı (${builtGrid.L.canvasW}×${builtGrid.L.canvasH} px)`);
-    }
-  };
 
   const res = useMemo(() => {
     try { return { L: computeLayout(slots), err: null as string | null }; }
@@ -123,42 +109,139 @@ export default function PixelMappingStudio() {
           </p>
         </div>
 
-        {/* Çoklu Projektör Hızlı Izgara Oluşturucu */}
-        <details className="bg-slate-950 p-2.5 rounded border border-slate-800 space-y-2" open>
-          <summary className="cursor-pointer font-semibold text-sky-300 text-xs">
-            ⚡ Çoklu Projektör Izgara Oluşturucu (Grid &amp; Blend)
-          </summary>
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <label>Sütun (Yatay)<input className="inp" type="number" min="1" value={cols} onChange={e => setCols(Math.max(1, Math.round(+e.target.value)))} /></label>
-            <label>Satır (Dikey)<input className="inp" type="number" min="1" value={rows} onChange={e => setRows(Math.max(1, Math.round(+e.target.value)))} /></label>
-            <label>Çıkış Genişlik (px)<input className="inp" type="number" min="1" value={gridW} onChange={e => setGridW(Math.max(1, Math.round(+e.target.value)))} /></label>
-            <label>Çıkış Yükseklik (px)<input className="inp" type="number" min="1" value={gridH} onChange={e => setGridH(Math.max(1, Math.round(+e.target.value)))} /></label>
+        {/* Duvar / Ekran Yönetimi & Foto/Logo */}
+        <div className="bg-slate-950 p-2.5 rounded border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-sky-300 text-xs">Duvarlar / Ekranlar ({screens.length})</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setAllScreensInReport(true)}
+                className="px-1.5 py-0.5 rounded bg-emerald-900/60 hover:bg-emerald-800 text-emerald-300 text-[10px]"
+                title="Tüm ekranları rapora dahil et"
+              >
+                Tümünü Ekle
+              </button>
+              <button
+                type="button"
+                onClick={() => setAllScreensInReport(false)}
+                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+                title="Tüm ekranları rapordan çıkar"
+              >
+                Tümünü Çıkar
+              </button>
+            </div>
           </div>
-          <label className="block">Yatay Örtüşme (Blend): %{pctX} → {builtGrid.ox} px
-            <input type="range" min="0" max="50" value={pctX} onChange={e => setPctX(+e.target.value)} className="w-full accent-sky-500" disabled={cols < 2} />
-          </label>
-          <label className="block">Dikey Örtüşme (Blend): %{pctY} → {builtGrid.oy} px
-            <input type="range" min="0" max="50" value={pctY} onChange={e => setPctY(+e.target.value)} className="w-full accent-sky-500" disabled={rows < 2} />
-          </label>
-          <label className="block">Çıkış Atamaları (virgülle: DP-1, DP-2…)
-            <input className="inp" value={outs} onChange={e => setOuts(e.target.value)} placeholder="DP-1, DP-2..." />
-          </label>
-          {builtGrid.err && <p className="text-red-400">⚠ {builtGrid.err}</p>}
-          {builtGrid.L && (
-            <div className="text-[11px] bg-slate-900 border border-slate-800 rounded p-2 space-y-0.5">
-              <div>Birleşik Kanvas: <b className="text-emerald-300">{builtGrid.L.canvasW} × {builtGrid.L.canvasH} px</b></div>
-              <div className="text-slate-400">Örtüşme çıkarıldı (ham toplam: {builtGrid.L.naiveW}×{builtGrid.L.naiveH} px).</div>
+
+          <div className="flex gap-1.5">
+            <input
+              className="inp flex-1"
+              value={newScreenName}
+              onChange={e => setNewScreenName(e.target.value)}
+              placeholder="Yeni ekran / duvar adı (örn: Sahne Önü)"
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  addScreen(newScreenName);
+                  setNewScreenName('');
+                  setView(null);
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                addScreen(newScreenName);
+                setNewScreenName('');
+                setView(null);
+              }}
+              className="px-2.5 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-semibold whitespace-nowrap"
+            >
+              + Ekle
+            </button>
+          </div>
+
+          <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5">
+            {screens.map(sc => {
+              const isAct = sc.id === activeScreen.id;
+              return (
+                <div
+                  key={sc.id}
+                  onClick={() => { selectScreen(sc.id); setView(null); setSel(sc.slots[0]?.id ?? null); }}
+                  className={`p-1.5 rounded border cursor-pointer flex items-center justify-between gap-2 ${
+                    isAct ? 'bg-sky-950/70 border-sky-500' : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={sc.includeInReport}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateScreen(sc.id, { includeInReport: e.target.checked })}
+                      title="Rapora Dahil Et"
+                      className="accent-emerald-500"
+                    />
+                    <input
+                      className="bg-transparent text-slate-200 font-medium text-xs w-full focus:outline-none focus:bg-slate-800 px-1 rounded"
+                      value={sc.name}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => updateScreen(sc.id, { name: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {sc.photoUrl && <span className="text-[10px] text-emerald-400" title="Foto/Logo yüklü">🖼️</span>}
+                    <span className="text-[10px] text-slate-400 font-mono">{sc.slots.length}pj</span>
+                    {screens.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); removeScreen(sc.id); }}
+                        className="px-1.5 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 text-rose-300 text-[10px]"
+                        title="Ekranı Sil"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Seçili Ekran Fotoğrafı / Logo Yükleme */}
+          {activeScreen && (
+            <div className="pt-1 border-t border-slate-800 flex items-center justify-between gap-2">
+              <label className="flex-1 cursor-pointer px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-center text-[11px] text-slate-200">
+                🖼️ {activeScreen.photoUrl ? 'Foto / Logo Değiştir' : 'Foto veya Logo Ekle'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => updateScreen(activeScreen.id, { photoUrl: reader.result as string });
+                    reader.readAsDataURL(f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              {activeScreen.photoUrl && (
+                <>
+                  <img src={activeScreen.photoUrl} alt="Ekran Foto/Logo" className="h-7 w-10 object-cover rounded border border-slate-700" />
+                  <button
+                    type="button"
+                    onClick={() => updateScreen(activeScreen.id, { photoUrl: undefined })}
+                    className="px-2 py-1 rounded bg-rose-950/70 hover:bg-rose-900 text-rose-300 text-[10px]"
+                    title="Fotoğrafı/Logoyu Kaldır"
+                  >
+                    Sil
+                  </button>
+                </>
+              )}
             </div>
           )}
-          <button
-            className="w-full py-1.5 bg-sky-700 hover:bg-sky-600 rounded text-white font-semibold"
-            disabled={!builtGrid.L}
-            onClick={applyGridLayout}
-          >
-            Izgara Düzenini Uygula →
-          </button>
           {msg && <div className="text-[11px] text-emerald-400">{msg}</div>}
-        </details>
+        </div>
 
         {/* Canvas & Çözünürlük Özeti */}
         <div className="grid grid-cols-2 gap-2 bg-slate-950 p-2 rounded border border-slate-800">
