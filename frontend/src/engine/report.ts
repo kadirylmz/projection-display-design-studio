@@ -835,11 +835,6 @@ export function buildReportHtml(p: ReportPayload): string {
         '  ' + surfaceCardsHtml,
         '</section>'
       ].join('\n'));
-    } else if (p.mappingSlots && p.mappingSlots.length > 0) {
-      const L = computeLayout(p.mappingSlots);
-      warnings.push(...L.warnings);
-      const svg = layoutToSvg(L, { gridStep: 200, showCoords: true });
-      blocks.push('<section class="report-section"><h2>' + tr.multi + '</h2><p><b>' + tr.canvasRes + ':</b> ' + L.canvasW + ' × ' + L.canvasH + ' px &nbsp;|&nbsp; <b>' + tr.overlapCount + ':</b> ' + L.overlaps.length + '</p><div class="diagram">' + svg + '</div></section>');
     }
     if (p.mappingScreens && p.mappingScreens.length > 0) {
       const mapCards = p.mappingScreens.map((ms, idx) => {
@@ -855,7 +850,12 @@ export function buildReportHtml(p: ReportPayload): string {
           ${L ? `<p style="font-size:12px;"><b>${tr.canvasRes}:</b> ${L.canvasW} × ${L.canvasH} px &nbsp;|&nbsp; <b>${tr.overlapCount}:</b> ${L.overlaps.length} &nbsp;|&nbsp; <b>Gamma:</b> ${ms.gamma ?? 2.2}</p><div class="diagram">${svg}</div>` : ''}
         </div>`;
       }).join('');
-      blocks.push(`<section class="report-section" style="break-inside:auto; page-break-inside:auto;"><h2>${tr.multi} — Piksel Haritalama Ekranları</h2>${mapCards}</section>`);
+      blocks.push(`<section class="report-section" style="break-inside:auto; page-break-inside:auto;"><h2>${tr.multi}</h2>${mapCards}</section>`);
+    } else if (p.mappingScreens === undefined && surfsToRender.length === 0 && p.mappingSlots && p.mappingSlots.length > 0) {
+      const L = computeLayout(p.mappingSlots);
+      warnings.push(...L.warnings);
+      const svg = layoutToSvg(L, { gridStep: 200, showCoords: true });
+      blocks.push('<section class="report-section"><h2>' + tr.multi + '</h2><p><b>' + tr.canvasRes + ':</b> ' + L.canvasW + ' × ' + L.canvasH + ' px &nbsp;|&nbsp; <b>' + tr.overlapCount + ':</b> ' + L.overlaps.length + '</p><div class="diagram">' + svg + '</div></section>');
     }
   }
 
