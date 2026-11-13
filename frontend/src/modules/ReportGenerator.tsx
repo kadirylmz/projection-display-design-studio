@@ -187,6 +187,25 @@ export default function ReportGenerator() {
     });
   }, [ipSurfaces, surfacePhotometrics]);
 
+  const [hiddenLuxIds, setHiddenLuxIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('report_hidden_lux_ids');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('report_hidden_lux_ids', JSON.stringify(hiddenLuxIds));
+    } catch { /* ignore */ }
+  }, [hiddenLuxIds]);
+
+  const activePhotometricSurfaces = useMemo(
+    () => reportPhotometricSurfaces.filter(s => !hiddenLuxIds.includes(s.surfaceId)),
+    [reportPhotometricSurfaces, hiddenLuxIds]
+  );
+
   // 3. HTML RAPORUNU OLUŞTUR
   const html = useMemo(() => buildReportHtml({
     lang,
@@ -205,7 +224,7 @@ export default function ReportGenerator() {
         screenPhotoUrl: sc.photoUrl ?? sc.snap.screenPhotoUrl,
       })),
     lux: luxSnap,
-    photometricSurfaces: reportPhotometricSurfaces,
+    photometricSurfaces: activePhotometricSurfaces,
     mappingSlots: slots,
     mappingScreens: mappingScreens
       .filter(sc => sc.includeInReport && (sc.slots.length > 0 || sc.photoUrl))
@@ -231,7 +250,7 @@ export default function ReportGenerator() {
     projectionSnap,
     projectionScreens,
     luxSnap,
-    reportPhotometricSurfaces,
+    activePhotometricSurfaces,
     slots,
     mappingScreens,
     ledSnap,
@@ -511,22 +530,79 @@ export default function ReportGenerator() {
                 </div>
               )}
               {k === 'lux' && sections.lux && (
-                <div className="ml-6 mt-1 p-2 space-y-1 rounded bg-slate-900 border border-slate-800 text-[11px]">
-                  <span className="text-emerald-400 font-bold block text-[10.5px]">
-                    ✓ Rapora Eklenen Fotometrik Yüzeyler ({reportPhotometricSurfaces.length}):
-                  </span>
-                  {reportPhotometricSurfaces.length > 0 ? (
-                    reportPhotometricSurfaces.map(s => (
-                      <div key={s.surfaceId} className="flex items-center justify-between text-slate-300 py-0.5 border-b border-slate-800/60 last:border-0">
-                        <span className="truncate text-sky-300 font-medium">
-                          {s.surfaceId.startsWith('quick-') ? '💡 ' : '🧱 '}
-                          {s.surfaceName}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {(s.widthM * s.heightM).toFixed(1)} m² · {Math.round(s.avgLux)} lx
-                        </span>
+                <div className="ml-6 mt-1 p-2 space-y-1.5 rounded bg-slate-900 border border-slate-800 text-[11px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-emerald-400 font-bold text-[10.5px]">
+                      ✓ Fotometrik Yüzeyler ({activePhotometricSurfaces.length}/{reportPhotometricSurfaces.length}):
+                    </span>
+                    {reportPhotometricSurfaces.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setHiddenLuxIds([])}
+                          className="px-1.5 py-0.5 rounded bg-emerald-900/50 hover:bg-emerald-800 text-emerald-300 text-[9.5px]"
+                        >
+                          Tümü
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHiddenLuxIds(reportPhotometricSurfaces.map(x => x.surfaceId))}
+                          className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[9.5px]"
+                        >
+                          Hiçbiri
+                        </button>
                       </div>
-                    ))
+                    )}
+                  </div>
+                  {reportPhotometricSurfaces.length > 0 ? (
+                    reportPhotometricSurfaces.map(s => {
+                      const isIncluded = !hiddenLuxIds.includes(s.surfaceId);
+                      const isStored = Boolean(surfacePhotometrics[s.surfaceId]);
+                      return (
+                        <div key={s.surfaceId} className="flex items-center justify-between gap-1.5 text-slate-300 py-0.5 border-b border-slate-800/60 last:border-0">
+                          <label className="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer hover:text-white">
+                            <input
+                              type="checkbox"
+                              checked={isIncluded}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setHiddenLuxIds(prev => prev.filter(id => id !== s.surfaceId));
+                                } else {
+                                  setHiddenLuxIds(prev => (prev.includes(s.surfaceId) ? prev : [...prev, s.surfaceId]));
+                                }
+                              }}
+                              className="accent-emerald-500"
+                            />
+                            <span className={`truncate font-medium ${isIncluded ? 'text-sky-300' : 'text-slate-500 line-through'}`}>
+                              {s.surfaceId.startsWith('quick-') ? '💡 ' : '🧱 '}
+                              {s.surfaceName}
+                            </span>
+                          </label>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {(s.widthM * s.heightM).toFixed(1)}m² · {Math.round(s.avgLux)}lx
+                            </span>
+                            {isStored && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  usePhotometricStore.setState(st => {
+                                    const next = { ...st.surfacePhotometrics };
+                                    delete next[s.surfaceId];
+                                    return { surfacePhotometrics: next };
+                                  });
+                                  setHiddenLuxIds(prev => prev.filter(id => id !== s.surfaceId));
+                                }}
+                                className="px-1 py-0.2 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 text-[9.5px]"
+                                title="Bu fotometrik kaydı kalıcı olarak sil"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
                   ) : (
                     <span className="text-[10px] text-slate-500 italic block">
                       Henüz yüzey eklenmedi. "Lux & Parlaklık" sekmesinden aktarabilirsiniz.
