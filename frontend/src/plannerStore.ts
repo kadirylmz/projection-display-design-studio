@@ -37,6 +37,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: true,
+    crossSlot: 'left',
   },
   {
     id: 'surf-2',
@@ -63,6 +64,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: false,
+    crossSlot: 'top',
   },
   {
     id: 'surf-3',
@@ -89,6 +91,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: true,
+    crossSlot: 'right',
   },
   {
     id: 'surf-4',
@@ -115,6 +118,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: true,
+    crossSlot: 'center',
     syncFloorWithWalls: true,
   },
 ];

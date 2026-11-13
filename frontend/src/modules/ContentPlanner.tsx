@@ -29,6 +29,8 @@ export type SurfaceGeometry =
 export type LayoutMode = 'cross' | 'strip' | 'stacked' | 'custom';
 export type CalcMethod = 'aspect_ref' | 'projector_blend';
 
+export type CrossSlot = 'auto' | 'center' | 'left' | 'top' | 'right' | 'bottom' | 'extra';
+
 export interface SurfaceItem {
   id: string;
   name: string;
@@ -67,7 +69,34 @@ export interface SurfaceItem {
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
   rotate90: boolean;    // Şemada yüzeyi 90 derece döndür
+  crossSlot?: CrossSlot; // Kutu açılımında yüzey konumu (center/left/top/right/bottom/extra)
   syncFloorWithWalls?: boolean; // Zemini duvar piksel yoğunluğuyla eşitle
+}
+
+/**
+ * Kutu açılımı (cross) modunda bir yüzeyin hangi konumda yer alacağını çözer.
+ */
+export function resolveSurfaceCrossSlot<T extends { id: string; type: SurfaceType; crossSlot?: CrossSlot }>(
+  surf: T,
+  allSurfaces: T[]
+): Exclude<CrossSlot, 'auto'> {
+  if (surf.crossSlot && surf.crossSlot !== 'auto') {
+    return surf.crossSlot;
+  }
+  const explicitCenter = allSurfaces.find(s => s.crossSlot === 'center');
+  const fallbackCenter = explicitCenter || allSurfaces.find(s => s.type === 'floor') || allSurfaces[0];
+  if (fallbackCenter && surf.id === fallbackCenter.id) {
+    return 'center';
+  }
+  const nonCenter = allSurfaces.filter(
+    s => (!s.crossSlot || s.crossSlot === 'auto') && (!fallbackCenter || s.id !== fallbackCenter.id)
+  );
+  const idx = nonCenter.findIndex(s => s.id === surf.id);
+  if (idx === 0) return 'left';
+  if (idx === 1) return 'top';
+  if (idx === 2) return 'right';
+  if (idx === 3) return 'bottom';
+  return 'extra';
 }
 
 export interface CalculatedSurface extends SurfaceItem {
@@ -192,6 +221,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: true,
+    crossSlot: 'left',
   },
   {
     id: 'surf-2',
@@ -218,6 +248,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: false,
+    crossSlot: 'top',
   },
   {
     id: 'surf-3',
@@ -244,6 +275,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: true,
+    crossSlot: 'right',
   },
   {
     id: 'surf-4',
@@ -270,6 +302,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     canvasX: 0,
     canvasY: 0,
     rotate90: true,
+    crossSlot: 'center',
     syncFloorWithWalls: true,
   },
 ];
@@ -355,7 +388,39 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   // 2B Açınım Çiziminde Yazı Gruplarını ve Seçilen Metinleri Bağımsız Sürükleme / Kaydırma
   type TextItemKey = 'name' | 'resolution' | 'density' | 'dimensions';
   const [draggingText, setDraggingText] = useState<{ surfaceId: string; key: TextItemKey } | null>(null);
-  const dragTextStartRef = useRef<{ startX: number; startY: number; initX: number; initY: number; scale: number } | null>(null);
+  const dragTextStartRef = useRef<{
+    startX: number;
+    startY: number;
+    initX: number;
+    initY: number;
+    invA: number;
+    invB: number;
+    invC: number;
+    invD: number;
+  } | null>(null);
+
+  const [draggingSurfaceId, setDraggingSurfaceId] = useState<string | null>(null);
+  const dragSurfaceStartRef = useRef<{
+    startX: number;
+    startY: number;
+    initX: number;
+    initY: number;
+    invA: number;
+    invB: number;
+    invC: number;
+    invD: number;
+  } | null>(null);
+
+  const getInverse2DMatrix = (el: SVGGraphicsElement | null, fallbackScale: number) => {
+    try {
+      const ctm = el?.getScreenCTM();
+      if (ctm) {
+        const inv = ctm.inverse();
+        return { invA: inv.a, invB: inv.b, invC: inv.c, invD: inv.d };
+      }
+    } catch {}
+    return { invA: fallbackScale, invB: 0, invC: 0, invD: fallbackScale };
+  };
 
   const handleStartDragText = (surfaceId: string, key: TextItemKey, e: React.PointerEvent, scaledWidthPx: number, vbW: number) => {
     e.stopPropagation();
@@ -364,6 +429,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
     } catch {}
     const surf = surfaces.find(s => s.id === surfaceId);
     const scale = vbW / Math.max(1, scaledWidthPx);
+    const parentGroup = (e.currentTarget as unknown as SVGGElement).parentNode as SVGGraphicsElement | null;
+    const mat = getInverse2DMatrix(parentGroup, scale);
     const baseOffsetX = surf?.textOffsets?.[key]?.x ?? (surf?.textOffsetX || 0);
     const baseOffsetY = surf?.textOffsets?.[key]?.y ?? (surf?.textOffsetY || 0);
     setDraggingText({ surfaceId, key });
@@ -372,41 +439,68 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       startY: e.clientY,
       initX: baseOffsetX,
       initY: baseOffsetY,
-      scale,
+      ...mat,
+    };
+  };
+
+  const handleStartDragSurface = (surfaceId: string, e: React.PointerEvent, scaledWidthPx: number, vbW: number) => {
+    if (layoutMode !== 'custom') return;
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    const surf = surfaces.find(s => s.id === surfaceId);
+    const scale = vbW / Math.max(1, scaledWidthPx);
+    const parentGroup = (e.currentTarget as unknown as SVGGElement).parentNode as SVGGraphicsElement | null;
+    const mat = getInverse2DMatrix(parentGroup, scale);
+    setDraggingSurfaceId(surfaceId);
+    dragSurfaceStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initX: surf?.canvasX || 0,
+      initY: surf?.canvasY || 0,
+      ...mat,
     };
   };
 
   const handlePointerMoveText = (e: React.PointerEvent) => {
-    if (!draggingText || !dragTextStartRef.current) return;
-    const { startX, startY, initX, initY, scale } = dragTextStartRef.current;
-    const rawDx = (e.clientX - startX) * scale;
-    const rawDy = (e.clientY - startY) * scale;
-    let dx = rawDx;
-    let dy = rawDy;
-    if (canvasRotation === 90) {
-      dx = rawDy;
-      dy = -rawDx;
-    } else if (canvasRotation === 180) {
-      dx = -rawDx;
-      dy = -rawDy;
-    } else if (canvasRotation === 270) {
-      dx = -rawDy;
-      dy = rawDx;
+    if (draggingText && dragTextStartRef.current) {
+      const { startX, startY, initX, initY, invA, invB, invC, invD } = dragTextStartRef.current;
+      const screenDx = e.clientX - startX;
+      const screenDy = e.clientY - startY;
+      const dx = invA * screenDx + invC * screenDy;
+      const dy = invB * screenDx + invD * screenDy;
+      const { surfaceId, key } = draggingText;
+      setSurfaces(prev =>
+        prev.map(s => {
+          if (s.id !== surfaceId) return s;
+          const currentOffsets = s.textOffsets || {};
+          return {
+            ...s,
+            textOffsets: {
+              ...currentOffsets,
+              [key]: { x: Math.round(initX + dx), y: Math.round(initY + dy) },
+            },
+          };
+        })
+      );
+      return;
     }
-    const { surfaceId, key } = draggingText;
-    setSurfaces(prev =>
-      prev.map(s => {
-        if (s.id !== surfaceId) return s;
-        const currentOffsets = s.textOffsets || {};
-        return {
-          ...s,
-          textOffsets: {
-            ...currentOffsets,
-            [key]: { x: Math.round(initX + dx), y: Math.round(initY + dy) },
-          },
-        };
-      })
-    );
+    if (draggingSurfaceId && dragSurfaceStartRef.current) {
+      const { startX, startY, initX, initY, invA, invB, invC, invD } = dragSurfaceStartRef.current;
+      const screenDx = e.clientX - startX;
+      const screenDy = e.clientY - startY;
+      const dx = invA * screenDx + invC * screenDy;
+      const dy = invB * screenDx + invD * screenDy;
+      const targetId = draggingSurfaceId;
+      setSurfaces(prev =>
+        prev.map(s =>
+          s.id === targetId
+            ? { ...s, canvasX: Math.max(0, Math.round(initX + dx)), canvasY: Math.max(0, Math.round(initY + dy)) }
+            : s
+        )
+      );
+    }
   };
 
   const handlePointerUpText = (e: React.PointerEvent) => {
@@ -416,6 +510,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       } catch {}
       setDraggingText(null);
       dragTextStartRef.current = null;
+    }
+    if (draggingSurfaceId) {
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      setDraggingSurfaceId(null);
+      dragSurfaceStartRef.current = null;
     }
   };
 
@@ -571,7 +672,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
   const removeSurface = (id: string) => {
     if (surfaces.length <= 1) return;
-    const filtered = surfaces.filter(s => s.id !== id);
+    const stabilized = surfaces.map(s =>
+      !s.crossSlot || s.crossSlot === 'auto'
+        ? { ...s, crossSlot: resolveSurfaceCrossSlot(s, surfaces) }
+        : s
+    );
+    const filtered = stabilized.filter(s => s.id !== id);
     setSurfaces(filtered);
     if (selectedId === id) {
       setSelectedId(filtered[0].id);
@@ -926,85 +1032,76 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         curY += dH;
       });
     } else if (layoutMode === 'cross') {
-      const floor = rawCalculated.find(s => s.type === 'floor') || rawCalculated[0];
-      const walls = rawCalculated.filter(s => s.id !== floor.id);
-
-      const leftWall = walls[0];
-      const topWall = walls[1];
-      const rightWall = walls[2];
-      const bottomWall = walls[3];
-
-      const leftW = leftWall ? (leftWall.rotate90 ? leftWall.netH : leftWall.netW) : 0;
-      const leftH = leftWall ? (leftWall.rotate90 ? leftWall.netW : leftWall.netH) : 0;
-
-      const topW = topWall ? (topWall.rotate90 ? topWall.netH : topWall.netW) : 0;
-      const topH = topWall ? (topWall.rotate90 ? topWall.netW : topWall.netH) : 0;
-
-      const rightW = rightWall ? (rightWall.rotate90 ? rightWall.netH : rightWall.netW) : 0;
-      const rightH = rightWall ? (rightWall.rotate90 ? rightWall.netW : rightWall.netH) : 0;
-
-      const bottomW = bottomWall ? (bottomWall.rotate90 ? bottomWall.netH : bottomWall.netW) : 0;
-      const bottomH = bottomWall ? (bottomWall.rotate90 ? bottomWall.netW : bottomWall.netH) : 0;
-
-      const floorDrawW = floor.rotate90 ? floor.netH : floor.netW;
-      const floorDrawH = floor.rotate90 ? floor.netW : floor.netH;
-
-      positioned.push({
-        ...floor,
-        drawW: floorDrawW,
-        drawH: floorDrawH,
-        posX: leftW,
-        posY: topH,
+      const getDims = (item: CalculatedSurface) => ({
+        w: item.rotate90 ? item.netH : item.netW,
+        h: item.rotate90 ? item.netW : item.netH,
       });
 
-      if (leftWall) {
-        positioned.push({
-          ...leftWall,
-          drawW: leftW,
-          drawH: leftH,
-          posX: 0,
-          posY: topH,
-        });
-      }
-      if (topWall) {
-        positioned.push({
-          ...topWall,
-          drawW: topW,
-          drawH: topH,
-          posX: leftW,
-          posY: 0,
-        });
-      }
-      if (rightWall) {
-        positioned.push({
-          ...rightWall,
-          drawW: rightW,
-          drawH: rightH,
-          posX: leftW + floorDrawW,
-          posY: topH,
-        });
-      }
-      if (bottomWall) {
-        positioned.push({
-          ...bottomWall,
-          drawW: bottomW,
-          drawH: bottomH,
-          posX: leftW,
-          posY: topH + floorDrawH,
-        });
-      }
-      let extraY = topH + floorDrawH + bottomH;
-      walls.slice(4).forEach(ex => {
-        const exW = ex.rotate90 ? ex.netH : ex.netW;
-        const exH = ex.rotate90 ? ex.netW : ex.netH;
-        positioned.push({
-          ...ex,
-          drawW: exW,
-          drawH: exH,
-          posX: leftW,
-          posY: extraY,
-        });
-        extraY += exH;
+      const centerList: CalculatedSurface[] = [];
+      const leftList: CalculatedSurface[] = [];
+      const topList: CalculatedSurface[] = [];
+      const rightList: CalculatedSurface[] = [];
+      const bottomList: CalculatedSurface[] = [];
+      const extraList: CalculatedSurface[] = [];
+
+      rawCalculated.forEach(item => {
+        const slot = resolveSurfaceCrossSlot(item, rawCalculated);
+        if (slot === 'center') centerList.push(item);
+        else if (slot === 'left') leftList.push(item);
+        else if (slot === 'top') topList.push(item);
+        else if (slot === 'right') rightList.push(item);
+        else if (slot === 'bottom') bottomList.push(item);
+        else extraList.push(item);
+      });
+
+      const leftW = leftList.reduce((m, item) => Math.max(m, getDims(item).w), 0);
+      const leftH = leftList.reduce((sum, item) => sum + getDims(item).h, 0);
+      const topH = topList.reduce((sum, item) => sum + getDims(item).h, 0);
+      const centerW = centerList.reduce((m, item) => Math.max(m, getDims(item).w), 0);
+      const centerH = centerList.reduce((sum, item) => sum + getDims(item).h, 0);
+      const rightH = rightList.reduce((sum, item) => sum + getDims(item).h, 0);
+      const bottomH = bottomList.reduce((sum, item) => sum + getDims(item).h, 0);
+
+      let curCenterY = topH;
+      centerList.forEach(item => {
+        const { w, h } = getDims(item);
+        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: curCenterY });
+        curCenterY += h;
+      });
+
+      let curLeftY = topH;
+      leftList.forEach(item => {
+        const { w, h } = getDims(item);
+        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW - w, posY: curLeftY });
+        curLeftY += h;
+      });
+
+      let curTopY = 0;
+      topList.forEach(item => {
+        const { w, h } = getDims(item);
+        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: curTopY });
+        curTopY += h;
+      });
+
+      let curRightY = topH;
+      rightList.forEach(item => {
+        const { w, h } = getDims(item);
+        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW + centerW, posY: curRightY });
+        curRightY += h;
+      });
+
+      let curBottomY = topH + centerH;
+      bottomList.forEach(item => {
+        const { w, h } = getDims(item);
+        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: curBottomY });
+        curBottomY += h;
+      });
+
+      let extraY = Math.max(topH + centerH + bottomH, topH + leftH, topH + rightH);
+      extraList.forEach(item => {
+        const { w, h } = getDims(item);
+        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: extraY });
+        extraY += h;
       });
     } else {
       rawCalculated.forEach(s => {
@@ -1424,6 +1521,20 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                      <select
+                        value={s.crossSlot || 'auto'}
+                        onChange={e => updateSurface(s.id, { crossSlot: e.target.value as CrossSlot })}
+                        title="Bu ekranın 2B Kutu Açılımındaki yüzeyi / konumu"
+                        className="bg-slate-800 border border-slate-700 text-slate-200 rounded px-1 py-0.5 text-[10px] font-semibold cursor-pointer"
+                      >
+                        <option value="auto">Oto</option>
+                        <option value="center">Orta/Zemin</option>
+                        <option value="left">Sol</option>
+                        <option value="top">Üst/Ön</option>
+                        <option value="right">Sağ</option>
+                        <option value="bottom">Alt/Arka</option>
+                        <option value="extra">Ekstra</option>
+                      </select>
                       <button
                         onClick={() => updateSurface(s.id, { rotate90: !s.rotate90 })}
                         title="Bu yüzeyi çizimde 90° Çevir (Yatay / Dikey)"
@@ -1778,6 +1889,52 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     {activeSurface.netW} × {activeSurface.netH} px
                   </span>
                 </div>
+              </div>
+
+              {/* A0) 2B Yüzey / Konum Yerleşimi */}
+              <div className="grid grid-cols-3 gap-2 items-end bg-slate-950/70 p-2 rounded border border-slate-800/80">
+                <label className={layoutMode === 'custom' ? '' : 'col-span-3'}>
+                  2B Açılım Konumu (Yüzey / Slot)
+                  <select
+                    className="inp font-semibold text-sky-300"
+                    value={activeSurface.crossSlot || 'auto'}
+                    onChange={e => updateSurface(activeSurface.id, { crossSlot: e.target.value as CrossSlot })}
+                  >
+                    <option value="auto">Otomatik (Sıraya Göre)</option>
+                    <option value="center">Merkez / Zemin</option>
+                    <option value="left">Sol Yüzey (Sol Duvar)</option>
+                    <option value="top">Üst Yüzey (Ön Duvar)</option>
+                    <option value="right">Sağ Yüzey (Sağ Duvar)</option>
+                    <option value="bottom">Alt Yüzey (Arka Duvar)</option>
+                    <option value="extra">Ekstra Alt Alan</option>
+                  </select>
+                </label>
+                {layoutMode === 'custom' && (
+                  <>
+                    <label>
+                      Özel X (px)
+                      <input
+                        className="inp font-mono"
+                        type="number"
+                        step="50"
+                        min="0"
+                        value={activeSurface.canvasX}
+                        onChange={e => updateSurface(activeSurface.id, { canvasX: Math.max(0, +e.target.value || 0) })}
+                      />
+                    </label>
+                    <label>
+                      Özel Y (px)
+                      <input
+                        className="inp font-mono"
+                        type="number"
+                        step="50"
+                        min="0"
+                        value={activeSurface.canvasY}
+                        onChange={e => updateSurface(activeSurface.id, { canvasY: Math.max(0, +e.target.value || 0) })}
+                      />
+                    </label>
+                  </>
+                )}
               </div>
 
               {/* A) Yüzey Adı ve Geometri Tipi Seçimi */}
@@ -2793,7 +2950,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                         <g
                           key={s.id}
                           onClick={() => setSelectedId(s.id)}
-                          className="cursor-pointer transition-opacity hover:opacity-95"
+                          onPointerDown={e => {
+                            if (layoutMode === 'custom') {
+                              setSelectedId(s.id);
+                              handleStartDragSurface(s.id, e, scaledWidthPx, vbW);
+                            }
+                          }}
+                          className={(layoutMode === 'custom' ? 'cursor-move' : 'cursor-pointer') + ' transition-opacity hover:opacity-95'}
                         >
                           <rect
                             x={sx}
