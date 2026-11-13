@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { calculatePixelDensity, computeLayout, ProjectorSlot } from '../engine/multiproj';
 import { fromConfig, layoutToSvg, toConfig } from '../engine/exporters';
 import { useMapping } from '../mappingStore';
+import { useProjectStore } from '../projectStore';
 import { download, overlayImageOnCanvas, renderCanvasPixelMapPattern, renderTestPattern, svgToPng } from '../util';
 
 export default function PixelMappingStudio() {
@@ -30,6 +31,7 @@ export default function PixelMappingStudio() {
   const [polyDrawMode, setPolyDrawMode] = useState(false);
   const [view, setView] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [msg, setMsg] = useState('');
+  const [reportToast, setReportToast] = useState(false);
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
 
@@ -456,6 +458,40 @@ export default function PixelMappingStudio() {
               catch (err) { setMsg((err as Error).message); }
             }} />
           </label>
+          <button
+            type="button"
+            className="px-3 py-1 bg-sky-600 hover:bg-sky-500 rounded font-bold text-white shadow ml-auto"
+            disabled={!L && !activeScreen?.photoUrl}
+            onClick={async () => {
+              if (activeScreen) {
+                updateScreen(activeScreen.id, { includeInReport: true });
+              }
+              let dataUrl: string | undefined = activeScreen?.photoUrl;
+              if (L) {
+                const canvas = await overlayImageOnCanvas(
+                  renderCanvasPixelMapPattern(L, activeScreen?.name || 'PIXEL MAP CANVAS'),
+                  activeScreen?.photoUrl
+                );
+                dataUrl = canvas.toDataURL('image/png');
+              }
+              if (dataUrl) {
+                const prevMeta = useProjectStore.getState().meta;
+                const existing = prevMeta.room3dSnapshots && prevMeta.room3dSnapshots.length > 0
+                  ? prevMeta.room3dSnapshots
+                  : (prevMeta.room3dSnapshotUrl ? [prevMeta.room3dSnapshotUrl] : []);
+                useProjectStore.getState().setMeta({
+                  room3dSnapshotUrl: dataUrl,
+                  room3dSnapshots: [...existing, dataUrl],
+                });
+              }
+              setReportToast(true);
+              setMsg(`"${activeScreen?.name || 'Piksel Haritası'}" rapora eklendi`);
+              setTimeout(() => setReportToast(false), 2800);
+            }}
+            title="Piksel haritası ekranını ve görselini Müşteri Raporuna ekler"
+          >
+            {reportToast ? '✓ Rapora Eklendi!' : '📋 Rapora Ekle'}
+          </button>
         </div>
 
         {/* Görsel Canvas Çalışma Alanı */}
