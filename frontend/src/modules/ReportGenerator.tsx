@@ -650,7 +650,25 @@ export default function ReportGenerator() {
                   )}
                   {ipSurfaces.length > 0 && (
                     <div className="space-y-1 pt-1 border-t border-slate-800/80">
-                      <span className="text-amber-300 font-bold block text-[10.5px]">İçerik Planlayıcı Yüzeyleri:</span>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-amber-300 font-bold text-[10.5px]">İçerik Planlayıcı Yüzeyleri ({enabledSurfaceIds.filter(id => ipSurfaces.some(s => s.id === id)).length}/{ipSurfaces.length}):</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setEnabledSurfaceIds(ipSurfaces.map(s => s.id))}
+                            className="px-1.5 py-0.5 rounded bg-emerald-900/50 hover:bg-emerald-800 text-emerald-300 text-[9.5px]"
+                          >
+                            Tümü
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEnabledSurfaceIds([])}
+                            className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[9.5px]"
+                          >
+                            Hiçbiri
+                          </button>
+                        </div>
+                      </div>
                       {ipSurfaces.map(s => {
                         const isChecked = enabledSurfaceIds.includes(s.id);
                         return (

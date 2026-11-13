@@ -770,7 +770,7 @@ export function buildReportHtml(p: ReportPayload): string {
   // 6. ÇOKLU PROJEKTÖR & KANVAS HARİTALAMA (YÜZEY BAZLI AYRI PAFTALAR: ZEMİN, SAĞ DUVAR, SOL DUVAR VB.)
   if (p.sections.multiProjector) {
     const surfsToRender = p.plannerSurfaces && p.plannerSurfaces.length > 0
-      ? (p.enabledSurfaceIds && p.enabledSurfaceIds.length > 0
+      ? (p.enabledSurfaceIds !== undefined
           ? p.plannerSurfaces.filter((s: any) => p.enabledSurfaceIds!.includes(s.id))
           : p.plannerSurfaces)
       : [];
@@ -782,11 +782,12 @@ export function buildReportHtml(p: ReportPayload): string {
         const totalPj = s.cols * s.rows;
         const totalPjWatt = totalPj * 1350;
         const totalLumens = totalPj * 6000;
+        const titleText = /^\d+\.\s*/.test(s.name) ? esc(s.name) : `${sIdx + 1}. ${esc(s.name)}`;
         return [
           '<div class="surface-multi-card">',
           '  <div class="surface-multi-card-header">',
           '    <h3 class="surface-multi-card-title">',
-          '      ' + (sIdx + 1) + '. ' + esc(s.name) + ' — Çoklu Projeksiyon Yerleşimi',
+          '      ' + titleText + ' — Çoklu Projeksiyon Yerleşimi',
           '    </h3>',
           '    <span class="surface-multi-card-badge">',
           '      ' + s.cols + ' × ' + s.rows + ' = ' + totalPj + ' Projektör (' + (s.orient === 'portrait' ? 'Dikey/Portrait' : 'Yatay/Landscape') + ')',
