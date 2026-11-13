@@ -88,15 +88,17 @@ export function resolveSurfaceCrossSlot<T extends { id: string; type: SurfaceTyp
   if (fallbackCenter && surf.id === fallbackCenter.id) {
     return 'center';
   }
+  const usedSlots = new Set(
+    allSurfaces
+      .filter(s => s.crossSlot && s.crossSlot !== 'auto')
+      .map(s => s.crossSlot as Exclude<CrossSlot, 'auto'>)
+  );
+  const freeSlots = (['left', 'top', 'right', 'bottom'] as const).filter(slot => !usedSlots.has(slot));
   const nonCenter = allSurfaces.filter(
     s => (!s.crossSlot || s.crossSlot === 'auto') && (!fallbackCenter || s.id !== fallbackCenter.id)
   );
   const idx = nonCenter.findIndex(s => s.id === surf.id);
-  if (idx === 0) return 'left';
-  if (idx === 1) return 'top';
-  if (idx === 2) return 'right';
-  if (idx === 3) return 'bottom';
-  return 'extra';
+  return idx >= 0 && idx < freeSlots.length ? freeSlots[idx] : 'extra';
 }
 
 export interface CalculatedSurface extends SurfaceItem {
@@ -409,6 +411,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
     invB: number;
     invC: number;
     invD: number;
+    didSnapToCustom: boolean;
   } | null>(null);
 
   const getInverse2DMatrix = (el: SVGGraphicsElement | null, fallbackScale: number) => {
@@ -444,11 +447,11 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   };
 
   const handleStartDragSurface = (surfaceId: string, e: React.PointerEvent, scaledWidthPx: number, vbW: number) => {
-    if (layoutMode !== 'custom') return;
     e.stopPropagation();
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {}
+    const calcSurf = calculation.surfaces.find(cs => cs.id === surfaceId);
     const surf = surfaces.find(s => s.id === surfaceId);
     const scale = vbW / Math.max(1, scaledWidthPx);
     const parentGroup = (e.currentTarget as unknown as SVGGElement).parentNode as SVGGraphicsElement | null;
@@ -457,9 +460,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
     dragSurfaceStartRef.current = {
       startX: e.clientX,
       startY: e.clientY,
-      initX: surf?.canvasX || 0,
-      initY: surf?.canvasY || 0,
+      initX: layoutMode === 'custom' ? (surf?.canvasX || 0) : (calcSurf?.posX || 0),
+      initY: layoutMode === 'custom' ? (surf?.canvasY || 0) : (calcSurf?.posY || 0),
       ...mat,
+      didSnapToCustom: layoutMode === 'custom',
     };
   };
 
@@ -487,16 +491,34 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       return;
     }
     if (draggingSurfaceId && dragSurfaceStartRef.current) {
-      const { startX, startY, initX, initY, invA, invB, invC, invD } = dragSurfaceStartRef.current;
-      const screenDx = e.clientX - startX;
-      const screenDy = e.clientY - startY;
-      const dx = invA * screenDx + invC * screenDy;
-      const dy = invB * screenDx + invD * screenDy;
+      const refData = dragSurfaceStartRef.current;
+      const screenDx = e.clientX - refData.startX;
+      const screenDy = e.clientY - refData.startY;
+      if (!refData.didSnapToCustom && Math.hypot(screenDx, screenDy) < 4) {
+        return;
+      }
+      const dx = refData.invA * screenDx + refData.invC * screenDy;
+      const dy = refData.invB * screenDx + refData.invD * screenDy;
       const targetId = draggingSurfaceId;
+      if (!refData.didSnapToCustom) {
+        refData.didSnapToCustom = true;
+        const posMap = new Map(calculation.surfaces.map(cs => [cs.id, { x: Math.round(cs.posX), y: Math.round(cs.posY) }]));
+        setLayoutMode('custom');
+        setSurfaces(prev =>
+          prev.map(s => {
+            const base = posMap.get(s.id);
+            if (s.id === targetId) {
+              return { ...s, canvasX: Math.max(0, Math.round(refData.initX + dx)), canvasY: Math.max(0, Math.round(refData.initY + dy)) };
+            }
+            return base ? { ...s, canvasX: Math.max(0, base.x), canvasY: Math.max(0, base.y) } : s;
+          })
+        );
+        return;
+      }
       setSurfaces(prev =>
         prev.map(s =>
           s.id === targetId
-            ? { ...s, canvasX: Math.max(0, Math.round(initX + dx)), canvasY: Math.max(0, Math.round(initY + dy)) }
+            ? { ...s, canvasX: Math.max(0, Math.round(refData.initX + dx)), canvasY: Math.max(0, Math.round(refData.initY + dy)) }
             : s
         )
       );
@@ -2951,12 +2973,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                           key={s.id}
                           onClick={() => setSelectedId(s.id)}
                           onPointerDown={e => {
-                            if (layoutMode === 'custom') {
-                              setSelectedId(s.id);
-                              handleStartDragSurface(s.id, e, scaledWidthPx, vbW);
-                            }
+                            setSelectedId(s.id);
+                            handleStartDragSurface(s.id, e, scaledWidthPx, vbW);
                           }}
-                          className={(layoutMode === 'custom' ? 'cursor-move' : 'cursor-pointer') + ' transition-opacity hover:opacity-95'}
+                          className="cursor-move transition-opacity hover:opacity-95"
                         >
                           <rect
                             x={sx}
