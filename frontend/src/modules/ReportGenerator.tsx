@@ -266,30 +266,67 @@ export default function ReportGenerator() {
           <span className="text-[10px] text-slate-400 font-mono">v2.4 Pro</span>
         </div>
 
-        {/* Dil ve Firma Logosu */}
-        <div className="grid grid-cols-2 gap-2">
-          <label>
+        {/* Dil, Firma Logosu ve Müşteri Logosu */}
+        <div className="space-y-2">
+          <label className="block">
             Rapor Dili
             <select className="inp font-semibold" value={lang} onChange={e => setLang(e.target.value as ReportLang)}>
               <option value="tr">🇹🇷 Türkçe</option>
               <option value="en">🇬🇧 English</option>
             </select>
           </label>
-          <label>
-            Firma Logosu
-            <input
-              type="file"
-              accept="image/*"
-              className="inp text-[10px]"
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const rd = new FileReader();
-                rd.onload = () => setMeta({ companyLogoDataUrl: rd.result as string });
-                rd.readAsDataURL(f);
-              }}
-            />
-          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="p-2 rounded bg-slate-950 border border-slate-800 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-slate-300">Firma Logosu</span>
+                {meta.companyLogoDataUrl && (
+                  <button type="button" onClick={() => setMeta({ companyLogoDataUrl: undefined })} className="text-[10px] text-rose-400 hover:text-rose-300">Sil</button>
+                )}
+              </div>
+              <label className="block cursor-pointer px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-center text-[10.5px] text-slate-200">
+                {meta.companyLogoDataUrl ? '🖼️ Logoyu Değiştir' : '🖼️ Logo Yükle'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const rd = new FileReader();
+                    rd.onload = () => setMeta({ companyLogoDataUrl: rd.result as string });
+                    rd.readAsDataURL(f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              {meta.companyLogoDataUrl && <img src={meta.companyLogoDataUrl} alt="Firma Logosu" className="h-8 mx-auto object-contain rounded bg-white/90 p-0.5" />}
+            </div>
+            <div className="p-2 rounded bg-slate-950 border border-slate-800 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-slate-300">Müşteri Logosu</span>
+                {meta.customerLogoDataUrl && (
+                  <button type="button" onClick={() => setMeta({ customerLogoDataUrl: undefined })} className="text-[10px] text-rose-400 hover:text-rose-300">Sil</button>
+                )}
+              </div>
+              <label className="block cursor-pointer px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-center text-[10.5px] text-slate-200">
+                {meta.customerLogoDataUrl ? '🖼️ Logoyu Değiştir' : '🖼️ Logo Yükle'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const rd = new FileReader();
+                    rd.onload = () => setMeta({ customerLogoDataUrl: rd.result as string });
+                    rd.readAsDataURL(f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+              {meta.customerLogoDataUrl && <img src={meta.customerLogoDataUrl} alt="Müşteri Logosu" className="h-8 mx-auto object-contain rounded bg-white/90 p-0.5" />}
+            </div>
+          </div>
         </div>
 
         {/* 3B & 2B GÖRSEL SİMÜLASYON VE PAFTA KARTI */}
@@ -375,6 +412,15 @@ export default function ReportGenerator() {
         </div>
 
         {/* Müşteri ve Proje Bilgileri */}
+        <label className="block">
+          Rapor Başlığı (AV Tasarım Başlığı)
+          <input
+            className="inp font-medium"
+            placeholder="AV MÜHENDİSLİK & TASARIM RAPORU"
+            value={meta.reportTitle || ''}
+            onChange={e => setMeta({ reportTitle: e.target.value })}
+          />
+        </label>
         <label className="block">
           Firma Adı
           <input className="inp font-medium" value={meta.companyName} onChange={e => setMeta({ companyName: e.target.value })} />

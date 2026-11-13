@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { calculatePixelDensity, computeLayout, ProjectorSlot } from '../engine/multiproj';
 import { fromConfig, layoutToSvg, toConfig } from '../engine/exporters';
 import { useMapping } from '../mappingStore';
-import { download, renderCanvasPixelMapPattern, renderTestPattern, svgToPng } from '../util';
+import { download, overlayImageOnCanvas, renderCanvasPixelMapPattern, renderTestPattern, svgToPng } from '../util';
 
 export default function PixelMappingStudio() {
   const {
@@ -336,7 +336,18 @@ export default function PixelMappingStudio() {
             </div>
 
             <div className="flex gap-2 pt-1 border-t border-slate-800">
-              <button className="px-2.5 py-1 bg-sky-800 hover:bg-sky-700 rounded text-white font-medium" disabled={!L} onClick={() => L && renderTestPattern(L.slots.find(q => q.id === s.id)!, L, gamma).toBlob(b => b && download(`test-${s.id}.png`, b))}>
+              <button
+                className="px-2.5 py-1 bg-sky-800 hover:bg-sky-700 rounded text-white font-medium"
+                disabled={!L}
+                onClick={async () => {
+                  if (!L) return;
+                  const canvas = await overlayImageOnCanvas(
+                    renderTestPattern(L.slots.find(q => q.id === s.id)!, L, gamma),
+                    activeScreen?.photoUrl
+                  );
+                  canvas.toBlob(b => b && download(`test-${s.id}.png`, b));
+                }}
+              >
                 {s.label} Test Deseni (PNG)
               </button>
               <button className="px-2.5 py-1 bg-red-900/80 hover:bg-red-800 rounded ml-auto text-white" disabled={slots.length < 2} onClick={() => { setSlots(slots.filter(q => q.id !== s.id)); setSel(null); }}>
@@ -354,7 +365,14 @@ export default function PixelMappingStudio() {
           <button
             className="px-3.5 py-1 bg-emerald-700 hover:bg-emerald-600 rounded font-semibold text-white shadow"
             disabled={!L}
-            onClick={() => L && renderCanvasPixelMapPattern(L).toBlob(b => b && download(`pixel-map-canvas-${L.canvasW}x${L.canvasH}.png`, b))}
+            onClick={async () => {
+              if (!L) return;
+              const canvas = await overlayImageOnCanvas(
+                renderCanvasPixelMapPattern(L, activeScreen?.name || 'PIXEL MAP CANVAS'),
+                activeScreen?.photoUrl
+              );
+              canvas.toBlob(b => b && download(`pixel-map-canvas-${L.canvasW}x${L.canvasH}.png`, b));
+            }}
           >
             1:1 Tam Canvas Pixel Map Deseni (PNG)
           </button>

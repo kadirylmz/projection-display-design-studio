@@ -48,7 +48,9 @@ export const DEFAULT_SECTIONS: ReportSectionFlags = {
 
 export interface ReportProjectMeta {
   companyName: string;
+  reportTitle?: string;
   companyLogoDataUrl?: string;
+  customerLogoDataUrl?: string;
   customer: string;
   projectName: string;
   location: string;
@@ -1411,10 +1413,13 @@ export function buildReportHtml(p: ReportPayload): string {
 
 <header class="report-header">
   <div>
-    <h1>${tr.reportTitle}</h1>
+    <h1>${esc(m.reportTitle?.trim() || tr.reportTitle)}</h1>
     <div class="company-title">${esc(m.companyName)}</div>
   </div>
-  ${m.companyLogoDataUrl ? `<img src="${esc(m.companyLogoDataUrl)}" alt="logo" class="header-logo"/>` : ''}
+  <div style="display:flex; align-items:center; gap:12px;">
+    ${m.customerLogoDataUrl ? `<img src="${esc(m.customerLogoDataUrl)}" alt="Müşteri Logosu" class="header-logo"/>` : ''}
+    ${m.companyLogoDataUrl ? `<img src="${esc(m.companyLogoDataUrl)}" alt="Firma Logosu" class="header-logo"/>` : ''}
+  </div>
 </header>
 
 <table class="meta-table">

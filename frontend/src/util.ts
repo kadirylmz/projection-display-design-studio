@@ -158,3 +158,31 @@ export function renderTestPattern(s: ProjectorSlot, L: LayoutResult, gamma: numb
   g.fillText(`aktif ${a.w}×${a.h}`, s.w / 2, s.h * 0.8);
   return c;
 }
+
+/** Üretilen test deseni / piksel haritası kanvasının üzerine opsiyonel fotoğraf veya logo yerleştirir. */
+export function overlayImageOnCanvas(
+  c: HTMLCanvasElement,
+  photoUrl?: string,
+  opacity = 0.55
+): Promise<HTMLCanvasElement> {
+  if (!photoUrl) return Promise.resolve(c);
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const g = c.getContext('2d');
+      if (!g) { resolve(c); return; }
+      const scale = Math.min(c.width / Math.max(1, img.width), c.height / Math.max(1, img.height));
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      const dx = (c.width - dw) / 2;
+      const dy = (c.height - dh) / 2;
+      g.save();
+      g.globalAlpha = opacity;
+      g.drawImage(img, dx, dy, dw, dh);
+      g.restore();
+      resolve(c);
+    };
+    img.onerror = () => resolve(c);
+    img.src = photoUrl;
+  });
+}
