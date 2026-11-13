@@ -381,12 +381,13 @@ export function buildReportHtml(p: ReportPayload): string {
       : (p.room3dSnapshotUrl || m.room3dSnapshotUrl ? [p.room3dSnapshotUrl || m.room3dSnapshotUrl!] : []);
 
   if (p.sections.room3d && (snapshots.length > 0 || p.interProjectorAnalysis)) {
-    blocks.push(`<section class="report-section">
+    blocks.push(`<section class="report-section room3d-section">
       <h2>${tr.room3d}</h2>
       ${snapshots.length > 0 ? `
         <div class="three-d-gallery">
           ${snapshots.map((url, idx) => `
             <div class="three-d-card">
+              <div class="three-d-card-label">Görsel #${idx + 1}</div>
               <img src="${esc(url)}" alt="3B Simülasyon Görünüşü #${idx + 1}" class="three-d-img" />
             </div>
           `).join('')}
@@ -1080,7 +1081,7 @@ export function buildReportHtml(p: ReportPayload): string {
   .three-d-gallery {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 20px;
     margin: 12px 0;
   }
   .three-d-card {
@@ -1091,10 +1092,19 @@ export function buildReportHtml(p: ReportPayload): string {
     break-inside: avoid;
     page-break-inside: avoid;
   }
+  .three-d-card-label {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    background: #0f172a;
+    border-bottom: 1px solid #1e293b;
+  }
   .three-d-img {
     width: 100%;
+    height: auto;
     display: block;
-    max-height: 520px;
+    max-height: 82vh;
     object-fit: contain;
     background: #060911;
   }
@@ -1235,7 +1245,7 @@ export function buildReportHtml(p: ReportPayload): string {
   }
   .photometric-grid-layout {
     display: grid;
-    grid-template-columns: 1.15fr 0.85fr;
+    grid-template-columns: 1fr;
     gap: 16px;
     margin-bottom: 14px;
     align-items: start;
@@ -1257,7 +1267,7 @@ export function buildReportHtml(p: ReportPayload): string {
   }
   .heatmap-report-img {
     width: 100%;
-    max-height: 290px;
+    max-height: 520px;
     object-fit: contain;
     border-radius: 4px;
     background: #020617;
@@ -1358,8 +1368,11 @@ export function buildReportHtml(p: ReportPayload): string {
   @media print {
     body { margin: 8mm; padding: 0; }
     .report-section { break-inside: avoid; page-break-after: auto; }
-    .three-d-img { max-height: 380px; }
-    .diagram svg { max-height: 320px; }
+    .report-section.room3d-section { break-inside: auto; page-break-inside: auto; }
+    .three-d-card + .three-d-card { break-before: page; page-break-before: always; }
+    .three-d-img { width: 100%; max-height: 235mm; }
+    .heatmap-report-img { width: 100%; max-height: 155mm; }
+    .diagram svg { width: 100%; max-height: 220mm; }
   }
 </style>
 </head>
