@@ -37,6 +37,8 @@ export default function PixelMappingStudio() {
   const [overlapXInput, setOverlapXInput] = useState<number>(15);
   const [overlapYInput, setOverlapYInput] = useState<number>(15);
   const [autoCols, setAutoCols] = useState<number>(0); // 0 = tek sıra yatay (tümü yan yana)
+  const [slotRefMap, setSlotRefMap] = useState<Record<string, string>>({});
+  const [slotPctMap, setSlotPctMap] = useState<Record<string, number>>({});
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
 
@@ -122,6 +124,66 @@ export default function PixelMappingStudio() {
     const totalH = Math.max(...nextSlots.map(q => q.y + q.h));
     setBlendControlMode('auto');
     setSlots(nextSlots);
+    setContent({ w: totalW, h: totalH });
+  };
+
+  const snapSlotToRef = (
+    targetId: string,
+    refId: string,
+    dir: 'right' | 'bottom' | 'detach',
+    pctVal: number
+  ) => {
+    const target = slots.find(q => q.id === targetId);
+    if (!target) return;
+    if (dir === 'detach') {
+      setBlendControlMode('manual');
+      setSlots(slots.map(q => q.id === targetId ? { ...q, blend: { l: 0, r: 0, t: 0, b: 0 } } : q));
+      return;
+    }
+    const ref = slots.find(q => q.id === refId);
+    if (!ref || ref.id === target.id) return;
+
+    const pct = Math.max(0, Math.min(80, pctVal));
+    const ovPx = dir === 'right'
+      ? Math.min(ref.w - 1, target.w - 1, Math.round((target.w * pct) / 100))
+      : Math.min(ref.h - 1, target.h - 1, Math.round((target.h * pct) / 100));
+
+    const nextSlots = slots.map(q => {
+      if (q.id === targetId) {
+        if (dir === 'right') {
+          return {
+            ...q,
+            x: Math.max(0, ref.x + ref.w - ovPx),
+            y: ref.y,
+            blend: { l: ovPx, r: q.blend?.r ?? 0, t: q.blend?.t ?? 0, b: q.blend?.b ?? 0 },
+          };
+        }
+        return {
+          ...q,
+          x: ref.x,
+          y: Math.max(0, ref.y + ref.h - ovPx),
+          blend: { l: q.blend?.l ?? 0, r: q.blend?.r ?? 0, t: ovPx, b: q.blend?.b ?? 0 },
+        };
+      }
+      if (q.id === ref.id) {
+        if (dir === 'right') {
+          return {
+            ...q,
+            blend: { l: q.blend?.l ?? 0, r: ovPx, t: q.blend?.t ?? 0, b: q.blend?.b ?? 0 },
+          };
+        }
+        return {
+          ...q,
+          blend: { l: q.blend?.l ?? 0, r: q.blend?.r ?? 0, t: q.blend?.t ?? 0, b: ovPx },
+        };
+      }
+      return q;
+    });
+
+    setBlendControlMode('manual');
+    setSlots(nextSlots);
+    const totalW = Math.max(...nextSlots.map(q => q.x + q.w));
+    const totalH = Math.max(...nextSlots.map(q => q.y + q.h));
     setContent({ w: totalW, h: totalH });
   };
 
@@ -604,8 +666,94 @@ export default function PixelMappingStudio() {
               <div className="grid grid-cols-4 gap-1">{cropField('Sol', 'l')}{cropField('Sağ', 'r')}{cropField('Üst', 't')}{cropField('Alt', 'b')}</div>
             </div>
 
-            <div className="border-t border-slate-800 pt-2">
-              <div className="text-slate-400 font-semibold">2. Kenar Harmanlama (Edge Blending, px)</div>
+            <div className="border-t border-slate-800 pt-2 space-y-2">
+              <div className="text-slate-400 font-semibold">2. Kenar Harmanlama &amp; Projektör Bazlı Hizalama</div>
+
+              {slots.length > 1 && (() => {
+                const otherSlots = slots.filter(q => q.id !== s.id);
+                const sIdx = slots.findIndex(q => q.id === s.id);
+                const defaultRef = sIdx > 0 ? slots[sIdx - 1].id : otherSlots[0]?.id;
+                const refId = slotRefMap[s.id] && otherSlots.some(q => q.id === slotRefMap[s.id])
+                  ? slotRefMap[s.id]
+                  : defaultRef;
+                const pjPct = slotPctMap[s.id] ?? 15;
+                const calcPxW = Math.round((s.w * pjPct) / 100);
+                return (
+                  <div className="p-2 rounded bg-slate-900/90 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center justify-between gap-1.5 text-[10.5px]">
+                      <span className="text-sky-300 font-semibold">Bu Projektörü Bağla / Yasla:</span>
+                      <span className="font-mono text-emerald-400">%{pjPct} = {calcPxW} px</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <select
+                        className="inp text-[11px]"
+                        value={refId}
+                        onChange={e => setSlotRefMap(prev => ({ ...prev, [s.id]: e.target.value }))}
+                      >
+                        {otherSlots.map(o => (
+                          <option key={o.id} value={o.id}>Referans: {o.label}</option>
+                        ))}
+                      </select>
+                      <input
+                        className="inp font-mono text-[11px]"
+                        type="number"
+                        min="0"
+                        max="80"
+                        value={pjPct}
+                        onChange={e => {
+                          const vPct = Math.max(0, Math.min(80, +e.target.value || 0));
+                          setSlotPctMap(prev => ({ ...prev, [s.id]: vPct }));
+                        }}
+                        title="Bu projektör için Blend (%)"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {[0, 10, 15, 20, 25].map(pct => (
+                        <button
+                          key={pct}
+                          type="button"
+                          onClick={() => {
+                            setSlotPctMap(prev => ({ ...prev, [s.id]: pct }));
+                            snapSlotToRef(s.id, refId, 'right', pct);
+                          }}
+                          className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                            pjPct === pct
+                              ? 'bg-sky-700 border-sky-400 text-white'
+                              : 'bg-slate-950 border-slate-700 text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          %{pct}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => snapSlotToRef(s.id, refId, 'right', pjPct)}
+                        className="px-1.5 py-1 rounded bg-sky-800 hover:bg-sky-700 text-white text-[10px] font-semibold"
+                      >
+                        → Sağına Yasla
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => snapSlotToRef(s.id, refId, 'bottom', pjPct)}
+                        className="px-1.5 py-1 rounded bg-indigo-800 hover:bg-indigo-700 text-white text-[10px] font-semibold"
+                      >
+                        ↓ Altına Yasla
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => snapSlotToRef(s.id, refId, 'detach', 0)}
+                        className="px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-semibold border border-slate-700"
+                        title="Bu projektörü bağımsız (ayrı) yap ve kenar blendini sıfırla"
+                      >
+                        Bağımsız (Ayrı)
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-cols-4 gap-1">{blendField('Sol', 'l')}{blendField('Sağ', 'r')}{blendField('Üst', 't')}{blendField('Alt', 'b')}</div>
             </div>
 

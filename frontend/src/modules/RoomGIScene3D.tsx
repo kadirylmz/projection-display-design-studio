@@ -434,8 +434,10 @@ export default function RoomGIScene3D() {
     return roomSurfaces.find(s => s.id === selectedGISurfaceId) || roomSurfaces[0];
   }, [roomSurfaces, selectedGISurfaceId]);
 
+  const [isFullscreen3D, setIsFullscreen3D] = useState(false);
+
   return (
-    <div className="flex flex-col gap-3 w-full h-full text-slate-200">
+    <div className={isFullscreen3D ? 'fixed inset-0 z-50 bg-slate-950 p-3 flex flex-col gap-3 w-screen h-screen text-slate-200 overflow-auto' : 'flex flex-col gap-3 w-full h-full text-slate-200'}>
       {/* ÜST BİLGİ & KONTROL TOOLBARI */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         {/* Başlık ve Metrik Barı */}
@@ -560,6 +562,19 @@ export default function RoomGIScene3D() {
             title="Ön duvardan yan duvarlara, tavana ve zemine sıçrayan ışık akış çizgilerini açıp kapatır"
           >
             {showBounceRays ? '⚡ Sekme Çizgileri: Açık' : '⚡ Sekme Çizgileri: Kapalı'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsFullscreen3D(f => !f)}
+            className={`px-2.5 py-1 rounded-lg text-[10.5px] font-semibold border transition ${
+              isFullscreen3D
+                ? 'bg-rose-700 hover:bg-rose-600 text-white border-rose-500'
+                : 'bg-sky-800 hover:bg-sky-700 text-white border-sky-600'
+            }`}
+            title="3D sahneyi tam ekran büyüt / küçült"
+          >
+            {isFullscreen3D ? '✕ Tam Ekrandan Çık' : '⛶ 3B Tam Ekran'}
           </button>
         </div>
       </div>

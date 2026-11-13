@@ -1199,6 +1199,7 @@ export default function PlannerRoom3D({
   const [selectedHumanId, setSelectedHumanId] = useState<string>('h-1');
   const [draggingHumanId, setDraggingHumanId] = useState<string | null>(null);
   const [showRoomHandles, setShowRoomHandles] = useState(false);
+  const [isFullscreen3D, setIsFullscreen3D] = useState(false);
   const [draggingRoomHandle, setDraggingRoomHandle] = useState<'left' | 'right' | 'top' | 'bottom' | 'height' | null>(null);
   const [newVariant, setNewVariant] = useState<HumanVariant>('female_dress');
 
@@ -1842,7 +1843,7 @@ export default function PlannerRoom3D({
 
 
   return (
-    <div className="flex flex-col h-full w-full space-y-2">
+    <div className={isFullscreen3D ? 'fixed inset-0 z-50 bg-slate-950 p-3 flex flex-col h-screen w-screen space-y-2' : 'flex flex-col h-full w-full space-y-2'}>
       {/* 1. ÜST 3B SİMÜLASYON KONTROL, KAMERA AÇILARI VE PNG ÇIKIŞ BARI */}
       <div className="flex flex-wrap justify-between items-center gap-2 bg-slate-900/90 p-2 rounded border border-slate-800 text-[11px]">
         <div className="flex flex-wrap items-center gap-2">
@@ -1888,6 +1889,18 @@ export default function PlannerRoom3D({
               İzleyici Gözü
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setIsFullscreen3D(f => !f)}
+            className={`px-2 py-0.5 rounded font-semibold text-[10.5px] border transition ${
+              isFullscreen3D
+                ? 'bg-rose-700 hover:bg-rose-600 text-white border-rose-500'
+                : 'bg-sky-800 hover:bg-sky-700 text-white border-sky-600'
+            }`}
+            title="3B sahneyi tam ekran büyüt / küçült"
+          >
+            {isFullscreen3D ? '✕ Tam Ekrandan Çık' : '⛶ 3B Tam Ekran'}
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
