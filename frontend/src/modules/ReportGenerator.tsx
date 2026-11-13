@@ -94,10 +94,22 @@ export default function ReportGenerator() {
   }, [meta.room3dSnapshots, meta.room3dSnapshotUrl]);
 
   const reportPhotometricSurfaces = useMemo(() => {
-    const fromPlanner = ipSurfaces.map(s => {
-      if (surfacePhotometrics[s.id]) {
-        return surfacePhotometrics[s.id];
-      }
+    const storedList = Object.values(surfacePhotometrics);
+    // Kullanıcı Lux Hesaplayıcı'dan en az 1 yüzey kaydettiyse, İçerik Planlayıcı'dan otomatik hayalet/tahmini duvar üretme;
+    // yalnızca kullanıcının gerçekten hesaplayıp eklediği yüzeyleri göster (böylece 1 duvar varken 2 duvar çıkmaz).
+    if (storedList.length > 0) {
+      const seenIds = new Set<string>();
+      const seenNames = new Set<string>();
+      return storedList.filter(item => {
+        const n = item.surfaceName.trim().toLocaleLowerCase('tr-TR');
+        if (seenIds.has(item.surfaceId) || seenNames.has(n)) return false;
+        seenIds.add(item.surfaceId);
+        seenNames.add(n);
+        return true;
+      });
+    }
+
+    return ipSurfaces.map(s => {
       const wM = +(s.widthM || 10).toFixed(2);
       const hM = +(s.heightM || 4).toFixed(2);
       const area = wM * hM;
@@ -165,25 +177,6 @@ export default function ReportGenerator() {
         isManualLux: false,
         distributionRows: distRows,
       };
-    });
-
-    const plannerIds = new Set(ipSurfaces.map(s => s.id));
-    const standaloneSurfaces = Object.values(surfacePhotometrics).filter(p => !plannerIds.has(p.surfaceId));
-    const norm = (name: string) => name.trim().toLocaleLowerCase('tr-TR');
-    const standaloneNames = new Set(standaloneSurfaces.map(p => norm(p.surfaceName)));
-
-    // Aynı duvar adı Lux Hesaplayıcı'dan aktarılmışsa İçerik Planlayıcı'dan otomatik türetilen kopyayı ekleme
-    const filteredPlanner = fromPlanner.filter(p => !standaloneNames.has(norm(p.surfaceName)));
-    const combined = [...filteredPlanner, ...standaloneSurfaces];
-
-    const seenIds = new Set<string>();
-    const seenNames = new Set<string>();
-    return combined.filter(item => {
-      const n = norm(item.surfaceName);
-      if (seenIds.has(item.surfaceId) || seenNames.has(n)) return false;
-      seenIds.add(item.surfaceId);
-      seenNames.add(n);
-      return true;
     });
   }, [ipSurfaces, surfacePhotometrics]);
 
