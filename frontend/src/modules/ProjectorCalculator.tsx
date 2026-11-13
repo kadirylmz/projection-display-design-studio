@@ -1327,6 +1327,67 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
               </table>
             )}
           </div>
+
+          {/* Eklenen Tüm Duvarlar / Ekranlar (Alt Alta Ayrı Alanlar) */}
+          <div className="p-3 rounded border border-slate-700 bg-slate-900 space-y-2.5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span className="text-xs font-semibold text-sky-300">
+                Eklenen Duvarlar / Ekranlar ({projectionScreens.length})
+              </span>
+              <span className="text-[11px] text-slate-400">
+                Düzenlemek için duvar kartına tıklayın; önceki duvarlar korunur.
+              </span>
+            </div>
+            <div className="space-y-2">
+              {projectionScreens.map((sc, idx) => {
+                const isAct = sc.id === activeProjectionScreenId;
+                const wM = sc.snap?.imageWidthM || 0;
+                const hM = sc.snap?.aspectW > 0 ? (wM * sc.snap.aspectH) / sc.snap.aspectW : 0;
+                return (
+                  <div
+                    key={sc.id}
+                    onClick={() => { setActiveProjectionScreenId(sc.id); loadScreenToForm(sc.id); }}
+                    className={`rounded border p-2.5 cursor-pointer transition flex flex-wrap items-center justify-between gap-3 ${
+                      isAct ? 'bg-sky-950/40 border-sky-500' : 'bg-slate-950 border-slate-800 hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {sc.photoUrl && (
+                        <img src={sc.photoUrl} alt={sc.name} className="w-12 h-9 object-cover rounded border border-slate-700 shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">#{idx + 1}</span>
+                          <span className="font-bold text-slate-100 text-xs truncate">{sc.name}</span>
+                          {isAct && <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-semibold">Aktif</span>}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                          {sc.snap?.projectorName || 'Projektör seçilmedi'} · {sc.snap?.lensName || 'Lens seçilmedi'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs shrink-0">
+                      {wM > 0 && (
+                        <div className="text-right font-mono text-[11px]">
+                          <div className="text-emerald-400 font-semibold">{round(wM, 2)} × {round(hM, 2)} m ({round(wM * hM, 2)} m²)</div>
+                          <div className="text-slate-400">D = {round(sc.snap.distanceM, 2)} m · TR {sc.snap.throwRatio ? `${round(sc.snap.throwRatio, 2)}:1` : '—'}</div>
+                        </div>
+                      )}
+                      <label className="flex items-center gap-1 text-[11px] text-slate-300" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={sc.includeInReport}
+                          onChange={e => updateProjectionScreen(sc.id, { includeInReport: e.target.checked })}
+                          className="accent-emerald-500"
+                        />
+                        Rapora Dahil
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 

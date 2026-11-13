@@ -570,6 +570,74 @@ export default function PixelMappingStudio() {
             </table>
           </div>
         )}
+
+        {/* Eklenen Tüm Duvarlar / Ekranlar (Alt Alta Ayrı Alanlar) */}
+        <div className="bg-slate-900 border border-slate-800 rounded p-3 space-y-2.5">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+            <span className="text-xs font-semibold text-sky-300">
+              Eklenen Duvarlar / Ekranlar ({screens.length})
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Düzenlemek için duvar kartına tıklayın; önceki duvarlar kaybolmaz.
+            </span>
+          </div>
+          <div className="space-y-2">
+            {screens.map((sc, idx) => {
+              const isAct = sc.id === activeScreen?.id;
+              let scLayout = null as ReturnType<typeof computeLayout> | null;
+              if (sc.slots.length > 0) {
+                try { scLayout = computeLayout(sc.slots); } catch { scLayout = null; }
+              }
+              return (
+                <div
+                  key={sc.id}
+                  onClick={() => { selectScreen(sc.id); setView(null); setSel(sc.slots[0]?.id ?? null); }}
+                  className={`rounded border p-2.5 cursor-pointer transition space-y-2 ${
+                    isAct ? 'bg-sky-950/40 border-sky-500' : 'bg-slate-950 border-slate-800 hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">#{idx + 1}</span>
+                      <span className="font-bold text-slate-100">{sc.name}</span>
+                      {isAct && <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-semibold">Aktif Düzenlenen</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono text-emerald-400">
+                        {scLayout ? `${scLayout.canvasW}×${scLayout.canvasH} px · ${sc.slots.length} Projektör` : `${sc.slots.length} Projektör`}
+                      </span>
+                      <label className="flex items-center gap-1 text-[11px] text-slate-300" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={sc.includeInReport}
+                          onChange={e => updateScreen(sc.id, { includeInReport: e.target.checked })}
+                          className="accent-emerald-500"
+                        />
+                        Rapora Dahil
+                      </label>
+                    </div>
+                  </div>
+                  {(sc.photoUrl || scLayout) && (
+                    <div className="grid sm:grid-cols-[120px_1fr] gap-2 items-center">
+                      {sc.photoUrl && (
+                        <img src={sc.photoUrl} alt={sc.name} className="w-full h-16 object-contain rounded bg-black/50 border border-slate-800" />
+                      )}
+                      {scLayout && (
+                        <div className="text-[11px] text-slate-400 font-mono flex flex-wrap gap-1.5">
+                          {sc.slots.map(sl => (
+                            <span key={sl.id} className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
+                              {sl.label}: {sl.w}×{sl.h} @ ({sl.x},{sl.y})
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );
