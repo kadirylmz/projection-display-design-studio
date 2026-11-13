@@ -597,6 +597,19 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   // ==========================================
   const calculation = useMemo(() => {
     const firstWall = surfaces.find(s => s.type === 'wall') || surfaces[0];
+    if (!firstWall) {
+      return {
+        surfaces: [] as CalculatedSurface[],
+        totalCanvasW: 0,
+        totalCanvasH: 0,
+        totalActivePixels: 0,
+        megapixels: 0,
+        totalProjectors: 0,
+        minMm: 0,
+        maxMm: 0,
+        densityMismatchPct: 0,
+      };
+    }
     const fwPreset = RESOLUTIONS[firstWall.resIdx];
     const fwBaseW = firstWall.resIdx === RESOLUTIONS.length - 1 ? firstWall.customW : fwPreset.w;
     const fwBaseH = firstWall.resIdx === RESOLUTIONS.length - 1 ? firstWall.customH : fwPreset.h;
@@ -1019,8 +1032,8 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
     const megapixels = round(totalActivePixels / 1_000_000, 2);
     const mmValues = positioned.map(p => p.avgMmPerPx);
-    const minMm = Math.min(...mmValues);
-    const maxMm = Math.max(...mmValues);
+    const minMm = mmValues.length ? Math.min(...mmValues) : 0;
+    const maxMm = mmValues.length ? Math.max(...mmValues) : 0;
     const densityMismatchPct = minMm > 0 ? round(((maxMm - minMm) / minMm) * 100, 1) : 0;
 
     return {
@@ -1382,7 +1395,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             {/* Eklenen Yüzeyler Listesi */}
             <div className="space-y-1.5 max-h-[155px] overflow-auto pr-0.5 pt-1">
               {calculation.surfaces.map((s, idx) => {
-                const isSelected = s.id === activeSurface.id;
+                const isSelected = s.id === activeSurface?.id;
                 return (
                   <div
                     key={s.id}
