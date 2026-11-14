@@ -4,8 +4,17 @@
  * Dil desteği: Türkçe ('tr') ve İngilizce ('en').
  */
 import { solveProjection } from './throw';
-import { computeLux } from './lux';
-import { computeLayout, ProjectorSlot } from './multiproj';
+import { evaluatePhysicalCoverage } from './physicalCoverage';
+import { compareLayoutScenarios, computeLuxSimulationGrid, sampleNinePointsFromLuxGrid } from './centralDesignModel';
+import { computeLux, computeViewingQualityAnalysis, ViewingQualityResult } from './lux';
+import {
+  computeGeometricMappingSummary,
+  computeLayout,
+  computePixelMapSummary,
+  createCurvedWarp,
+  MappingSurfaceGeometry,
+  ProjectorSlot,
+} from './multiproj';
 import { Cabinet, ledFromCabinets } from './led';
 import { analyze, Circuit, Load, Supply } from './electrical';
 import { toSvg } from './drawing';
@@ -13,6 +22,17 @@ import { electricalSingleLine, ledElevation, mappingDrawing } from './drawings';
 import { layoutToSvg } from './exporters';
 import { round } from './units';
 import { InterProjectorAnalysis } from './interprojector';
+import { validateReportConsistency, renderValidationEngineA4Html } from './reportValidation';
+import {
+  recommendProjectorAndLenses,
+  computeEffectiveMultiProjectorPixelArea,
+  computeSurfacePointLuxDistribution,
+  evaluateSystemFeasibility,
+  SurfacePointLuxResult,
+  MultiProjectorEffectivePixelResult,
+  SystemFeasibilityReport,
+  ProjectorRecommendationResult,
+} from './feasibility';
 
 export type ReportLang = 'tr' | 'en';
 
@@ -29,6 +49,13 @@ export interface ReportSectionFlags {
   drawings2d: boolean;
   equipmentList: boolean;
   assumptionsAndWarnings: boolean;
+  includePixelMapChain?: boolean;
+  includeGeometricChain?: boolean;
+  includeBrightnessChain?: boolean;
+  includeViewingQuality?: boolean;
+  includePointLuxMap?: boolean;
+  includeFeasibilityAndRecs?: boolean;
+  includeValidationEngine?: boolean;
 }
 
 export const DEFAULT_SECTIONS: ReportSectionFlags = {
@@ -44,6 +71,13 @@ export const DEFAULT_SECTIONS: ReportSectionFlags = {
   drawings2d: true,
   equipmentList: true,
   assumptionsAndWarnings: true,
+  includePixelMapChain: true,
+  includeGeometricChain: true,
+  includeBrightnessChain: true,
+  includeViewingQuality: true,
+  includePointLuxMap: true,
+  includeFeasibilityAndRecs: true,
+  includeValidationEngine: true,
 };
 
 export interface ReportProjectMeta {
@@ -95,12 +129,48 @@ export interface PhotometricReportSurface {
     throwRatio: number;
     overlapText: string;
   }[];
+  lumenStandard?: 'ansi' | 'iso' | 'center';
+  nominalLumensPerProj?: number;
+  totalNominalLumens?: number;
+  isoEquivalentLumens?: number;
+  opticalEfficiencyPct?: number;
+  calibrationFactorPct?: number;
+  netEfficiencyPct?: number;
+  effectiveTotalLumens?: number;
+  lostLumens?: number;
+  theoreticalAvgLux?: number;
+  singleProjectorLux?: number;
+  surfaceReflectance?: number;
+  theoreticalNits?: number;
+  idealNits?: number;
+  ambientNits?: number;
+}
+
+export interface SurfaceScenario {
+  scenarioId: string;
+  surfaceId: string;
+  surfaceName: string;
+  projectorCount: number;
+  projectorModels: string[];
+  lensModels: string[];
+  unitLumens: number;
+  unitPowerW: number;
+  throwDistM: number;
+  imageWidthM: number;
+  imageHeightM: number;
+  overlapPct: number;
+  combinedW: number;
+  combinedH: number;
+  canvasW: number;
+  canvasH: number;
 }
 
 export interface ReportPayload {
   lang: ReportLang;
+  reportMode?: 'design' | 'as_built';
   meta: ReportProjectMeta;
   sections: ReportSectionFlags;
+  scenarios?: SurfaceScenario[];
   room3dSnapshotUrl?: string;
   room3dSnapshots?: string[];
   room3dNotes?: string;
@@ -352,6 +422,258 @@ function generateSurfaceMultiSvg(s: any): string {
   '</svg>';
 }
 
+function renderViewingQualityA4Html(vq: ViewingQualityResult): string {
+  const escH = (val: string) => String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const ppdH = vq.horizontalFovDeg > 0 ? round(vq.resW / vq.horizontalFovDeg, 1) : vq.ppd;
+  const ppdV = vq.verticalFovDeg > 0 ? round(vq.resH / vq.verticalFovDeg, 1) : vq.ppd;
+  const arcminH = ppdH > 0 ? round(60 / ppdH, 2) : vq.arcminPerPixel;
+  const arcminV = ppdV > 0 ? round(60 / ppdV, 2) : vq.arcminPerPixel;
+  const minPpd = Math.min(ppdH, ppdV);
+  const dualSharpnessNote = minPpd < 20 ? '⚠ Düşük Eksen (<20 PPD)' : vq.sharpnessLabel;
+  return [
+    '<div style="margin-top: 8px; break-inside: avoid; page-break-inside: avoid;">',
+    '  <div style="font-size: 10.5px; font-weight: 700; color: #0e7490; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; display: flex; justify-content: space-between;">',
+    '    <span>👁️ 7 Adımlı İzleme &amp; Görüntü Kalitesi Analizi</span>',
+    '    <span>Skor: %' + vq.overallQualityScorePct + ' · ' + escH(vq.overallQualityGrade) + '</span>',
+    '  </div>',
+    '  <table class="compact-table">',
+    '    <tbody>',
+    '      <tr><td><b>1. İzleme Mesafesi</b></td><td style="font-family:monospace;">' + vq.viewingDistanceM + 'm (' + vq.distanceRatioToHeight + '×H · İdeal ' + vq.optimalViewingDistMinM + '–' + vq.optimalViewingDistMaxM + 'm)</td><td style="text-align:right;">' + escH(vq.viewingDistanceStatus) + '</td></tr>',
+    '      <tr><td><b>2. Görüş Açısı (FOV)</b></td><td style="font-family:monospace;">H ' + vq.horizontalFovDeg + '° · V ' + vq.verticalFovDeg + '° · D ' + vq.diagonalFovDeg + '°</td><td style="text-align:right; font-family:monospace;">Eksen dışı ' + vq.offAxisAngleDeg + '° (-%' + vq.offAxisLuminanceDropPct + ') · ' + escH(vq.fovCategory) + '</td></tr>',
+    '      <tr><td><b>3. Görüntü Keskinliği (PPD)</b></td><td style="font-family:monospace;">Ort H: <b>' + ppdH + '</b> (' + arcminH + ' arcmin/px) · V: <b>' + ppdV + '</b> (' + arcminV + ' arcmin/px) · Merkez: <b>' + vq.ppdCenterH + '/' + vq.ppdCenterV + ' PPD</b> (' + round(60 / Math.max(0.1, vq.ppdCenterH), 2) + '/' + round(60 / Math.max(0.1, vq.ppdCenterV), 2) + ' arcmin) · Kenar: <b>' + vq.ppdEdgeH + '/' + vq.ppdEdgeV + ' PPD</b> (' + round(60 / Math.max(0.1, vq.ppdEdgeH), 2) + '/' + round(60 / Math.max(0.1, vq.ppdEdgeV), 2) + ' arcmin) [' + vq.resW + '×' + vq.resH + ']</td><td style="text-align:right; font-family:monospace;">%' + vq.sharpnessScorePct + ' · ' + escH(dualSharpnessNote) + '</td></tr>',
+    '      <tr><td><b>4. Piksel Görünürlüğü &amp; Retina</b></td><td style="font-family:monospace;">' + vq.mmPerPx + ' mm/px (' + vq.ppi + ' PPI) · Retina ≥ ' + vq.minRetinaDistM + 'm (Referans: 60 PPD kalite eşiği)</td><td style="text-align:right;">İndeks ' + vq.pixelVisibilityIndex + ' · ' + escH(vq.pixelVisibilityLabel) + '</td></tr>',
+    '      <tr><td><b>5. Tahmini Ortam Kontrastı (ACR)</b></td><td style="font-family:monospace;">' + (vq.blackLevelNits > 0 ? 'Tahmini Ortam ACR: <b>' + vq.ambientContrastRatio + ':1</b> (Beyaz: ' + vq.whiteLevelNits + ' Nit · Ortam+Tahmini Siyah: ' + vq.blackLevelNits + ' Nit · Cihaz doğal siyahı ölçülmedi)' : 'Ekran ACR: UNKNOWN (Ortam ışığı / siyah seviyesi tanımlı değil)') + '</td><td style="text-align:right;">' + (vq.blackLevelNits > 0 ? escH(vq.contrastStandardGrade) : 'UNKNOWN') + '</td></tr>',
+    '      <tr><td><b>6. Renk Uniformitesi</b></td><td style="font-family:monospace;">ΔE2000: ' + vq.deltaE2000 + ' · ΔCCT ±' + vq.deltaCCTKelvin + 'K</td><td style="text-align:right; font-family:monospace;">%' + vq.colorUniformityPct + ' · ' + escH(vq.colorUniformityLabel) + '</td></tr>',
+    '      <tr><td><b>7. Parlaklık Uniformitesi</b></td><td style="font-family:monospace;">U0 %' + vq.luminanceUniformityU0Pct + ' · U1 %' + vq.luminanceUniformityU1Pct + ' · Kenar -%' + vq.centerToCornerDropPct + '</td><td style="text-align:right;">Blend ±%' + vq.blendZoneRipplePct + ' · ' + escH(vq.brightnessUniformityLabel) + '</td></tr>',
+    '      <tr class="highlight-cell"><td><b>8. TOPLAM KALİTE ÖZETİ</b></td><td style="font-family:monospace;">' + escH(vq.overallRecommendation) + ' <span style="color:#64748b; font-size:9px;">[Ağırlıklar: ACR %22 · PPD %18 · U0 %15 · ΔE %15 · Piksel %12 · Mesafe %10 · Açı %8]</span></td><td style="text-align:right; font-family:monospace;"><b>%' + vq.overallQualityScorePct + ' · ' + escH(vq.overallQualityGrade) + '</b></td></tr>',
+    '    </tbody>',
+    '  </table>',
+    '</div>'
+  ].join('\n');
+}
+
+function renderPointLuxDistributionA4Html(dist: SurfacePointLuxResult): string {
+  const escH = (val: string) => String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const ninePtMean = Math.round(dist.zones9.reduce((a, z) => a + z.lux, 0) / Math.max(1, dist.zones9.length));
+  const ninePtWeighted = round(
+    dist.zones9.reduce((a, z) => {
+      const w = z.zoneKind === 'center' ? 4 : z.zoneKind === 'edge' ? 2 : 1;
+      return a + z.lux * w;
+    }, 0) / 16,
+    2
+  );
+  const ninePtMin = dist.zones9.length > 0 ? Math.min(...dist.zones9.map(z => z.lux)) : 0;
+  const ninePtMax = dist.zones9.length > 0 ? Math.max(...dist.zones9.map(z => z.lux)) : 0;
+  const ninePtU0 = ninePtMean > 0 ? round((ninePtMin / ninePtMean) * 100, 1) : 0;
+  const ninePtU1 = ninePtMax > 0 ? round((ninePtMin / ninePtMax) * 100, 1) : 0;
+  const rowsHtml = dist.zones9
+    .map(
+      pt =>
+        '      <tr><td><b>' +
+        escH(pt.label) +
+        '</b></td><td style="text-align:right; font-family:monospace;">(' +
+        pt.xM +
+        'm, ' +
+        pt.yM +
+        'm)</td><td style="text-align:right; font-family:monospace;"><b>' +
+        pt.lux +
+        ' lx</b></td><td style="text-align:right; font-family:monospace;">' +
+        pt.nits +
+        ' nit / ' +
+        pt.fl +
+        ' fL</td><td style="text-align:right; font-family:monospace;">%' +
+        pt.pctOfAvg +
+        '</td><td>' +
+        escH(pt.statusLabel) +
+        '</td></tr>'
+    )
+    .join('\n');
+  return [
+    '<div style="margin-top: 8px; break-inside: avoid; page-break-inside: avoid;">',
+    '  <div style="font-size: 10.5px; font-weight: 700; color: #b45309; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; display: flex; justify-content: space-between;">',
+    '    <span>☀️ 9-Bölge Noktasal Lux &amp; Nit Dağılım Haritası</span>',
+    '    <span>9-Nokta Eşit: ' +
+      ninePtMean +
+      ' lx · Ağırlıklı: ' +
+      ninePtWeighted +
+      ' lx · Min/Max: ' +
+      ninePtMin +
+      '/' +
+      ninePtMax +
+      ' lx · U0 %' +
+      ninePtU0 +
+      ' · U1 %' +
+      ninePtU1 +
+      ' (Model Ort: ' +
+      Math.round(dist.avgLux) +
+      ' lx)</span>',
+    '  </div>',
+    '  <table class="compact-table">',
+    '    <thead><tr><th>Bölge (İç Merkez)</th><th style="text-align:right;">Bölge Merkezi (m)</th><th style="text-align:right;">Lux</th><th style="text-align:right;">Nit / fL</th><th style="text-align:right;">Ort. %</th><th>Durum</th></tr></thead>',
+    '    <tbody>',
+    rowsHtml,
+    '    </tbody>',
+    '  </table>',
+    '  <div style="font-size:9px; color:#64748b; margin-top:3px;">Veri Kaynağı &amp; Yöntem Ayrımı: 9-Nokta Eşit = 1/9 aritmetik (' + ninePtMean + ' lx); 9-Nokta Ağırlıklı = Köşe 1/16, Kenar 2/16, Merkez 4/16 (' + ninePtWeighted + ' lx); 9-Nokta U0 = Min/Eşit Ort. (%' + ninePtU0 + '), U1 = Min/Max (%' + ninePtU1 + '); Model Alan Ort. = Φ_eff / A (' + Math.round(dist.avgLux) + ' lx).</div>',
+    '</div>',
+  ].join('\n');
+}
+
+function renderMultiProjFeasibilityAndRecsA4Html(
+  eff: MultiProjectorEffectivePixelResult,
+  feas: SystemFeasibilityReport,
+  recs: ProjectorRecommendationResult
+): string {
+  const escH = (val: string) => String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const feasRows = feas.categories
+    .map(
+      cat =>
+        '      <tr><td><b>' +
+        escH(cat.badgeText) +
+        ' ' +
+        escH(cat.title) +
+        '</b></td><td style="font-family:monospace;">' +
+        escH(cat.metricsText) +
+        '</td><td>' +
+        escH(cat.issues[0] || '') +
+        '</td><td>' +
+        escH(cat.actionText) +
+        '</td></tr>'
+    )
+    .join('\n');
+  const recRows = recs.alternatives
+    .map(
+      opt =>
+        '      <tr><td><b>' +
+        escH(opt.tierLabel) +
+        ':</b> ' +
+        escH(opt.manufacturer) +
+        ' ' +
+        escH(opt.projectorModel) +
+        ' (%' +
+        opt.matchScore +
+        ')</td><td style="font-family:monospace;">' +
+        escH(opt.lensModel) +
+        ' (TR ' +
+        opt.throwMin +
+        '–' +
+        opt.throwMax +
+        ':1 → <b>' +
+        opt.appliedTR +
+        ':1</b>)</td><td style="text-align:right; font-family:monospace;">' +
+        opt.totalProjectors +
+        '× ' +
+        opt.ansiLumens.toLocaleString('tr-TR') +
+        ' lm</td><td style="text-align:right; font-family:monospace;">' +
+        opt.estimatedAvgLux +
+        ' lx · ACR ' +
+        opt.estimatedACR +
+        ':1</td><td style="text-align:right; font-family:monospace;">' +
+        opt.effectiveCanvasW +
+        '×' +
+        opt.effectiveCanvasH +
+        ' px (' +
+        opt.mmPerPx +
+        ' mm/px)</td></tr>'
+    )
+    .join('\n');
+  return [
+    '<div style="margin-top: 8px; break-inside: avoid; page-break-inside: avoid;">',
+    '  <div style="font-size: 10.5px; font-weight: 700; color: #3730a3; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; display: flex; justify-content: space-between;">',
+    '    <span>📐 Çoklu Projektör Overlap Düşülmüş Birleşik Raster Alanı</span>',
+    '    <span>Birleşik Raster (Kırpma Öncesi): ' +
+      eff.usableContentW +
+      ' × ' +
+      eff.usableContentH +
+      ' px (' +
+      eff.usableEffectiveMP +
+      ' MP · Verim %' +
+      eff.totalRetentionPct +
+      ')</span>',
+    '  </div>',
+    '  <table class="compact-table">',
+    '    <tbody>',
+    '      <tr><td><b>Ham Projektör Toplamı</b></td><td style="font-family:monospace;">' +
+      eff.totalProjectors +
+      ' Projektör</td><td style="text-align:right; font-family:monospace;">' +
+      eff.rawW +
+      ' × ' +
+      eff.rawH +
+      ' px (' +
+      eff.rawMP +
+      ' MP)</td></tr>',
+    '      <tr><td><b>Overlap Bindirme Kaybı</b></td><td style="font-family:monospace;">' +
+      eff.overlapCountX +
+      ' Yatay Bölge · ' +
+      eff.overlapPhysicalWidthM +
+      ' m (' +
+      eff.overlapPhysicalAreaM2 +
+      ' m²)</td><td style="text-align:right; font-family:monospace; color:#b45309;"><b>-' +
+      eff.overlapLostMP +
+      ' MP (-%' +
+      eff.overlapLostPct +
+      ')</b></td></tr>',
+    '      <tr><td><b>Overlap Sonrası &amp; Geometrik Kayıp</b></td><td style="font-family:monospace;">Net ' +
+      eff.netW +
+      '×' +
+      eff.netH +
+      ' px · Keystone/Kavis Kaybı -%' +
+      eff.geometricLossPct +
+      '</td><td style="text-align:right; font-family:monospace;">' +
+      eff.pxPerMeterW +
+      ' px/m · ' +
+      eff.mmPerPx +
+      ' mm/px (' +
+      eff.ppi +
+      ' PPI)</td></tr>',
+    '      <tr class="highlight-cell"><td><b>BİRLEŞİK RASTER ALANI (Kırpma Öncesi)</b></td><td style="font-family:monospace;">Toplam Pikseli Koruma Oranı: %' +
+      eff.totalRetentionPct +
+      '</td><td style="text-align:right; font-family:monospace;"><b>' +
+      eff.usableContentW +
+      ' × ' +
+      eff.usableContentH +
+      ' px (' +
+      eff.usableEffectiveMP +
+      ' MP)</b></td></tr>',
+    '    </tbody>',
+    '  </table>',
+    '  <div style="font-size:9px; color:#64748b; margin-top:3px;">Yöntem Ayrımı: 9-Nokta Eşit Ort. = 1/9 aritmetik; 9-Nokta Ağırlıklı Ort. = Köşe 1/16, Kenar 2/16, Merkez 4/16; Model Alan Ort. = Efektif Lümen ÷ Alan (Φ_eff / A).</div>',
+    '</div>',
+    '<div style="margin-top: 8px; break-inside: avoid; page-break-inside: avoid;">',
+    '  <div style="font-size: 10.5px; font-weight: 700; color: #9f1239; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; display: flex; justify-content: space-between;">',
+    '    <span>⚠️ 5 Kategorili Hata &amp; Uygulanabilirlik Analizi</span>',
+    '    <span>Skor: %' + feas.overallScorePct + ' · ' + escH(feas.overallVerdict) + '</span>',
+    '  </div>',
+    '  <table class="compact-table">',
+    '    <thead><tr><th>Kategori</th><th>Ölçüt</th><th>Tespit</th><th>Mühendislik Önerisi</th></tr></thead>',
+    '    <tbody>',
+    feasRows,
+    '    </tbody>',
+    '  </table>',
+    '  <div style="font-size:9px; color:#64748b; margin-top:3px;">Yöntem Ayrımı: 9-Nokta Eşit Ort. = 1/9 aritmetik; 9-Nokta Ağırlıklı Ort. = Köşe 1/16, Kenar 2/16, Merkez 4/16; Model Alan Ort. = Efektif Lümen ÷ Alan (Φ_eff / A).</div>',
+    '</div>',
+    '<div style="margin-top: 8px; break-inside: avoid; page-break-inside: avoid;">',
+    '  <div style="font-size: 10.5px; font-weight: 700; color: #065f46; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; display: flex; justify-content: space-between;">',
+    '    <span>🤖 Mekân Ölçülerine Göre Otomatik Projektör &amp; Lens Önerileri</span>',
+    '    <span>Hedef TR: ' +
+      recs.requiredTR +
+      ':1 · İdeal Müze Bandı: [' +
+      recs.idealMuseumTRRange[0] +
+      '–' +
+      recs.idealMuseumTRRange[1] +
+      ':1]</span>',
+    '  </div>',
+    '  <table class="compact-table">',
+    '    <thead><tr><th>Seviye &amp; Model</th><th>Önerilen Lens &amp; TR</th><th style="text-align:right;">Adet × Lümen</th><th style="text-align:right;">Lux / ACR</th><th style="text-align:right;">Efektif Çözünürlük</th></tr></thead>',
+    '    <tbody>',
+    recRows,
+    '    </tbody>',
+    '  </table>',
+    '  <div style="font-size:9px; color:#64748b; margin-top:3px;">Yöntem Ayrımı: 9-Nokta Eşit Ort. = 1/9 aritmetik; 9-Nokta Ağırlıklı Ort. = Köşe 1/16, Kenar 2/16, Merkez 4/16; Model Alan Ort. = Efektif Lümen ÷ Alan (Φ_eff / A).</div>',
+    '</div>',
+  ].join('\n');
+}
+
 export function buildReportHtml(p: ReportPayload): string {
   const tr = T[p.lang];
   const m = p.meta;
@@ -370,10 +692,15 @@ export function buildReportHtml(p: ReportPayload): string {
       }
     }
 
-    const totalPj = p.interProjectorAnalysis?.totalProjectors ?? (p.mappingSlots?.length ?? 1);
-    const totalW = elAnalysis?.totalW ?? (p.interProjectorAnalysis?.totalPowerW ?? 0);
+    const plannerPjCount = (p.plannerSurfaces || []).reduce((a: number, s: any) => a + Math.max(1, (s.cols || 1) * (s.rows || 1)), 0);
+    const totalPj = p.interProjectorAnalysis?.totalProjectors || plannerPjCount || (p.mappingSlots?.length ?? 1);
+    const fallbackPlannerW = plannerPjCount > 0 ? plannerPjCount * 1350 : 0;
+    const totalW = (elAnalysis?.totalW && elAnalysis.totalW > 0 ? elAnalysis.totalW : 0)
+      || (p.interProjectorAnalysis?.totalPowerW && p.interProjectorAnalysis.totalPowerW > 0 ? p.interProjectorAnalysis.totalPowerW : 0)
+      || fallbackPlannerW;
     const totalIbA = elAnalysis?.totalIbA ?? (totalW > 0 ? (totalW / (230 * 0.95)) : 0);
-    const roomDims = p.interProjectorAnalysis?.roomDimensions;
+    const rawRoom = p.interProjectorAnalysis?.roomDimensions;
+    const roomDims = rawRoom && rawRoom.widthM > 0 && rawRoom.lengthM > 0 && rawRoom.heightM > 0 ? rawRoom : undefined;
 
     blocks.push(`<section class="report-section">
       <h2>${tr.summary}</h2>
@@ -389,8 +716,8 @@ export function buildReportHtml(p: ReportPayload): string {
           <div class="metric-lbl">Toplam Kurulu Güç (${Math.round(totalW)} W)</div>
         </div>
         <div class="metric-card">
-          <div class="metric-val text-rose">${totalIbA.toFixed(1)} A</div>
-          <div class="metric-lbl">Toplam İşletme Akımı (Ib)</div>
+          <div class="metric-val text-rose">${p.electrical?.supply?.phases === 3 ? `${totalIbA.toFixed(2)} A/faz` : `${totalIbA.toFixed(1)} A`}</div>
+          <div class="metric-lbl">${p.electrical?.supply?.phases === 3 ? `3-Faz Hat Akımı (L1/L2/L3 · ${Math.round(totalW)} W)` : 'Toplam İşletme Akımı (Ib)'}</div>
         </div>
         ${roomDims ? `
         <div class="metric-card">
@@ -559,6 +886,18 @@ export function buildReportHtml(p: ReportPayload): string {
     const pr = projectionList[0];
     const projCardsHtml = projectionList.map((prItem, prIdx) => {
       const pr = prItem;
+      const matchedScn = p.scenarios?.find(
+        sc => pr.screenName && sc.surfaceName.trim().toLowerCase() === pr.screenName.trim().toLowerCase()
+      ) || p.scenarios?.[prIdx];
+      const matchedPhoto = p.photometricSurfaces?.find(
+        ps => (matchedScn && ps.surfaceId === matchedScn.surfaceId) || (pr.screenName && ps.surfaceName.trim().toLowerCase() === pr.screenName.trim().toLowerCase())
+      );
+      const pjCount = matchedScn?.projectorCount || matchedPhoto?.projectorCount || 1;
+      const unitLm = matchedScn?.unitLumens || matchedPhoto?.nominalLumensPerProj || pr.ansiLumens || 0;
+      const totalSurfaceLm = unitLm * pjCount;
+      const pjDisplayName = pjCount > 1 && !/^\d+\s*x\s+/i.test(pr.projectorName || '')
+        ? `${pjCount}x ${pr.projectorName}`
+        : pr.projectorName;
       const res = solveProjection({
       imageWidth: pr.imageWidthM,
       distance: pr.distanceM,
@@ -571,12 +910,12 @@ export function buildReportHtml(p: ReportPayload): string {
       return `<div class="surface-multi-card" style="margin-bottom:16px;">
       <div class="surface-multi-card-header"><h3 class="surface-multi-card-title">${pr.screenName ? esc(pr.screenName) : `Ekran / Duvar #${prIdx + 1}`}</h3><span class="surface-multi-card-badge">${round(res.imageWidth, 2)} × ${round(res.imageHeight, 2)} m</span></div>
       <table><tbody>
-        <tr><th>${tr.projector}</th><td>${esc(pr.projectorName)}</td><th>${tr.lens}</th><td>${esc(pr.lensName)}</td></tr>
+        <tr><th>${tr.projector}</th><td><b>${esc(pjDisplayName)}</b></td><th>${tr.lens}</th><td>${esc(pr.lensName)}${pr.throwMin && pr.throwMax ? ` (${Math.abs(pr.throwMax - pr.throwMin) < 0.02 ? 'Sabit Lens' : 'Zoom Lens'} · ${pr.throwMin}–${pr.throwMax}:1)` : ''}</td></tr>
         <tr><th>${tr.imgSize} &amp; ${p.lang === 'en' ? 'Area' : 'Alan'}</th><td>${round(res.imageWidth, 3)} × ${round(res.imageHeight, 3)} m · <b>${round(res.imageWidth * res.imageHeight, 2)} m²</b></td><th>${tr.diagonal}</th><td>${round(res.diagonal / 0.0254, 1)}" (${round(res.diagonal, 3)} m)</td></tr>
-        <tr><th>${tr.throwRatio}</th><td>${round(res.throwRatio, 4)}:1</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m${Math.abs(res.chassisFrontToSurface - res.lensToSurface) > 0.005 ? ` (${p.lang === 'en' ? 'Chassis' : 'Şasi'}: ${round(res.chassisFrontToSurface, 3)} m)` : ''}</td></tr>
+        <tr><th>${tr.throwRatio}</th><td>Seçilen: <b>${round(res.throwRatio, 4)}:1</b>${pr.throwMin && pr.throwMax ? ` (Min ${pr.throwMin}:1 · Max ${pr.throwMax}:1)` : ''}</td><th>${tr.optDist}</th><td>${round(res.lensToSurface, 3)} m${Math.abs(res.chassisFrontToSurface - res.lensToSurface) > 0.005 ? ` (${p.lang === 'en' ? 'Chassis' : 'Şasi'}: ${round(res.chassisFrontToSurface, 3)} m)` : ''}</td></tr>
 
-        ${pr.ansiLumens ? `<tr><th>${p.lang === 'en' ? 'Light Output (ANSI Lumens)' : 'Işık Gücü (ANSI Lümen)'}</th><td><b>${pr.ansiLumens.toLocaleString('tr-TR')} ANSI lm</b>${pr.technology ? ` · ${esc(pr.technology)}` : ''}</td><th>${p.lang === 'en' ? 'Resolution & Aspect' : 'Çözünürlük &amp; Oran'}</th><td>${pr.resolution ? esc(pr.resolution) : `${pr.aspectW}:${pr.aspectH}`}</td></tr>` : ''}
-        ${res.distanceMin && res.distanceMax ? `<tr><th>${p.lang === 'en' ? 'Lens Throw Range' : 'Lens Mesafe Aralığı'}</th><td>${round(res.distanceMin, 2)} – ${round(res.distanceMax, 2)} m</td><th>${p.lang === 'en' ? 'Zoom Position' : 'Zoom Konumu'}</th><td>${res.zoomPosition !== undefined ? `%${round(res.zoomPosition * 100, 0)}` : '—'}</td></tr>` : ''}
+        ${unitLm > 0 ? `<tr><th>${p.lang === 'en' ? 'Light Output (ANSI Lumens)' : 'Işık Gücü (ANSI Lümen)'}</th><td>${pjCount > 1 ? `<b>${unitLm.toLocaleString('tr-TR')} ANSI lm/adet</b> · Toplam: <b>${totalSurfaceLm.toLocaleString('tr-TR')} ANSI lm</b> (${pjCount}×)` : `<b>${unitLm.toLocaleString('tr-TR')} ANSI lm</b> (1×)`}${pr.technology ? ` · ${esc(pr.technology)}` : ''}</td><th>${p.lang === 'en' ? 'Resolution & Aspect' : 'Çözünürlük &amp; Oran'}</th><td>${pr.resolution ? esc(pr.resolution) : `${pr.aspectW}:${pr.aspectH}`}</td></tr>` : ''}
+        ${res.distanceMin && res.distanceMax ? `<tr><th>${p.lang === 'en' ? 'Lens Throw Range' : 'Min / Max Atım Mesafesi'}</th><td>${round(res.distanceMin, 2)} – ${round(res.distanceMax, 2)} m</td><th>${p.lang === 'en' ? 'Zoom Position' : 'Zoom Konumu'}</th><td>Katalog Zoom Eğrisi Yok (TR Aralığı İçi)</td></tr>` : ''}
       </tbody></table>
       ${(() => {
         // Ön Görünüş SVG (Ekran Boyutu)
@@ -635,17 +974,81 @@ export function buildReportHtml(p: ReportPayload): string {
         : p.photometricSurfaces;
 
       const surfaceCards = pSurfs.map((s, idx) => {
+        const matchedPlannerCard = (p.plannerSurfaces || []).find(ps => ps.id === s.surfaceId || ps.name === s.surfaceName);
+        const cardNativeW = matchedPlannerCard?.nativeW || 1920;
+        const cardNativeH = matchedPlannerCard?.nativeH || 1200;
+        const cardOvPct = matchedPlannerCard?.overlapMode === 'pixel' && (matchedPlannerCard?.ovPxX ?? 0) > 0
+          ? +((matchedPlannerCard.ovPxX! / Math.max(1, cardNativeW)) * 100).toFixed(2)
+          : (matchedPlannerCard?.overlapX ?? (s.projectorCount > 1 ? 15 : 0));
+        const rawCardU0 = s.uniformityU0 > 0 ? (s.uniformityU0 <= 1 ? round(s.uniformityU0 * 100, 1) : round(s.uniformityU0, 1)) : 82;
+        const cardAreaM2 = +(s.widthM * s.heightM).toFixed(2);
+        const cardEffFlux = s.effectiveTotalLumens ?? Math.round(s.avgLux * cardAreaM2);
+        const cardNetEff = s.netEfficiencyPct ?? 90;
+        const cardRefl = s.surfaceReflectance ?? 0.85;
+        const simTr = s.distributionRows?.[0]?.throwRatio || matchedPlannerCard?.throwRatio || 0;
+        const simDist = s.distributionRows?.[0]?.throwDistM || matchedPlannerCard?.throwDistM || 0;
+        const simGrid = simTr > 0 && simDist > 0
+          ? computeLuxSimulationGrid({
+              room: { widthM: 14, lengthM: 10, heightM: Math.max(3.5, s.heightM + 0.6) },
+              surface: { id: s.surfaceId, name: s.surfaceName, widthM: s.widthM, heightM: s.heightM, viewingDistanceM: 3.5 },
+              projector: {
+                model: 'Simülasyon',
+                cols: Math.max(1, matchedPlannerCard?.cols || s.projectorCount),
+                rows: Math.max(1, matchedPlannerCard?.rows || 1),
+                nativeW: cardNativeW,
+                nativeH: cardNativeH,
+                ansiLumensPerUnit: s.nominalLumensPerProj || Math.round((cardEffFlux / Math.max(0.1, cardNetEff / 100)) / Math.max(1, s.projectorCount)),
+                powerWPerUnit: 450,
+              },
+              lens: { model: 'Lens', throwDistM: simDist, throwRatio: simTr },
+              photometrics: { opticalEfficiencyPct: cardNetEff, screenGain: s.screenGain, reflectance: cardRefl, ambientLux: s.ambientLux ?? 0 },
+              blending: { overlapPctX: cardOvPct },
+              electrical: { supplyVoltageV: 230, phases: 3, pf: 1 },
+            }, 24, 12)
+          : null;
+        const sharedPointDist: SurfacePointLuxResult = simGrid
+          ? (() => {
+              const g9 = sampleNinePointsFromLuxGrid(simGrid, s.widthM, s.heightM, s.screenGain, cardRefl);
+              return {
+                avgLux: simGrid.avgLux,
+                peakCenterLux: g9.peakCenterLux,
+                cornerAvgLux: g9.cornerAvgLux,
+                edgeAvgLux: g9.edgeAvgLux,
+                blendSeamLux: g9.edgeAvgLux,
+                blendSeamNits: round((g9.edgeAvgLux * s.screenGain * cardRefl) / Math.PI, 1),
+                centerToCornerDropPct: g9.centerToCornerDropPct,
+                zones9: g9.zones9,
+              };
+            })()
+          : computeSurfacePointLuxDistribution({
+              widthM: s.widthM,
+              heightM: s.heightM,
+              cols: Math.max(1, matchedPlannerCard?.cols || s.projectorCount || 1),
+              rows: Math.max(1, matchedPlannerCard?.rows || 1),
+              avgLux: Math.round(s.avgLux),
+              uniformityU0: rawCardU0,
+              overlapPct: cardOvPct,
+              screenGain: s.screenGain,
+              reflectance: cardRefl,
+              ambientLux: s.ambientLux ?? 0,
+            });
+        const cardZoneLuxes = sharedPointDist.zones9.map(z => z.lux);
+        const cardEqMean = Math.round(cardZoneLuxes.reduce((a, b) => a + b, 0) / Math.max(1, cardZoneLuxes.length));
         const avgL = Math.round(s.avgLux);
-        const minL = Math.round(s.minLux);
-        const maxL = Math.round(s.maxLux);
-        const u0 = (s.uniformityU0 * 100).toFixed(1);
-        const u1 = (s.uniformityU1 * 100).toFixed(1);
+        const minL = s.isManualLux ? Math.round(s.minLux) : Math.min(...cardZoneLuxes);
+        const maxL = s.isManualLux ? Math.round(s.maxLux) : Math.max(...cardZoneLuxes);
+        const u0 = s.isManualLux
+          ? (s.uniformityU0 <= 1 ? (s.uniformityU0 * 100).toFixed(1) : s.uniformityU0.toFixed(1))
+          : (cardEqMean > 0 ? ((minL / cardEqMean) * 100).toFixed(1) : '0.0');
+        const u1 = s.isManualLux
+          ? (s.uniformityU1 <= 1 ? (s.uniformityU1 * 100).toFixed(1) : s.uniformityU1.toFixed(1))
+          : (maxL > 0 ? ((minL / maxL) * 100).toFixed(1) : '0.0');
         const nits = Math.round(s.luminanceNits);
         const fl = s.luminanceFL.toFixed(1);
         const acr = Math.round(s.ambientContrastRatio);
 
         const luxStatusColor = avgL >= 300 && avgL <= 600 ? 'background:#dcfce7; color:#166534;' : avgL > 600 ? 'background:#e0f2fe; color:#0369a1;' : 'background:#fee2e2; color:#991b1b;';
-        const luxStatusText = avgL >= 300 && avgL <= 600 ? '✓ Müze & Sergi İdeal (300–500 lx)' : avgL > 600 ? '✓ Yüksek Aydınlık (Canlı)' : '⚠ Düşük Aydınlık (Karartma Şart)';
+        const luxStatusText = avgL >= 300 && avgL <= 500 ? '✓ Sergi Referansı (300–500 lx · Eser Hariç)' : avgL > 500 && avgL <= 600 ? '✓ Yüksek Sergi Aydınlığı (500–600 lx)' : avgL > 600 ? '✓ Çok Yüksek Aydınlık (>600 lx)' : '⚠ Düşük Aydınlık (Karartma Şart)';
 
         const uStatusColor = +u0 >= 60 ? 'background:#dcfce7; color:#166534;' : +u0 >= 40 ? 'background:#fef3c7; color:#92400e;' : 'background:#fee2e2; color:#991b1b;';
         const uStatusText = +u0 >= 60 ? '✓ Çok Yüksek Homojenlik' : +u0 >= 40 ? '✓ Kabul Edilebilir Düzgünlük' : '⚠ Köşelerde Kararma Riski';
@@ -694,32 +1097,163 @@ export function buildReportHtml(p: ReportPayload): string {
               <div class="photometric-mini-card">
                 <div class="photometric-mini-title">Işık Düzgünlüğü (Uniformity)</div>
                 <div class="photometric-mini-value" style="color: #059669;">%${u0}</div>
-                <div class="photometric-mini-sub">U0 (Min/Ort): <b>%${u0}</b> · U1: <b>%${u1}</b></div>
+                <div class="photometric-mini-sub">9-Nokta Örnekleme · U0 (Min/Ort): <b>%${u0}</b> · U1: <b>%${u1}</b></div>
                 <div class="photometric-mini-badge" style="${uStatusColor}">${uStatusText}</div>
               </div>
 
               <div class="photometric-mini-card">
-                <div class="photometric-mini-title">Gözlenen Parlaklık</div>
+                <div class="photometric-mini-title">Gerçekçi Parlaklık (ρ dahil)</div>
                 <div class="photometric-mini-value" style="color: #d97706;">${nits} <span style="font-size:11px; font-weight:normal; color:#64748b;">cd/m²</span></div>
-                <div class="photometric-mini-sub">${fl} fL · Ekran Gain: ${s.screenGain}x</div>
-                <div class="photometric-mini-badge" style="background:#fef3c7; color:#92400e;">✓ Müze Kontrastı İçin İdeal</div>
+                <div class="photometric-mini-sub">${fl} fL · Gain: ${s.screenGain}x · ρ: ${s.surfaceReflectance ?? 0.85}</div>
+                <div class="photometric-mini-badge" style="background:#fef3c7; color:#92400e;">✓ Yansıtma Düşülmüş Sonuç</div>
               </div>
 
               <div class="photometric-mini-card">
                 <div class="photometric-mini-title">Ortam Kontrastı (ACR)</div>
-                <div class="photometric-mini-value" style="color: #7c3aed;">${acr}:1</div>
+                <div class="photometric-mini-value" style="color: #7c3aed;">${s.ambientLux > 0 ? `${acr}:1` : 'UNKNOWN'}</div>
                 <div class="photometric-mini-sub">Ortam Işığı: <b>${s.ambientLux} Lux</b></div>
-                <div class="photometric-mini-badge" style="${acr >= 15 ? 'background:#dcfce7; color:#166534;' : 'background:#fee2e2; color:#991b1b;'}">${acr >= 15 ? '✓ Yüksek Okunabilirlik' : '⚠ Düşük Kontrast'}</div>
+                <div class="photometric-mini-badge" style="${s.ambientLux <= 0 ? 'background:#f1f5f9; color:#475569;' : acr >= 15 ? 'background:#dcfce7; color:#166534;' : 'background:#fee2e2; color:#991b1b;'}">${s.ambientLux <= 0 ? '❓ Siyah Seviyesi Tanımsız' : acr >= 15 ? '✓ Yüksek Okunabilirlik' : '⚠ Düşük Kontrast'}</div>
               </div>
             </div>
           </div>
+
+          ${p.sections.includeBrightnessChain !== false ? (() => {
+            const areaM2 = +(s.widthM * s.heightM).toFixed(2);
+            const effFlux = s.effectiveTotalLumens ?? Math.round(avgL * areaM2);
+            const netEff = s.netEfficiencyPct ?? 90;
+            const nomFlux = s.totalNominalLumens ?? Math.round(effFlux / (netEff / 100));
+            const isoFlux = s.isoEquivalentLumens ?? Math.round(nomFlux * 0.95);
+            const lostFlux = s.lostLumens ?? Math.max(0, nomFlux - effFlux);
+            const theoLux = s.theoreticalAvgLux ?? Math.round(nomFlux / Math.max(0.1, areaM2));
+            const singleLux = Math.round(avgL / Math.max(1, s.projectorCount));
+            const refl = s.surfaceReflectance ?? 0.85;
+            const idealNits = s.idealNits ?? Math.round((avgL * s.screenGain) / Math.PI);
+            const ambNits = +((s.ambientLux * s.screenGain * refl) / Math.PI).toFixed(2);
+            const whiteNits = +(nits + ambNits).toFixed(1);
+            const acrExact = +((nits + ambNits) / Math.max(0.01, ambNits)).toFixed(1);
+            const stdLabel = (s.lumenStandard ?? 'ansi').toUpperCase();
+            const simGridU1 = simGrid ? simGrid.u1Pct : 0;
+            const simBeamH = simTr > 0 && simDist > 0 ? +((simDist / simTr) / 1.6).toFixed(2) : 0;
+            const overspillNote = simGrid && simBeamH > s.heightM + 0.05
+              ? `Işın yüksekliği (${simBeamH}m) duvar yüksekliğini (${s.heightM}m) aştığı için akının bir kısmı dışarı taşar; Tüm Duvar Ort: ${simGrid.avgLux} lx · Aktif İçi Ort: ${simGrid.activeAvgLux} lx (Aktif Alan %${simGrid.activeAreaRatioPct} · Sıfır Nokta: ${simGrid.zeroCellCount}/${simGrid.totalCellCount}) · U0 %${simGrid.u0Pct}, U1 %${simGridU1}.`
+              : simGrid && simGrid.zeroCellCount > 0 && simGrid.activeAvgLux > 0
+                ? `Tüm Duvar Ort: ${simGrid.avgLux} lx (U0 %${simGrid.u0Pct} · U1 %${simGridU1}) · Aktif Projeksiyon İçi (${simGrid.activeMinLux}–${simGrid.activeMaxLux} lx): Ort ${simGrid.activeAvgLux} lx · Aktif U0 %${simGrid.activeU0Pct} · Aktif U1 %${simGrid.activeU1Pct} · Aktif Alan %${simGrid.activeAreaRatioPct} · Kaplama Dışı Sıfır: ${simGrid.zeroCellCount}/${simGrid.totalCellCount} nokta.`
+                : simGrid
+                  ? `288-nokta grid (${simGrid.gridCols}×${simGrid.gridRows}): Tüm Duvar/Aktif Ort ${simGrid.avgLux} lx · Min ${simGrid.minLux} / Max ${simGrid.maxLux} lx · U0 %${simGrid.u0Pct} · U1 %${simGridU1} · Sıfır: 0/${simGrid.totalCellCount} (%100 kaplama).`
+                  : '';
+            return `
+            <div style="margin-top: 10px; break-inside: avoid; page-break-inside: avoid;">
+              <div style="font-size: 11px; font-weight: 700; color: #0f172a; margin-bottom: 5px;">
+                📊 9 Adımlı Işık, Kayıp ve Gerçekçi Parlaklık Hesap Zinciri (Toplam Özet)
+              </div>
+              <table class="compact-table" style="background:#ffffff; font-size:10.5px;">
+                <thead>
+                  <tr>
+                    <th style="width:28%;">Hesaplama Kalemi</th>
+                    <th style="width:42%;">Detay / Katsayı</th>
+                    <th style="width:30%; text-align:right;">Sonuç</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><b>1. ANSI / ISO Lümen</b></td>
+                    <td style="font-family:monospace;">${s.projectorCount} PJ · Standart: ${stdLabel}</td>
+                    <td style="text-align:right; font-family:monospace;"><b>${nomFlux.toLocaleString('tr-TR')} lm</b> (ISO: ${isoFlux.toLocaleString('tr-TR')} lm)</td>
+                  </tr>
+                  <tr>
+                    <td><b>2. Görüntü Alanı (m²)</b></td>
+                    <td style="font-family:monospace;">${s.widthM}m × ${s.heightM}m</td>
+                    <td style="text-align:right; font-family:monospace;"><b>${areaM2} m²</b></td>
+                  </tr>
+                  <tr>
+                    <td><b>3. Teorik Ortalama Lux</b></td>
+                    <td style="font-family:monospace;">${nomFlux.toLocaleString('tr-TR')} lm ÷ ${areaM2} m² (Kayıpsız)</td>
+                    <td style="text-align:right; font-family:monospace;"><b>${theoLux} Lux</b></td>
+                  </tr>
+                  <tr>
+                    <td><b>4. Lens &amp; Optik Kayıplar</b></td>
+                    <td style="font-family:monospace;">Net Verim: %${netEff} (Kayıp: -${lostFlux.toLocaleString('tr-TR')} lm)</td>
+                    <td style="text-align:right; font-family:monospace; color:#b45309;"><b>${effFlux.toLocaleString('tr-TR')} lm</b> efektif</td>
+                  </tr>
+                  <tr>
+                    <td><b>5. Çoklu Projektör Katkısı</b></td>
+                    <td style="font-family:monospace;">Tek Cihaz Ort: ${singleLux} lx × ${s.projectorCount} PJ</td>
+                    <td style="text-align:right; font-family:monospace; color:#0284c7;"><b>${avgL} Lux</b> toplam</td>
+                  </tr>
+                  <tr>
+                    <td><b>6. Ekran Kazancı (Gain)</b></td>
+                    <td style="font-family:monospace;">${s.screenGain}× Gain</td>
+                    <td style="text-align:right; font-family:monospace;"><b>${idealNits} Nit</b> (ρ=1.0 için)</td>
+                  </tr>
+                  <tr>
+                    <td><b>7. Yüzey Yansıtma (ρ)</b></td>
+                    <td style="font-family:monospace;">ρ = ${refl} (%${Math.round(refl * 100)} yansıtma)</td>
+                    <td style="text-align:right; font-family:monospace;">L = E · Gain · ρ / π</td>
+                  </tr>
+                  <tr>
+                    <td><b>8. Ortam Işığı Etkisi</b></td>
+                    <td style="font-family:monospace;">${s.ambientLux} lx × Gain ${s.screenGain} × ρ ${refl} / π = Siyah +${ambNits} Nit</td>
+                    <td style="text-align:right; font-family:monospace; color:#7c3aed;"><b>${s.ambientLux > 0 ? `ACR ${acrExact}:1` : 'ACR UNKNOWN'}</b> (${whiteNits} / ${ambNits} Nit)</td>
+                  </tr>
+                  <tr class="highlight-cell">
+                    <td><b>9. TOPLAM GERÇEKÇİ SONUÇ</b></td>
+                    <td style="font-family:monospace;">Min ${minL} / Ort ${avgL} / Max ${maxL} lx · U0 %${u0}</td>
+                    <td style="text-align:right; font-family:monospace;"><b>${avgL} Lux · ${nits} Nit (${fl} fL)</b></td>
+                  </tr>
+                  ${simGrid ? `<tr>
+                    <td><b>10. 288-Nokta Fiziksel Lux Grid</b></td>
+                    <td style="font-family:monospace;">${overspillNote}</td>
+                    <td style="text-align:right; font-family:monospace; color:#0369a1;"><b>${simGrid.avgLux} lx</b> (U0 %${simGrid.u0Pct} / U1 %${simGridU1})</td>
+                  </tr>` : ''}
+                </tbody>
+              </table>
+            </div>`;
+          })() : ''}
+
+          ${(() => {
+            const linkedSurf = p.plannerSurfaces?.find((ps: any) => ps.id === s.surfaceId);
+            const resParts = (p.projection?.resolution || '').match(/(\d+)\s*[×x]\s*(\d+)/i);
+            const projResW = resParts ? Number(resParts[1]) : 1920;
+            const projResH = resParts ? Number(resParts[2]) : 1200;
+            const effResW = linkedSurf?.netW || (s.projectorCount > 1 ? Math.round(projResW * (s.projectorCount - (s.projectorCount - 1) * 0.15)) : projResW);
+            const effResH = linkedSurf?.netH || projResH;
+            const effViewDist = linkedSurf?.viewDistM || +(Math.max(1.8, s.heightM * 2.5)).toFixed(1);
+            const matchedPlannerForPt = (p.plannerSurfaces || []).find(ps => ps.id === s.surfaceId || ps.name === s.surfaceName);
+            const ptNativeW = matchedPlannerForPt?.nativeW || projResW;
+            const ptOvPct = matchedPlannerForPt?.overlapMode === 'pixel' && (matchedPlannerForPt?.ovPxX ?? 0) > 0
+              ? +((matchedPlannerForPt.ovPxX! / Math.max(1, ptNativeW)) * 100).toFixed(2)
+              : (matchedPlannerForPt?.overlapX ?? (s.projectorCount > 1 ? 15 : 0));
+            const syncedU0Pct = +u0 > 0 ? +u0 : 82;
+            const vq = computeViewingQualityAnalysis({
+              widthM: s.widthM,
+              heightM: s.heightM,
+              resW: effResW,
+              resH: effResH,
+              viewingDistanceM: effViewDist,
+              offAxisAngleDeg: 0,
+              screenGain: s.screenGain,
+              reflectance: s.surfaceReflectance ?? 0.85,
+              avgLux: avgL,
+              ambientLux: s.ambientLux ?? 0,
+              nativeContrast: 2000,
+              uniformityU0: syncedU0Pct,
+              uniformityU1: +u1,
+              projectorCount: Math.max(1, matchedPlannerForPt?.cols || s.projectorCount || 1),
+              overlapPct: ptOvPct,
+              colorCalibrated: (s.calibrationFactorPct ?? 92) >= 90,
+            });
+            return [
+              p.sections.includeViewingQuality !== false ? renderViewingQualityA4Html(vq) : '',
+              p.sections.includePointLuxMap !== false ? renderPointLuxDistributionA4Html(sharedPointDist) : '',
+            ].filter(Boolean).join('\n');
+          })()}
 
           <!-- Işık Düzgünlüğü (Uniformity) Dinamik Açıklama Kutusu -->
           <div style="margin-top: 8px; margin-bottom: 8px; padding: 7px 10px; background: #f8fafc; border-left: 3.5px solid ${+u0 >= 75 ? '#059669' : +u0 >= 60 ? '#d97706' : '#dc2626'}; border-radius: 4px; font-size: 10.5px; color: #334155; line-height: 1.4;">
             <b>💡 Işık Düzgünlüğü (Uniformity / Homojenlik) Nedir?</b>
             Projeksiyon görüntüsünün merkezinden 4 köşesine doğru aydınlığın ne kadar dengeli dağıldığını gösterir (U0 = E_min / E_avg). 
             ${+u0 >= 75 
-              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı profesyonel müze standartlarına tam uygundur; köşelerde gözün algılayacağı kararma (vinyet) oluşmaz.`
+              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı yüksek homojenlik sınıfındadır; merkez/köşe parlaklık düşüşü optik ve blend toleransları içindedir.`
               : +u0 >= 60 
               ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı genel mekanlar için kabul edilebilir toleranstadır; köşelerde standart optik düşüş görülür.`
               : `⚠ DİKKAT: <b>%${u0}</b> düzgünlük oranı düşüktür; ekranın köşe ve kenarlarında belirgin kararma (vinyet) ve ışık kaybı oluşur. Projektör adedi veya atım mesafesi artırılmalıdır.`}
@@ -800,9 +1334,122 @@ export function buildReportHtml(p: ReportPayload): string {
         const svg = generateSurfaceMultiSvg(s);
         const area = round(s.areaM2 || (s.effectiveWidthM * s.effectiveHeightM), 2);
         const totalPj = s.cols * s.rows;
-        const totalPjWatt = totalPj * 1350;
-        const totalLumens = totalPj * 6000;
+        const matchedUnitWatt = p.interProjectorAnalysis?.projectors.find(pj => pj.surfaceId === s.id)?.powerW || 1350;
+        const totalPjWatt = totalPj * matchedUnitWatt;
+        const matchedScenario = p.scenarios?.find(sc => sc.surfaceId === s.id);
+        const matchedSurfacePhoto = p.photometricSurfaces?.find(ps => ps.surfaceId === s.id);
+        const unitLmFallback = p.projectionScreens?.[0]?.ansiLumens || p.projection?.ansiLumens || 10000;
+        const totalLumens = matchedSurfacePhoto?.totalNominalLumens
+          ?? (matchedScenario && matchedScenario.unitLumens > 0 ? matchedScenario.projectorCount * matchedScenario.unitLumens : undefined)
+          ?? (matchedSurfacePhoto?.effectiveTotalLumens
+            ? Math.round(matchedSurfacePhoto.effectiveTotalLumens / ((matchedSurfacePhoto.netEfficiencyPct ?? 90) / 100))
+            : totalPj * unitLmFallback);
         const titleText = /^\d+\.\s*/.test(s.name) ? esc(s.name) : `${sIdx + 1}. ${esc(s.name)}`;
+        const nativeW = s.projW || (s.orient === 'portrait' ? (s.customH || 1200) : (s.customW || 1920));
+        const nativeH = s.projH || (s.orient === 'portrait' ? (s.customW || 1920) : (s.customH || 1200));
+        const physCov = evaluatePhysicalCoverage({
+          surfaceWidthM: s.effectiveWidthM,
+          surfaceHeightM: s.effectiveHeightM,
+          cols: s.cols || 1,
+          rows: s.rows || 1,
+          projW: nativeW,
+          projH: nativeH,
+          throwDistM: s.throwDistM || 0,
+          throwRatio: s.throwRatio || 0,
+          overlapX: s.overlapX,
+          overlapY: s.overlapY,
+          ovPxX: s.ovPxX,
+          ovPxY: s.ovPxY,
+        });
+        const rawW = s.totalRawW || (s.cols * nativeW);
+        const rawH = s.totalRawH || (s.rows * nativeH);
+        const combinedW = s.projNetW || s.netW;
+        const combinedH = s.projNetH || s.netH;
+        const lostOvW = s.totalOvW ?? Math.max(0, rawW - combinedW);
+        const lostOvH = s.totalOvH ?? Math.max(0, rawH - combinedH);
+        const lostPx = s.lostPixelsTotal ?? Math.max(0, rawW * rawH - combinedW * combinedH);
+        const lostPct = s.lostPixelsPct ?? round((lostPx / Math.max(1, rawW * rawH)) * 100, 1);
+        const pxPerM = s.pxPerMeterW || round(s.netW / Math.max(0.1, s.effectiveWidthM), 1);
+        const pxPerMH = s.pxPerMeterH || round(s.netH / Math.max(0.1, s.effectiveHeightM), 1);
+        const pxPerM2Val = s.pxPerM2 || Math.round((s.netW * s.netH) / Math.max(0.1, area));
+        const ppiVal = s.ppi || round(25.4 / Math.max(0.01, s.avgMmPerPx || 1), 1);
+        const lostWallArea = s.lostWallAreaM2 ?? round(area * (lostPct / 100), 2);
+        const wallPxW = s.aspectW || s.netW;
+        const wallPxH = s.aspectH || s.netH;
+
+        const safeOvX = Math.min(Math.max(0, nativeW - 1), Math.max(0, s.ovPxX || 0));
+        const safeOvY = Math.min(Math.max(0, nativeH - 1), Math.max(0, s.ovPxY || 0));
+        const stepX = Math.max(1, nativeW - safeOvX);
+        const stepY = Math.max(1, nativeH - safeOvY);
+        const isCurved =
+          s.geometry === 'concave_arc' ||
+          s.geometry === 'cylinder_360' ||
+          s.geometry === 'dome' ||
+          s.geometry === 'sphere';
+        const sagVal = s.sagittaM || 0;
+        const bendPct = isCurved
+          ? Math.min(25, Math.max(5, Math.round((sagVal / Math.max(0.5, s.effectiveWidthM || 1)) * 100)))
+          : 0;
+        const warpTmpl = isCurved ? createCurvedWarp(nativeW, nativeH, 4, 4, bendPct, 'concave') : undefined;
+        const wallCenterH = (s.effectiveHeightM || 2.5) / 2 + (s.projShiftYM || 0);
+        const mountDiff =
+          s.type === 'wall' && s.projMountHeightM !== undefined
+            ? Math.abs(s.projMountHeightM - wallCenterH)
+            : 0;
+        const tiltVDeg = mountDiff > 0.05 ? round((Math.atan2(mountDiff, Math.max(0.5, s.throwDistM || 4)) * 180) / Math.PI, 1) : 0;
+        const shiftXDiff = Math.abs(s.projShiftXM || 0);
+        const tiltHDeg = shiftXDiff > 0.05 ? round((Math.atan2(shiftXDiff, Math.max(0.5, s.throwDistM || 4)) * 180) / Math.PI, 1) : 0;
+        const singleH = s.singleProjHeightM || (s.effectiveHeightM || 2.5);
+        const singleW = s.singleProjWidthM || (s.effectiveWidthM || 4);
+        const opticalShiftOk = mountDiff <= singleH * 0.5 && shiftXDiff <= singleW * 0.35;
+
+        const geomSlots: ProjectorSlot[] = [];
+        for (let rr = 0; rr < s.rows; rr++) {
+          for (let cc = 0; cc < s.cols; cc++) {
+            geomSlots.push({
+              id: `${s.id || sIdx}-P${rr * s.cols + cc + 1}`,
+              label: `PJ-${rr * s.cols + cc + 1}`,
+              x: cc * stepX,
+              y: rr * stepY,
+              w: nativeW,
+              h: nativeH,
+              blend: {
+                l: cc > 0 ? safeOvX : 0,
+                r: cc < s.cols - 1 ? safeOvX : 0,
+                t: rr > 0 ? safeOvY : 0,
+                b: rr < s.rows - 1 ? safeOvY : 0,
+              },
+              warp: warpTmpl,
+              keystone:
+                tiltVDeg > 0 || tiltHDeg > 0
+                  ? { vDeg: tiltVDeg, hDeg: tiltHDeg, useOpticalShift: opticalShiftOk }
+                  : undefined,
+            });
+          }
+        }
+        const otherMmList = surfsToRender
+          .filter((_: any, oi: number) => oi !== sIdx)
+          .map((o: any) => o.avgMmPerPx || round((o.effectiveWidthM * 1000) / Math.max(1, o.netW), 2))
+          .filter((v: number) => Number.isFinite(v) && v > 0);
+        const geoSum = computeGeometricMappingSummary({
+          slots: geomSlots,
+          wallWidthM: s.effectiveWidthM,
+          wallHeightM: s.effectiveHeightM,
+          gamma: 2.2,
+          surfaceGeometry: (s.geometry || 'flat') as MappingSurfaceGeometry,
+          radiusM: s.radiusM,
+          angleDeg: s.angleDeg,
+          chordWidthM: s.chordWidthM,
+          sagittaM: s.sagittaM,
+          throwDistM: s.throwDistM,
+          mmPerPxW: round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 2),
+          mmPerPxH: round((s.effectiveHeightM * 1000) / Math.max(1, combinedH), 2),
+          isCircularMask: s.isCircularMask,
+          otherSurfaceMmPerPx: otherMmList,
+          keystoneVDeg: tiltVDeg,
+          keystoneHDeg: tiltHDeg,
+          useOpticalShift: opticalShiftOk,
+        });
         return [
           '<div class="surface-multi-card">',
           '  <div class="surface-multi-card-header">',
@@ -823,9 +1470,9 @@ export function buildReportHtml(p: ReportPayload): string {
           '      </tr>',
           '      <tr>',
           '        <th>Projektör Başı Çözünürlük</th>',
-          '        <td>' + (s.customW || 1920) + ' × ' + (s.customH || 1200) + ' px</td>',
+          '        <td>' + nativeW + ' × ' + nativeH + ' px</td>',
           '        <th>Overlap (Bindirme) Oranı</th>',
-          '        <td>Yatay: <b>%' + s.overlapX + '</b> (' + (s.ovPxX || 0) + ' px) | Dikey: <b>%' + s.overlapY + '</b> (' + (s.ovPxY || 0) + ' px)</td>',
+          '        <td>Yatay: <b>%' + (s.cols > 1 ? s.overlapX : 0) + '</b> (' + (s.cols > 1 ? (s.ovPxX || 0) : 0) + ' px) | Dikey: <b>%' + (s.rows > 1 ? s.overlapY : 0) + '</b> (' + (s.rows > 1 ? (s.ovPxY || 0) : 0) + ' px)</td>',
           '      </tr>',
           '      <tr>',
           '        <th>Lens & Atım Mesafesi (D)</th>',
@@ -835,12 +1482,218 @@ export function buildReportHtml(p: ReportPayload): string {
           '      </tr>',
           '      <tr>',
           '        <th>Kurulu Projektör Gücü</th>',
-          '        <td>' + totalPj + ' Adet × 1350W = <b>' + totalPjWatt + ' W</b> (' + round(totalPjWatt / 1000, 2) + ' kW)</td>',
+          '        <td>' + totalPj + ' Adet × ' + matchedUnitWatt + 'W = <b>' + totalPjWatt + ' W</b> (' + round(totalPjWatt / 1000, 2) + ' kW)</td>',
           '        <th>Tahmini Işık Akısı (Toplam)</th>',
           '        <td><b>~' + totalLumens.toLocaleString('tr-TR') + ' ANSI Lümen</b></td>',
           '      </tr>',
+          '      <tr>',
+          '        <th>Fiziksel Yüzey Kaplama</th>',
+          '        <td colspan="3" style="' + (physCov.verdict === 'FAIL' ? 'color:#dc2626; font-weight:700;' : physCov.verdict === 'PASS' ? 'color:#059669; font-weight:600;' : 'color:#b45309;') + '">' + (physCov.verdict === 'FAIL' ? '⛔ FAIL — ' : physCov.verdict === 'PASS' ? '✓ PASS — ' : '❓ UNKNOWN — ') + esc(physCov.summaryMessage) + '</td>',
+          '      </tr>',
           '    </tbody>',
           '  </table>',
+          ...(p.sections.includePixelMapChain !== false
+            ? [
+                '  <div style="margin-top:8px; break-inside:avoid; page-break-inside:avoid;">',
+                '    <div style="font-size:11px; font-weight:700; color:#0f172a; margin-bottom:4px;">📐 8 Adımlı Pixel Map &amp; Çözünürlük Hesap Zinciri (Toplam Özet)</div>',
+                '    <table class="compact-table" style="background:#ffffff; font-size:10.5px;">',
+                '      <thead><tr><th style="width:30%;">Hesaplama Kalemi</th><th style="width:42%;">Detay / Katsayı</th><th style="width:28%; text-align:right;">Sonuç</th></tr></thead>',
+                '      <tbody>',
+                '        <tr><td><b>1. Native Raster (Tekil Projektör)</b></td><td style="font-family:monospace;">' + totalPj + ' PJ (' + (s.orient === 'portrait' ? 'Dikey' : 'Yatay') + ')</td><td style="text-align:right; font-family:monospace;"><b>' + nativeW + ' × ' + nativeH + ' px</b> (' + round((nativeW * nativeH) / 1000000, 2) + ' MP)</td></tr>',
+                '        <tr><td><b>2. Fiziksel Piksel Yoğunluğu</b></td><td style="font-family:monospace;">Blended Raster (' + combinedW + '×' + combinedH + ' ÷ ' + area + 'm²): <b>' + Math.round((combinedW * combinedH) / Math.max(0.1, area)).toLocaleString('tr-TR') + ' px/m²</b> · Net Kanvas (' + s.netW + '×' + s.netH + ' ÷ ' + area + 'm²): ' + pxPerM2Val.toLocaleString('tr-TR') + ' px/m²</td><td style="text-align:right; font-family:monospace;"><b>H: ' + round((combinedW / Math.max(0.1, s.effectiveWidthM)) * 0.0254, 2) + ' / V: ' + round((combinedH / Math.max(0.1, s.effectiveHeightM)) * 0.0254, 2) + ' PPI</b></td></tr>',
+                '        <tr><td><b>3. Pixel per Meter (px/m)</b></td><td style="font-family:monospace;">Blended (Duvar ' + s.effectiveWidthM + '×' + s.effectiveHeightM + 'm): H <b>' + round(combinedW / Math.max(0.1, s.effectiveWidthM), 2) + '</b> / V <b>' + round(combinedH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m</b>' + (!physCov.isFullyCovered && physCov.coveredHeightM > 0.1 ? ' · Gerçek Projeksiyon (' + physCov.coveredWidthM + '×' + physCov.coveredHeightM + 'm): H <b>' + round(combinedW / Math.max(0.1, physCov.coveredWidthM), 1) + '</b> / V <b>' + round(combinedH / physCov.coveredHeightM, 1) + ' px/m</b>' : '') + ' · Kırpılmış Kanvas (' + s.netW + '×' + s.netH + '): H <b>' + round(s.netW / Math.max(0.1, s.effectiveWidthM), 2) + '</b> / V <b>' + round(s.netH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m</b>' + (geoSum.pixelAnisotropyRatio > 1.05 ? ' <span style="color:#dc2626; font-weight:700;">⚠ Blended Anizotropi %' + round((1 - 1 / geoSum.pixelAnisotropyRatio) * 100, 1) + '!</span>' : '') + '</td><td style="text-align:right; font-family:monospace;">Blended H: <b>' + round(combinedW / Math.max(0.1, s.effectiveWidthM), 2) + ' px/m</b></td></tr>',
+                '        <tr><td><b>4. Piksel Aralığı (mm/px)</b></td><td style="font-family:monospace;">Blended (Duvar): H <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 2) + '</b> / V <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, combinedH), 2) + ' mm/px</b> · Kırpılmış Kanvas: H <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, s.netW), 2) + '</b> / V <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, s.netH), 2) + ' mm/px</b></td><td style="text-align:right; font-family:monospace;">Blended H: <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 2) + ' mm/px</b></td></tr>',
+                '        <tr><td><b>5. Duvar Toplam Piksel Karşılığı</b></td><td style="font-family:monospace;">' + s.effectiveWidthM + 'm × ' + s.effectiveHeightM + 'm (Oran ' + (s.aspectPhysical || round(s.effectiveWidthM / Math.max(0.1, s.effectiveHeightM), 2)) + ':1)</td><td style="text-align:right; font-family:monospace;"><b>' + wallPxW + ' × ' + wallPxH + ' px</b></td></tr>',
+                '        <tr><td><b>6. Ham Toplam → Blended Raster</b></td><td style="font-family:monospace;">Ham: ' + rawW + ' × ' + rawH + ' px · Overlap (' + nativeW + ' px bazlı %' + (s.cols > 1 ? s.overlapX : 0) + '): -' + lostOvW + ' px Yatay / -' + lostOvH + ' px Dikey</td><td style="text-align:right; font-family:monospace; color:#0284c7;"><b>Blended: ' + combinedW + ' × ' + combinedH + ' px</b> (-%' + lostPct + ')</td></tr>',
+                '        <tr><td><b>7. Yüzey Oranı Kırpma Farkı &amp; Geometrik Kayıp</b></td><td style="font-family:monospace;">Duvar Oranı Kırpması: -' + Math.max(0, combinedW - s.netW) + ' px (Yatay) · -' + Math.max(0, combinedH - s.netH) + ' px (Dikey)</td><td style="text-align:right; font-family:monospace; color:#b45309;"><b>Keystone/Warp: -%' + geoSum.totalGeometricLossPct + '</b></td></tr>',
+                '        <tr class="highlight-cell"><td><b>8. SURFACE CONTENT RASTER (İçerik Kanvası)</b></td><td style="font-family:monospace;">Oran: ' + (s.aspectContent || round(s.netW / Math.max(1, s.netH), 2)) + ':1' + (!physCov.isFullyCovered && physCov.verdict === 'FAIL' ? ' · <span style="color:#dc2626; font-weight:700;">⚠ Gerçek kaplama ' + physCov.coveredWidthM + '×' + physCov.coveredHeightM + 'm (eksik)</span>' : ' (Fiziksel yüzey oranına göre üretim kanvası)') + '</td><td style="text-align:right; font-family:monospace;"><b>' + s.netW + ' × ' + s.netH + ' px (' + round((s.netW * s.netH) / 1000000, 2) + ' MP)</b></td></tr>',
+                '      </tbody>',
+                '    </table>',
+                '  </div>',
+              ]
+            : []),
+          ...(p.sections.includeGeometricChain !== false
+            ? [
+                '  <div style="margin-top:8px; break-inside:avoid; page-break-inside:avoid;">',
+                '    <div style="font-size:11px; font-weight:700; color:#0f172a; margin-bottom:4px;">🎯 7 Adımlı Geometrik Düzeltme &amp; Mapping Hesap Zinciri (Toplam Özet) — <span style="color:#4338ca;">' + esc(geoSum.qualityGrade) + '</span></div>',
+                '    <table class="compact-table" style="background:#ffffff; font-size:10.5px;">',
+                '      <thead><tr><th style="width:30%;">Geometrik Kalem</th><th style="width:42%;">Parametre / Analiz</th><th style="width:28%; text-align:right;">Sonuç / Kayıp</th></tr></thead>',
+                '      <tbody>',
+                '        <tr><td><b>1. Keystone Düzeltmesi</b></td><td style="font-family:monospace;">Dikey ±' + geoSum.maxKeystoneVDeg + '° · Yatay ±' + geoSum.maxKeystoneHDeg + '°' + (geoSum.opticalShiftActive ? ' (Optik Shift)' : '') + '</td><td style="text-align:right; font-family:monospace; color:#b45309;">Daralma %' + geoSum.trapezoidShrinkPct + ' · <b>-%' + geoSum.keystonePixelLossPct + '</b></td></tr>',
+                '        <tr><td><b>2. Warp / Mesh Mapping</b></td><td style="font-family:monospace;">' + esc(geoSum.meshGridLabel) + ' (Aktif Warp: ' + geoSum.activeWarpSlots + '/' + totalPj + ' PJ)</td><td style="text-align:right; font-family:monospace;">Ort: ' + geoSum.avgWarpDisplacementPx + ' px (<b>-%' + geoSum.warpPixelLossPct + '</b>)</td></tr>',
+                '        <tr><td><b>3. Surface Mapping</b></td><td>' + esc(geoSum.surfaceGeometryLabel) + '</td><td style="text-align:right; font-family:monospace;">Kiriş ' + geoSum.chordWidthM + 'm · Kavis ' + geoSum.sagittaM + 'm</td></tr>',
+                '        <tr><td><b>4. Masking (Maskeleme)</b></td><td style="font-family:monospace;">' + (geoSum.circularMaskActive ? 'Dairesel / Kubbe Maske' : 'Tam Çerçeve') + '</td><td style="text-align:right; font-family:monospace;">Maskeli -%' + geoSum.maskedOutPct + ' · <b>Aktif %' + geoSum.visibleActivePct + '</b></td></tr>',
+                '        <tr><td><b>5. Edge Blending</b></td><td style="font-family:monospace;">' + Math.max(0, (s.cols - 1) * s.rows + (s.rows - 1) * s.cols) + ' Bölge · ' + geoSum.blendWidthPxX + 'px (' + geoSum.blendPhysicalWidthM + 'm · Geometrik kayıptan bağımsız parlaklık geçişi)</td><td style="text-align:right; font-family:monospace;">γ=' + geoSum.gamma + ' · Orta: <b>%' + geoSum.midpointDrivePct + '</b></td></tr>',
+                '        <tr><td><b>6. Geometrik Bozulma Analizi</b></td><td style="font-family:monospace;">Blended Raster Anizotropi ' + geoSum.pixelAnisotropyRatio + ':1 (Yatay Fark %' + round((1 - 1 / Math.max(1, geoSum.pixelAnisotropyRatio)) * 100, 1) + ') · Kanvas %0 (Kare Piksel)' + (geoSum.trapezoidShrinkPct > 0 || geoSum.warpPixelLossPct > 0 ? ' · Daralma %' + round(geoSum.trapezoidShrinkPct + geoSum.warpPixelLossPct, 1) : '') + ' · ΔD ' + geoSum.depthOfFieldSpreadM + 'm</td><td style="text-align:right;">' + esc(geoSum.distortionLabel) + '</td></tr>',
+                '        <tr><td><b>7. Çoklu Yüzey Eşleştirme</b></td><td style="font-family:monospace;">' + geoSum.matchedSurfacesCount + '/' + geoSum.totalSurfacesCount + ' Yüzey · ' + geoSum.seamTransitionCount + ' Geçiş</td><td style="text-align:right; font-family:monospace;">Sapma %' + geoSum.densitySpreadPct + ' (' + esc(geoSum.multiSurfaceStatus) + ')</td></tr>',
+                '        <tr class="highlight-cell"><td><b>8. TOPLAM EFEKTİF ÇÖZÜNÜRLÜK</b></td><td style="font-family:monospace;">Geometrik Verim (Overlap/Kırpma Hariç): <b>%' + geoSum.geometricEfficiencyPct + '</b> (Kayıp -%' + geoSum.totalGeometricLossPct + ')</td><td style="text-align:right; font-family:monospace;"><b>' + geoSum.effectiveResolutionW + ' × ' + geoSum.effectiveResolutionH + ' px (' + geoSum.effectiveUsableMP + ' MP)</b></td></tr>',
+                '      </tbody>',
+                '    </table>',
+                '  </div>',
+              ]
+            : []),
+          p.sections.includeViewingQuality !== false
+            ? (() => {
+                const vqPhoto = p.photometricSurfaces?.find(ps => ps.surfaceId === s.id || ps.surfaceName === s.name);
+                const vqU0 = vqPhoto?.uniformityU0 ? (vqPhoto.uniformityU0 <= 1 ? round(vqPhoto.uniformityU0 * 100, 1) : round(vqPhoto.uniformityU0, 1)) : 82;
+                const vqU1 = vqPhoto?.uniformityU1 ? (vqPhoto.uniformityU1 <= 1 ? round(vqPhoto.uniformityU1 * 100, 1) : round(vqPhoto.uniformityU1, 1)) : 85;
+                const vqOv = s.ovPxX && s.ovPxX > 0 ? +((s.ovPxX / Math.max(1, nativeW)) * 100).toFixed(2) : (s.overlapMode === 'percent' ? (s.overlapX ?? 0) : 0);
+                const vqMain = renderViewingQualityA4Html(computeViewingQualityAnalysis({
+                  widthM: s.effectiveWidthM,
+                  heightM: s.effectiveHeightM,
+                  resW: s.netW,
+                  resH: s.netH,
+                  viewingDistanceM: s.viewDistM,
+                  offAxisAngleDeg: 0,
+                  screenGain: vqPhoto?.screenGain ?? 1.0,
+                  reflectance: vqPhoto?.surfaceReflectance ?? 0.85,
+                  avgLux: vqPhoto?.avgLux ?? 350,
+                  ambientLux: vqPhoto?.ambientLux ?? 0,
+                  nativeContrast: 2000,
+                  uniformityU0: vqU0,
+                  uniformityU1: vqU1,
+                  projectorCount: Math.max(1, totalPj),
+                  overlapPct: vqOv,
+                  colorCalibrated: true,
+                }));
+                if (!physCov.isFullyCovered && physCov.coveredHeightM > 0.1 && physCov.coveredWidthM > 0.1) {
+                  const actualVq = computeViewingQualityAnalysis({
+                    widthM: physCov.coveredWidthM,
+                    heightM: physCov.coveredHeightM,
+                    resW: combinedW,
+                    resH: combinedH,
+                    viewingDistanceM: s.viewDistM,
+                    offAxisAngleDeg: 0,
+                    screenGain: vqPhoto?.screenGain ?? 1.0,
+                    reflectance: vqPhoto?.surfaceReflectance ?? 0.85,
+                    avgLux: vqPhoto?.avgLux ?? 350,
+                    ambientLux: vqPhoto?.ambientLux ?? 0,
+                    nativeContrast: 2000,
+                    uniformityU0: vqU0,
+                    uniformityU1: vqU1,
+                    projectorCount: Math.max(1, totalPj),
+                    overlapPct: vqOv,
+                    colorCalibrated: true,
+                  });
+                  return vqMain + '<div style="margin:6px 0 8px 0; padding:6px 10px; background:#fffbeb; border:1px solid #fcd34d; border-left:3px solid #d97706; border-radius:4px; font-size:9.5px; color:#92400e;">'
+                    + '<b>📐 Hedef Duvar vs Gerçek Projeksiyon Alanı PPD Farkı:</b> Duvar hedefi (' + s.effectiveWidthM + '×' + s.effectiveHeightM + ' m, ' + s.netW + '×' + s.netH + ' px) ile gerçek aktif projeksiyon alanı (' + physCov.coveredWidthM + '×' + physCov.coveredHeightM + ' m, ' + combinedW + '×' + combinedH + ' px) farklıdır. '
+                    + 'Gerçek projeksiyon alanı için Yatay Ort: <b>' + actualVq.ppd + ' PPD</b> (' + actualVq.arcminPerPixelH + ' arcmin/px) · Dikey Ort: <b>' + actualVq.ppdVertical + ' PPD</b> (' + actualVq.arcminPerPixelV + ' arcmin/px) · Merkez: <b>' + actualVq.ppdCenterH + '/' + actualVq.ppdCenterV + ' PPD</b> · Kenar: <b>' + actualVq.ppdEdgeH + '/' + actualVq.ppdEdgeV + ' PPD</b> · Piksel Aralığı: <b>' + actualVq.mmPerPx + ' mm/px</b> (' + esc(actualVq.sharpnessLabel) + ').'
+                    + '</div>';
+                }
+                return vqMain;
+              })()
+            : '',
+          (() => {
+            if (p.sections.includeFeasibilityAndRecs === false) return '';
+            const matchedPhoto = p.photometricSurfaces?.find(ps => ps.surfaceId === s.id);
+            const ovX = s.ovPxX && s.ovPxX > 0 ? +((s.ovPxX / Math.max(1, nativeW)) * 100).toFixed(2) : (s.overlapMode === 'percent' ? (s.overlapX ?? 15) : 0);
+            const ovY = s.ovPxY && s.ovPxY > 0 ? +((s.ovPxY / Math.max(1, nativeH)) * 100).toFixed(2) : (s.overlapMode === 'percent' ? (s.overlapY ?? 10) : 0);
+            const effPix = computeEffectiveMultiProjectorPixelArea({
+              widthM: s.effectiveWidthM,
+              heightM: s.effectiveHeightM,
+              projW: nativeW,
+              projH: nativeH,
+              cols: Math.max(1, s.cols || 1),
+              rows: Math.max(1, s.rows || 1),
+              overlapPctX: ovX,
+              overlapPctY: ovY,
+              isClosedLoopX: s.geometry === 'cylinder_360' || s.geometry === 'sphere',
+              keystoneDegH: tiltHDeg,
+              keystoneDegV: tiltVDeg,
+              isCurved,
+            });
+            const feas = evaluateSystemFeasibility({
+              widthM: s.effectiveWidthM,
+              heightM: s.effectiveHeightM,
+              throwDistM: s.throwDistM || 4.0,
+              throwRatio: s.throwRatio || 0.8,
+              roomHeightM: Math.max(3.0, s.effectiveHeightM + 0.6, (s.projMountHeightM ?? 2.4) + 0.3),
+              projMountHeightM: s.projMountHeightM ?? Math.max(2.2, s.effectiveHeightM - 0.15),
+              viewDistM: s.viewDistM,
+              cols: Math.max(1, s.cols || 1),
+              rows: Math.max(1, s.rows || 1),
+              projW: nativeW,
+              projH: nativeH,
+              overlapPct: ovX,
+              avgLux: matchedPhoto?.avgLux ?? 350,
+              minLux: matchedPhoto?.minLux,
+              ambientLux: matchedPhoto?.ambientLux ?? 50,
+              uniformityU0: matchedPhoto?.uniformityU0 ?? 78,
+              keystoneDegH: tiltHDeg,
+              keystoneDegV: tiltVDeg,
+              isCurved,
+            });
+            const recs = recommendProjectorAndLenses({
+              widthM: s.effectiveWidthM,
+              heightM: s.effectiveHeightM,
+              throwDistM: s.throwDistM || 4.0,
+              cols: Math.max(1, s.cols || 1),
+              rows: Math.max(1, s.rows || 1),
+              overlapPct: ovX > 0 ? ovX : 15,
+              targetLux: Math.max(300, Math.round(matchedPhoto?.avgLux ?? 350)),
+              ambientLux: matchedPhoto?.ambientLux ?? 50,
+              screenGain: matchedPhoto?.screenGain ?? 1.0,
+              reflectance: matchedPhoto?.surfaceReflectance ?? 0.85,
+              opticalEfficiency: (matchedPhoto?.netEfficiencyPct ?? 90) / 100,
+              preferredNativeH: nativeH,
+            });
+            const altCompare = compareLayoutScenarios({
+              room: { widthM: 14, lengthM: 10, heightM: Math.max(3.5, s.effectiveHeightM + 0.6) },
+              surface: {
+                id: s.id,
+                name: s.name,
+                widthM: s.effectiveWidthM,
+                heightM: s.effectiveHeightM,
+                viewingDistanceM: s.viewDistM || 3.5,
+              },
+              projector: {
+                model: 'Standart Projektör',
+                cols: Math.max(1, s.cols || 1),
+                rows: Math.max(1, s.rows || 1),
+                nativeW,
+                nativeH,
+                ansiLumensPerUnit: matchedPhoto?.nominalLumensPerProj || p.projectionScreens?.[0]?.ansiLumens || p.projection?.ansiLumens || 10000,
+                powerWPerUnit: matchedUnitWatt,
+              },
+              lens: {
+                model: 'Karşılaştırma',
+                throwDistM: s.throwDistM || 4.5,
+                throwRatio: s.throwRatio || 0.8,
+              },
+              photometrics: {
+                opticalEfficiencyPct: matchedPhoto?.netEfficiencyPct ?? 90,
+                screenGain: matchedPhoto?.screenGain ?? 1.0,
+                reflectance: matchedPhoto?.surfaceReflectance ?? 0.85,
+                ambientLux: matchedPhoto?.ambientLux ?? 20,
+              },
+              blending: { overlapPctX: ovX },
+              electrical: { supplyVoltageV: 230, phases: 3, pf: 1 },
+            }, [2, 3, 4]);
+            const optRowForCount = altCompare.find(r => r.projectorCount === Math.max(1, s.cols || 1)) || altCompare[0];
+            const vertOverflowM = round(Math.max(0, singleH - s.effectiveHeightM), 2);
+            const scenarioSplitHtml = optRowForCount ? `<div style="margin-top:8px; padding:6px 8px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; font-size:9.5px; break-inside:avoid; page-break-inside:avoid;">
+              <div style="font-weight:700; color:#0f172a; margin-bottom:3px;">🔀 Senaryo A (Mevcut Manuel Lens) vs Senaryo B (Duvara Optimize Lens)</div>
+              <div><b>Senaryo A (Mevcut):</b> ${totalPj}× TR ${s.throwRatio}:1 · %${ovX} overlap · Birleşik Raster: <b>${combinedW}×${combinedH} px</b> · Yüzey Kanvası: <b>${s.netW}×${s.netH} px</b>${vertOverflowM > 0.05 ? ` · <span style="color:#b45309;">Dikey +${vertOverflowM}m taşma</span>` : ''}</div>
+              <div><b>Senaryo B (Optimize):</b> ${optRowForCount.projectorCount}× TR <b>${optRowForCount.requiredTR}:1</b> · %${optRowForCount.overlapPct} overlap · Kanvas: <b>${optRowForCount.contentW}×${optRowForCount.contentH} px</b> (${optRowForCount.mmPerPx} mm/px) · Dikey taşma yok</div>
+            </div>` : '';
+            const altCompareHtml = scenarioSplitHtml + `<div style="margin-top:8px; break-inside:avoid; page-break-inside:avoid;">
+              <div style="font-size:10.5px; font-weight:700; color:#0f172a; margin-bottom:4px;">⚖️ Alternatif Senaryo Karşılaştırması (2, 3 ve 4 Projektör)</div>
+              <table class="compact-table" style="font-size:9.5px; background:#ffffff;">
+                <thead><tr><th>Senaryo</th><th>Overlap / TR</th><th>İçerik Kanvası</th><th style="text-align:right;">Efektif Akı / Lux</th><th style="text-align:right;">Güç / Montaj</th><th style="text-align:center;">Kaplama</th></tr></thead>
+                <tbody>
+                  ${altCompare.map(row => `<tr${row.isRecommended ? ' class="highlight-cell"' : ''}>
+                    <td><b>${row.projectorCount} Projektör</b>${row.isRecommended ? ' ⭐' : ''}</td>
+                    <td style="font-family:monospace;">%${row.overlapPct} · TR ${row.requiredTR}:1</td>
+                    <td style="font-family:monospace;">${row.contentW}×${row.contentH} px (${row.mmPerPx} mm/px)</td>
+                    <td style="text-align:right; font-family:monospace;">${row.effectiveLumens.toLocaleString('tr-TR')} lm · <b>${row.avgLux} lx</b></td>
+                    <td style="text-align:right; font-family:monospace;">${row.totalPowerW} W · ${row.mountingComplexity}</td>
+                    <td style="text-align:center; font-size:9px;"><b style="color:${row.coverageVerdict === 'PASS' ? '#059669' : '#dc2626'};">Kaplama: ${row.coverageVerdict}</b><br/>Piksel: <b style="color:${row.pixelEfficiencyVerdict === 'PASS' ? '#059669' : '#d97706'};">${row.pixelEfficiencyVerdict}</b> · Genel: <b style="color:${row.overallVerdict === 'PASS' ? '#059669' : row.overallVerdict === 'WARNING' ? '#d97706' : '#dc2626'};">${row.overallVerdict}</b></td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>`;
+            return renderMultiProjFeasibilityAndRecsA4Html(effPix, feas, recs) + altCompareHtml;
+          })(),
           '  <div class="diagram" style="margin-top: 10px;">',
           '    ' + svg,
           '  </div>',
@@ -860,6 +1713,17 @@ export function buildReportHtml(p: ReportPayload): string {
       const mapCards = p.mappingScreens.map((ms, idx) => {
         const L = ms.slots && ms.slots.length > 0 ? computeLayout(ms.slots) : null;
         if (L) warnings.push(...L.warnings);
+        const pmSum = ms.slots && ms.slots.length > 0 ? computePixelMapSummary({ slots: ms.slots }) : null;
+        const otherScreenMm = (p.mappingScreens ?? [])
+          .filter((_, oi) => oi !== idx)
+          .map(os => {
+            try { return os.slots && os.slots.length > 0 ? computePixelMapSummary({ slots: os.slots }).avgMmPerPx : null; }
+            catch { return null; }
+          })
+          .filter((v): v is number => typeof v === 'number' && v > 0);
+        const geoSum = ms.slots && ms.slots.length > 0
+          ? computeGeometricMappingSummary({ slots: ms.slots, gamma: ms.gamma ?? 2.2, otherSurfaceMmPerPx: otherScreenMm })
+          : null;
         const svg = L ? layoutToSvg(L, { gridStep: 200, showCoords: true }) : '';
         return `<div class="surface-multi-card" style="margin-bottom:18px;">
           <div class="surface-multi-card-header">
@@ -867,7 +1731,158 @@ export function buildReportHtml(p: ReportPayload): string {
             <span class="surface-multi-card-badge">${L ? `${L.canvasW} × ${L.canvasH} px · ${L.slots.length} Projektör` : 'Görsel / Logo'}</span>
           </div>
           ${ms.photoUrl ? `<div class="three-d-card" style="margin-bottom:12px;"><img src="${esc(ms.photoUrl)}" alt="${esc(ms.name)}" class="three-d-img" /></div>` : ''}
-          ${L ? `<p style="font-size:12px;"><b>${tr.canvasRes}:</b> ${L.canvasW} × ${L.canvasH} px &nbsp;|&nbsp; <b>${tr.overlapCount}:</b> ${L.overlaps.length} &nbsp;|&nbsp; <b>Gamma:</b> ${ms.gamma ?? 2.2}</p><div class="diagram">${svg}</div>` : ''}
+          ${L ? `<p style="font-size:12px;"><b>${tr.canvasRes}:</b> ${L.canvasW} × ${L.canvasH} px &nbsp;|&nbsp; <b>${tr.overlapCount}:</b> ${L.overlaps.length} &nbsp;|&nbsp; <b>Gamma:</b> ${ms.gamma ?? 2.2}</p>` : ''}
+          ${p.sections.includePixelMapChain !== false && pmSum ? `<table class="compact-table" style="background:#ffffff; font-size:10.5px; margin-bottom:8px;">
+            <thead><tr><th>Pixel Map Özeti</th><th>Detay</th><th style="text-align:right;">Sonuç</th></tr></thead>
+            <tbody>
+              <tr><td><b>1. Projektör Native Çözünürlüğü</b></td><td style="font-family:monospace;">${pmSum.projectorCount} PJ</td><td style="text-align:right; font-family:monospace;"><b>${pmSum.nativeW} × ${pmSum.nativeH} px</b> (${pmSum.nativeMP} MP)</td></tr>
+              <tr><td><b>2–4. Piksel Yoğunluğu / px/m / mm/px</b></td><td style="font-family:monospace;">${pmSum.wallWidthM && pmSum.wallHeightM ? `${pmSum.wallWidthM}m × ${pmSum.wallHeightM}m` : 'Fiziksel ölçü girilmemiş'}</td><td style="text-align:right; font-family:monospace;">${pmSum.pxPerMeterW !== null ? `${pmSum.pxPerMeterW} px/m · ${pmSum.avgMmPerPx} mm/px · ${pmSum.ppi} PPI` : '—'}</td></tr>
+              <tr><td><b>5–6. Birleşik Çözünürlük</b></td><td style="font-family:monospace;">Ham: ${pmSum.rawTotalW} × ${pmSum.rawTotalH} px</td><td style="text-align:right; font-family:monospace;"><b>${pmSum.combinedW} × ${pmSum.combinedH} px</b> (${pmSum.combinedMP} MP)</td></tr>
+              <tr><td><b>7. Overlap Kaybedilen Alan</b></td><td style="font-family:monospace;">Yatay -${pmSum.lostPxW} px · Dikey -${pmSum.lostPxH} px</td><td style="text-align:right; font-family:monospace;"><b>-%${pmSum.lostOverlapPct}</b> (-${round(pmSum.lostOverlapPixels / 1000000, 2)} MP)</td></tr>
+              <tr class="highlight-cell"><td><b>8. TOPLAM İÇERİK ÜRETİM ÇÖZÜNÜRLÜĞÜ</b></td><td style="font-family:monospace;">Oran ${pmSum.contentAspect}:1</td><td style="text-align:right; font-family:monospace;"><b>${pmSum.contentProductionW} × ${pmSum.contentProductionH} px (${pmSum.contentProductionMP} MP)</b></td></tr>
+            </tbody>
+          </table>` : ''}
+          ${p.sections.includeGeometricChain !== false && geoSum ? `<div style="margin-bottom:8px; break-inside:avoid; page-break-inside:avoid;">
+            <div style="font-size:11px; font-weight:700; color:#0f172a; margin-bottom:4px;">🎯 7 Adımlı Geometrik Düzeltme &amp; Mapping Hesap Zinciri — <span style="color:#4338ca;">${esc(geoSum.qualityGrade)}</span></div>
+            <table class="compact-table" style="background:#ffffff; font-size:10.5px;">
+              <thead><tr><th>Geometrik Kalem</th><th>Detay / Parametre</th><th style="text-align:right;">Sonuç</th></tr></thead>
+              <tbody>
+                <tr><td><b>1. Keystone Düzeltmesi</b></td><td style="font-family:monospace;">V ±${geoSum.maxKeystoneVDeg}° · H ±${geoSum.maxKeystoneHDeg}°${geoSum.opticalShiftActive ? ' (Optik Shift)' : ''}</td><td style="text-align:right; font-family:monospace;">Daralma %${geoSum.trapezoidShrinkPct} · -%${geoSum.keystonePixelLossPct}</td></tr>
+                <tr><td><b>2. Warp / Mesh Mapping</b></td><td style="font-family:monospace;">${esc(geoSum.meshGridLabel)}</td><td style="text-align:right; font-family:monospace;">Ort ${geoSum.avgWarpDisplacementPx} px (-%${geoSum.warpPixelLossPct})</td></tr>
+                <tr><td><b>3. Surface Mapping</b></td><td>${esc(geoSum.surfaceGeometryLabel)}</td><td style="text-align:right; font-family:monospace;">Kiriş ${geoSum.chordWidthM}m · Kavis ${geoSum.sagittaM}m</td></tr>
+                <tr><td><b>4. Masking (Maskeleme)</b></td><td style="font-family:monospace;">Kırpma ${geoSum.croppedPixels.toLocaleString('tr-TR')} px · Poligon ${geoSum.polygonMaskCount} · Bezier ${geoSum.bezierMaskCount}</td><td style="text-align:right; font-family:monospace;">Maskeli -%${geoSum.maskedOutPct} · Aktif %${geoSum.visibleActivePct}</td></tr>
+                <tr><td><b>5. Edge Blending</b></td><td style="font-family:monospace;">${Math.max(0, geoSum.seamTransitionCount || geoSum.overlapZoneCount)} Bölge · Yatay ${geoSum.blendWidthPxX}px · Dikey ${geoSum.blendWidthPxY}px</td><td style="text-align:right; font-family:monospace;">γ=${geoSum.gamma} · Orta %${geoSum.midpointDrivePct}</td></tr>
+                <tr><td><b>6. Geometrik Bozulma Analizi</b></td><td style="font-family:monospace;">Anizotropi ${geoSum.pixelAnisotropyRatio}:1 (Yatay Fark %${round((1 - 1 / Math.max(1, geoSum.pixelAnisotropyRatio)) * 100, 1)}) · ΔD ${geoSum.depthOfFieldSpreadM}m</td><td style="text-align:right;">${esc(geoSum.distortionLabel)}</td></tr>
+                <tr><td><b>7. Çoklu Yüzey Eşleştirme</b></td><td style="font-family:monospace;">${geoSum.matchedSurfacesCount}/${geoSum.totalSurfacesCount} Yüzey</td><td style="text-align:right; font-family:monospace;">Sapma %${geoSum.densitySpreadPct} (${esc(geoSum.multiSurfaceStatus)})</td></tr>
+                <tr class="highlight-cell"><td><b>8. TOPLAM EFEKTİF ÇÖZÜNÜRLÜK</b></td><td style="font-family:monospace;">Verim %${geoSum.geometricEfficiencyPct} (Kayıp -%${geoSum.totalGeometricLossPct})</td><td style="text-align:right; font-family:monospace;"><b>${geoSum.effectiveResolutionW} × ${geoSum.effectiveResolutionH} px (${geoSum.effectiveUsableMP} MP)</b></td></tr>
+              </tbody>
+            </table>
+          </div>` : ''}
+          ${pmSum && (p.sections.includeViewingQuality !== false || p.sections.includeFeasibilityAndRecs !== false) ? (() => {
+            const wallW = pmSum.wallWidthM || +(Math.max(1.5, pmSum.combinedW * 0.0025)).toFixed(2);
+            const wallH = pmSum.wallHeightM || +(Math.max(1.0, pmSum.combinedH * 0.0025)).toFixed(2);
+            const matchedPhoto = p.photometricSurfaces?.find(ps => ps.surfaceName === ms.name);
+            const effOv = pmSum.projectorCount > 1 ? Math.max(0, Math.min(99.5, pmSum.lostOverlapPct)) : 0;
+            const effViewD = +(Math.max(1.8, wallH * 2.5)).toFixed(1);
+            const effU0 = matchedPhoto?.uniformityU0 ? (matchedPhoto.uniformityU0 <= 1 ? round(matchedPhoto.uniformityU0 * 100, 1) : round(matchedPhoto.uniformityU0, 1)) : 82;
+            const effU1 = matchedPhoto?.uniformityU1 ? (matchedPhoto.uniformityU1 <= 1 ? round(matchedPhoto.uniformityU1 * 100, 1) : round(matchedPhoto.uniformityU1, 1)) : 85;
+            const effAmbient = matchedPhoto?.ambientLux ?? 0;
+            const vqHtml = p.sections.includeViewingQuality !== false ? renderViewingQualityA4Html(computeViewingQualityAnalysis({
+              widthM: wallW,
+              heightM: wallH,
+              resW: pmSum.contentProductionW,
+              resH: pmSum.contentProductionH,
+              viewingDistanceM: effViewD,
+              offAxisAngleDeg: 0,
+              screenGain: matchedPhoto?.screenGain ?? 1.0,
+              reflectance: matchedPhoto?.surfaceReflectance ?? 0.85,
+              avgLux: matchedPhoto?.avgLux ?? 350,
+              ambientLux: effAmbient,
+              nativeContrast: 2000,
+              uniformityU0: effU0,
+              uniformityU1: effU1,
+              projectorCount: Math.max(1, pmSum.projectorCount),
+              overlapPct: effOv,
+              colorCalibrated: true,
+            })) : '';
+            const feasHtml = p.sections.includeFeasibilityAndRecs !== false ? (() => {
+              const effPix = computeEffectiveMultiProjectorPixelArea({
+                widthM: wallW,
+                heightM: wallH,
+                projW: pmSum.nativeW,
+                projH: pmSum.nativeH,
+                cols: Math.max(1, pmSum.projectorCount),
+                rows: 1,
+                overlapPctX: effOv,
+                keystoneDegH: geoSum?.maxKeystoneHDeg ?? 0,
+                keystoneDegV: geoSum?.maxKeystoneVDeg ?? 0,
+              });
+              const feas = evaluateSystemFeasibility({
+                widthM: wallW,
+                heightM: wallH,
+                throwDistM: matchedPhoto?.distributionRows?.[0]?.throwDistM ?? 4.2,
+                throwRatio: matchedPhoto?.distributionRows?.[0]?.throwRatio ?? 0.8,
+                roomHeightM: Math.max(3.0, wallH + 0.6),
+                projMountHeightM: Math.max(2.2, wallH - 0.15),
+                viewDistM: effViewD,
+                cols: Math.max(1, pmSum.projectorCount),
+                rows: 1,
+                projW: pmSum.nativeW,
+                projH: pmSum.nativeH,
+                overlapPct: effOv,
+                avgLux: matchedPhoto?.avgLux ?? 350,
+                minLux: matchedPhoto?.minLux,
+                ambientLux: matchedPhoto?.ambientLux ?? 50,
+                uniformityU0: matchedPhoto?.uniformityU0 ?? 78,
+                keystoneDegH: geoSum?.maxKeystoneHDeg ?? 0,
+                keystoneDegV: geoSum?.maxKeystoneVDeg ?? 0,
+              });
+              const recs = recommendProjectorAndLenses({
+                widthM: wallW,
+                heightM: wallH,
+                throwDistM: matchedPhoto?.distributionRows?.[0]?.throwDistM ?? 4.2,
+                cols: Math.max(1, pmSum.projectorCount),
+                rows: 1,
+                overlapPct: effOv > 0 ? effOv : 15,
+                targetLux: Math.max(300, Math.round(matchedPhoto?.avgLux ?? 350)),
+                ambientLux: matchedPhoto?.ambientLux ?? 50,
+                screenGain: matchedPhoto?.screenGain ?? 1.0,
+                reflectance: matchedPhoto?.surfaceReflectance ?? 0.85,
+                preferredNativeH: pmSum.nativeH,
+              });
+              const altCompare = compareLayoutScenarios({
+                room: { widthM: 14, lengthM: 10, heightM: Math.max(3.5, wallH + 0.6) },
+                surface: {
+                  id: ms.name,
+                  name: ms.name,
+                  widthM: wallW,
+                  heightM: wallH,
+                  viewingDistanceM: effViewD,
+                },
+                projector: {
+                  model: 'Standart Projektör',
+                  cols: Math.max(1, pmSum.projectorCount),
+                  rows: 1,
+                  nativeW: pmSum.nativeW,
+                  nativeH: pmSum.nativeH,
+                  ansiLumensPerUnit: matchedPhoto?.nominalLumensPerProj || p.projectionScreens?.[0]?.ansiLumens || p.projection?.ansiLumens || 10000,
+                  powerWPerUnit: 450,
+                },
+                lens: {
+                  model: 'Karşılaştırma',
+                  throwDistM: matchedPhoto?.distributionRows?.[0]?.throwDistM ?? 4.2,
+                  throwRatio: matchedPhoto?.distributionRows?.[0]?.throwRatio ?? 0.8,
+                },
+                photometrics: {
+                  opticalEfficiencyPct: matchedPhoto?.netEfficiencyPct ?? 90,
+                  screenGain: matchedPhoto?.screenGain ?? 1.0,
+                  reflectance: matchedPhoto?.surfaceReflectance ?? 0.85,
+                  ambientLux: matchedPhoto?.ambientLux ?? 20,
+                },
+                blending: { overlapPctX: effOv },
+                electrical: { supplyVoltageV: 230, phases: 3, pf: 1 },
+              }, [2, 3, 4]);
+              const altCompareHtml = `<div style="margin-top:8px; break-inside:avoid; page-break-inside:avoid;">
+                <div style="font-size:10.5px; font-weight:700; color:#0f172a; margin-bottom:4px;">⚖️ Alternatif Senaryo Karşılaştırması (2, 3 ve 4 Projektör)</div>
+                <table class="compact-table" style="font-size:9.5px; background:#ffffff;">
+                  <thead><tr><th>Senaryo</th><th>Overlap / TR</th><th>İçerik Kanvası</th><th style="text-align:right;">Efektif Akı / Lux</th><th style="text-align:right;">Güç / Montaj</th><th style="text-align:center;">Kaplama</th></tr></thead>
+                  <tbody>
+                    ${altCompare.map(row => `<tr${row.isRecommended ? ' class="highlight-cell"' : ''}>
+                      <td><b>${row.projectorCount} Projektör</b>${row.isRecommended ? ' ⭐' : ''}</td>
+                      <td style="font-family:monospace;">%${row.overlapPct} · TR ${row.requiredTR}:1</td>
+                      <td style="font-family:monospace;">${row.contentW}×${row.contentH} px (${row.mmPerPx} mm/px)</td>
+                      <td style="text-align:right; font-family:monospace;">${row.effectiveLumens.toLocaleString('tr-TR')} lm · <b>${row.avgLux} lx</b></td>
+                      <td style="text-align:right; font-family:monospace;">${row.totalPowerW} W · ${row.mountingComplexity}</td>
+                      <td style="text-align:center; font-size:9px;"><b style="color:${row.coverageVerdict === 'PASS' ? '#059669' : '#dc2626'};">Kaplama: ${row.coverageVerdict}</b><br/>Piksel: <b style="color:${row.pixelEfficiencyVerdict === 'PASS' ? '#059669' : '#d97706'};">${row.pixelEfficiencyVerdict}</b> · Genel: <b style="color:${row.overallVerdict === 'PASS' ? '#059669' : row.overallVerdict === 'WARNING' ? '#d97706' : '#dc2626'};">${row.overallVerdict}</b></td>
+                    </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>`;
+              return renderMultiProjFeasibilityAndRecsA4Html(effPix, feas, recs) + altCompareHtml;
+            })() : '';
+            return [vqHtml, feasHtml].filter(Boolean).join('\n');
+          })() : ''}
+          ${L ? `<div class="diagram">${svg}</div>` : ''}
         </div>`;
       }).join('');
       blocks.push(`<section class="report-section" style="break-inside:auto; page-break-inside:auto;"><h2>${tr.multi}</h2>${mapCards}</section>`);
@@ -897,48 +1912,67 @@ export function buildReportHtml(p: ReportPayload): string {
 
   // 8. ELEKTRİK YÜK & TEK HAT ŞEMASI
   if (p.sections.electrical && p.electrical) {
-    const el = analyze(p.electrical.loads, p.electrical.circuits, p.electrical.supply);
-    warnings.push(...el.warnings);
-    assumptions.push(...el.assumptions);
-    for (const c of el.circuits) warnings.push(...c.warnings.map(w => `${c.circuit.name}: ${w}`));
-    const sld = toSvg(electricalSingleLine(p.electrical.loads, p.electrical.circuits, p.electrical.supply, el), { background: '#0b1220' });
+    let el: ReturnType<typeof analyze> | null = null;
+    let elErr: string | null = null;
+    try {
+      el = analyze(p.electrical.loads, p.electrical.circuits, p.electrical.supply);
+    } catch (err) {
+      elErr = (err as Error).message || 'Elektrik verisi eksik veya geçersiz.';
+      warnings.push(`Elektrik hesabı yapılamadı: ${elErr}`);
+    }
 
-    const circuitRows = el.circuits.map(c => `
-      <tr>
-        <td><b>${esc(c.circuit.name)}</b></td>
-        <td><span class="badge-circuit">${esc(c.circuit.phase ?? 'L1')}</span></td>
-        <td><b>${c.breakerA ?? 16} A</b> (B-Tipi)</td>
-        <td>${c.circuit.cableMm2 ?? 2.5} mm² NYM / Halogen-Free</td>
-        <td><b>${round(c.ibA, 1)} A</b></td>
-        <td>${Math.round(c.powerW)} W</td>
-        <td>${c.dropPct !== undefined ? `%${round(c.dropPct, 2)}` : '—'}</td>
-        <td>${c.warnings.length === 0 ? '<span class="badge-success">✓ Uygun</span>' : `<span class="badge-danger">${esc(c.warnings.join(' | '))}</span>`}</td>
-      </tr>
-    `).join('');
+    if (!el || elErr) {
+      blocks.push(`<section class="report-section">
+        <h2>${tr.electrical}</h2>
+        <div style="padding:10px 12px; border:1px solid #fca5a5; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:11px; font-weight:700;">
+          ⚠ Veri Eksikliği: Elektrik besleme gerilimi (${p.electrical.supply.voltage} V) veya cihaz gücü eksik/sıfır olduğu için Ib ve tek hat hesabı yapılamadı (${esc(elErr || '')}).
+        </div>
+      </section>`);
+    } else {
+      warnings.push(...el.warnings);
+      assumptions.push(...el.assumptions);
+      for (const c of el.circuits) warnings.push(...c.warnings.map(w => `${c.circuit.name}: ${w}`));
+      const sld = toSvg(electricalSingleLine(p.electrical.loads, p.electrical.circuits, p.electrical.supply, el), { background: '#0b1220' });
 
-    blocks.push(`<section class="report-section">
-      <h2>${tr.electrical}</h2>
-      <p><b>${tr.totalPower}:</b> ${Math.round(el.totalW)} W / ${Math.round(el.demandW)} W (Ib = ${round(el.totalIbA, 1)} A) &nbsp;|&nbsp; <b>${tr.mainBreaker}:</b> ${el.mainBreakerA ?? '—'} A</p>
-      
-      <div class="diagram cad-diagram">${sld}</div>
+      const circuitRows = el.circuits.map(c => `
+        <tr>
+          <td><b>${esc(c.circuit.name)}</b></td>
+          <td><span class="badge-circuit">${esc(c.circuit.phase ?? 'L1')}</span></td>
+          <td>${c.breakerA !== null ? `<b>${c.breakerA} A</b> (B-Tipi)` : '<span class="badge-danger">VERİ EKSİK / AŞIM</span>'}</td>
+          <td>${c.circuit.cableMm2 ? `${c.circuit.cableMm2} mm² · ${c.circuit.lengthM ?? '—'} m (cosφ=${p.electrical?.supply.defaultPf ?? 1})` : '<span class="badge-danger">VERİ EKSİK</span>'}</td>
+          <td><b>${round(c.ibA, 2)} A</b></td>
+          <td>${Math.round(c.powerW)} W</td>
+          <td>${c.dropPct !== undefined ? `%${round(c.dropPct, 2)}` : '<span style="color:#b45309;">VERİ EKSİK</span>'}</td>
+          <td>${c.warnings.length === 0 ? '<span class="badge-success">✓ Uygun</span>' : `<span class="badge-danger">${esc(c.warnings.join(' | '))}</span>`}</td>
+        </tr>
+      `).join('');
 
-      <h3 class="sub-heading">Linye Dağıtım & Yük Dengeleme Tablosu</h3>
-      <table class="compact-table">
-        <thead>
-          <tr>
-            <th>Linye Adı</th>
-            <th>Faz</th>
-            <th>Sigorta Anma Akımı</th>
-            <th>Kablo Kesiti</th>
-            <th>Çalışma Akımı (Ib)</th>
-            <th>Toplam Yük</th>
-            <th>Gerilim Düşümü</th>
-            <th>Durum</th>
-          </tr>
-        </thead>
-        <tbody>${circuitRows}</tbody>
-      </table>
-    </section>`);
+      blocks.push(`<section class="report-section">
+        <h2>${tr.electrical}</h2>
+        ${el.totalW <= 0 || p.electrical.supply.voltage <= 0 ? `<div style="padding:8px 10px; margin-bottom:10px; border:1px solid #fca5a5; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:11px; font-weight:700;">⚠ Veri Eksikliği: Cihaz başı güç (${Math.round(el.totalW)} W) veya besleme gerilimi (${p.electrical.supply.voltage} V) eksik olduğu için kesin akım/yük hesabı yapılamadı.</div>` : ''}
+        <p><b>${tr.totalPower}:</b> ${Math.round(el.totalW)} W / ${Math.round(el.demandW)} W &nbsp;|&nbsp; <b>Toplam ${p.electrical.supply.phases ?? 1}-Faz Hat Akımı (Ib_toplam):</b> ${round(el.totalIbA, 2)} A (${p.electrical.supply.phases === 3 && p.electrical.supply.voltage <= 260 ? `400 V L-L / ${p.electrical.supply.voltage} V L-N` : `${p.electrical.supply.voltage} V`} · cosφ=${p.electrical.supply.defaultPf ?? 1}) &nbsp;|&nbsp; <b>${tr.mainBreaker}:</b> ${el.mainBreakerA ?? '—'} A</p>
+        
+        <div class="diagram cad-diagram">${sld}</div>
+
+        <h3 class="sub-heading">Linye Dağıtım & Yük Dengeleme Tablosu</h3>
+        <table class="compact-table">
+          <thead>
+            <tr>
+              <th>Linye Adı</th>
+              <th>Faz</th>
+              <th>Sigorta Anma Akımı</th>
+              <th>Kablo Kesiti</th>
+              <th>Çalışma Akımı (Ib)</th>
+              <th>Toplam Yük</th>
+              <th>Gerilim Düşümü</th>
+              <th>Durum</th>
+            </tr>
+          </thead>
+          <tbody>${circuitRows}</tbody>
+        </table>
+        <p style="font-size:10px; color:#64748b; margin-top:6px;">Not: Sigorta/kesici önerileri yalnızca işletme akımı (Ib) ve reaktanssız gerilim düşümü ön hesabına dayanır; kablo döşeme yöntemi, ortam sıcaklığı, kısa devre akımı (Icu/Icn), açma eğrisi ve projektör ilk kalkış (inrush) akımı saha elektrik projesinde ayrıca doğrulanmalıdır (tam koruma koordinasyonu onayı yerine geçmez).</p>
+      </section>`);
+    }
   }
 
   // 9. 2B TEKNİK CAD ÇİZİMLERİ (Mimari Yerleşim & Mapping Çizimi)
@@ -990,9 +2024,41 @@ export function buildReportHtml(p: ReportPayload): string {
     </section>`);
   }
 
+  // 10.5. MÜHENDİSLİK ÇAPRAZ DOĞRULAMA MOTORU
+  const validationRes = validateReportConsistency(p);
+  if (validationRes.warnings.length > 0) {
+    warnings.push(...validationRes.warnings);
+  }
+  const modeBanner = p.reportMode === 'as_built'
+    ? `<div style="margin:0 0 10px; padding:7px 12px; border:1px solid #0284c7; background:#f0f9ff; color:#0369a1; border-radius:6px; font-size:10.5px; font-weight:700;">
+        🏗️ UYGULAMA / SAHA RAPORU (As-Built) — Katalog verileri, gerçek ölçüler, saha lux ölçümleri ve doğrulanmış elektrik verileri esaslıdır.
+      </div>`
+    : `<div style="margin:0 0 10px; padding:7px 12px; border:1px solid #94a3b8; background:#f8fafc; color:#334155; border-radius:6px; font-size:10.5px; font-weight:700;">
+        📐 TASARIM &amp; SİMÜLASYON RAPORU — Proje aşaması ön mühendislik ve simülasyon sonuçlarıdır; saha kurulumu öncesi katalog/ölçüm doğrulaması gerekir.
+      </div>`;
+  blocks.unshift(modeBanner);
+
+  if (validationRes.draftRequired) {
+    blocks.unshift(`<div style="margin:0 0 14px; padding:10px 14px; border:2px solid #dc2626; background:#fef2f2; color:#991b1b; border-radius:8px; font-size:11.5px; font-weight:700;">
+      ⛔ TASLAK / DOĞRULANMAMIŞ MÜHENDİSLİK RAPORU — Çapraz doğrulama motoru ${validationRes.errorCount} kritik tutarsızlık ve ${validationRes.unknownCount} eksik veri (UNKNOWN) tespit etti (Skor: %${validationRes.consistencyScorePct}). Nihai müşteri sunumu öncesi hatalı/eksik veriler giderilmelidir.
+    </div>`);
+  }
+  if (p.sections.includeValidationEngine !== false) {
+    const valHtml = renderValidationEngineA4Html(validationRes);
+    if (valHtml) blocks.push(valHtml);
+  }
+
   // 11. TEKNİK KABULLER & MÜHENDİSLİK ONAYI
   if (p.sections.assumptionsAndWarnings) {
-    const wHtml = warnings.length ? `<ul class="warning-list">${[...new Set(warnings)].map(w => `<li class="warn">⚠ ${esc(w)}</li>`).join('')}</ul>` : '<p class="text-muted">Kritik bir mühendislik uyarısı bulunmamaktadır.</p>';
+    const valAlertMsgs = validationRes.checks
+      .filter(c => c.verdict === 'FAIL' || c.verdict === 'UNKNOWN' || c.status === 'warning')
+      .map(c => `[${c.verdict}] ${c.title}: ${c.message}`);
+    const mergedWarnings = [...new Set([...warnings, ...valAlertMsgs])];
+    const wHtml = mergedWarnings.length > 0
+      ? `<ul class="warning-list">${mergedWarnings.map(w => `<li class="warn">⚠ ${esc(w)}</li>`).join('')}</ul>`
+      : (validationRes.hasCriticalErrors || validationRes.unknownCount > 0 || validationRes.warningCount > 0)
+        ? `<p class="warn">⚠ Çapraz doğrulama motorunda ${validationRes.errorCount} kritik hata, ${validationRes.warningCount} uyarı ve ${validationRes.unknownCount} doğrulanamayan (UNKNOWN) kalem tespit edildi; onay öncesi incelenmelidir.</p>`
+        : '<p class="text-muted">Kritik bir mühendislik uyarısı bulunmamaktadır.</p>';
     const aHtml = assumptions.length ? `<ul class="assumption-list">${[...new Set(assumptions)].map(a => `<li>• ${esc(a)}</li>`).join('')}</ul>` : '';
 
     blocks.push(`<section class="report-section">
@@ -1419,14 +2485,56 @@ export function buildReportHtml(p: ReportPayload): string {
   
 
   
+  @page {
+    size: A4 portrait;
+    margin: 12mm 12mm 14mm 12mm;
+  }
+
   @media print {
-    body { margin: 8mm; padding: 0; }
-    .report-section { break-inside: avoid; page-break-after: auto; }
+    html, body {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      background: #ffffff !important;
+      font-size: 11.5px;
+      line-height: 1.4;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .report-header {
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .meta-table { margin-bottom: 14px; }
+    .report-section {
+      margin-bottom: 18px;
+      break-inside: auto;
+      page-break-inside: auto;
+      page-break-after: auto;
+    }
     .report-section.room3d-section { break-inside: auto; page-break-inside: auto; }
-    .three-d-card + .three-d-card { break-before: page; page-break-before: always; }
-    .three-d-img { width: 100%; max-height: 235mm; }
-    .heatmap-report-img { width: 100%; max-height: 155mm; }
-    .diagram svg { width: 100%; max-height: 220mm; }
+    h2, .sub-heading {
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    thead { display: table-header-group; }
+    table { width: 100%; table-layout: auto; }
+    th, td {
+      padding: 5px 7px;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    tr, .metric-card, .note-box, .guideline-card, .diagram, .surface-multi-card, .photometric-report-card, .three-d-card {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .three-d-img { width: 100%; max-height: 120mm; object-fit: contain; }
+    .heatmap-report-img { width: 100%; max-height: 125mm; object-fit: contain; }
+    .diagram svg { width: 100%; max-height: 175mm; }
   }
 </style>
 </head>

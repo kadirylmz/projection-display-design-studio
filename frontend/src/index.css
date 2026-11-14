@@ -5,3 +5,19 @@
 @layer components {
   .inp { @apply w-full mt-1 px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-100; }
 }
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

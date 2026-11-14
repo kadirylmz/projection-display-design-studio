@@ -1,5 +1,15 @@
 import { useMemo, useRef, useState } from 'react';
-import { calculatePixelDensity, computeLayout, ProjectorSlot } from '../engine/multiproj';
+import {
+  calculatePixelDensity,
+  computeGeometricMappingSummary,
+  computeLayout,
+  computePixelMapSummary,
+  createCurvedWarp,
+  createDefaultBezierMask,
+  createUniformWarp,
+  MappingSurfaceGeometry,
+  ProjectorSlot,
+} from '../engine/multiproj';
 import { fromConfig, layoutToSvg, toConfig } from '../engine/exporters';
 import { useMapping } from '../mappingStore';
 import { useProjectStore } from '../projectStore';
@@ -40,6 +50,8 @@ export default function PixelMappingStudio() {
   const [slotRefMap, setSlotRefMap] = useState<Record<string, string>>({});
   const [slotPctMap, setSlotPctMap] = useState<Record<string, number>>({});
   const [slotAxisMap, setSlotAxisMap] = useState<Record<string, 'h' | 'v'>>({});
+  const [summaryWallW, setSummaryWallW] = useState<number>(8.0);
+  const [summaryWallH, setSummaryWallH] = useState<number>(2.5);
   const host = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; dx: number; dy: number } | { pan: true; x: number; y: number } | null>(null);
 
@@ -49,6 +61,45 @@ export default function PixelMappingStudio() {
     catch (e) { return { L: null, err: (e as Error).message }; }
   }, [slots]);
   const L = res.L;
+  const pixelMapSummary = useMemo(() => {
+    if (!L || slots.length === 0) return null;
+    try {
+      return computePixelMapSummary({
+        slots,
+        wallWidthM: summaryWallW > 0 ? summaryWallW : undefined,
+        wallHeightM: summaryWallH > 0 ? summaryWallH : undefined,
+        contentW: content.w,
+        contentH: content.h,
+      });
+    } catch {
+      return null;
+    }
+  }, [L, slots, summaryWallW, summaryWallH, content.w, content.h]);
+
+  const geometricMappingSummary = useMemo(() => {
+    if (!L || slots.length === 0) return null;
+    try {
+      const otherMm = screens
+        .filter(sc => sc.id !== activeScreen?.id && sc.slots.length > 0)
+        .map(sc => {
+          try {
+            return computePixelMapSummary({ slots: sc.slots }).avgMmPerPx;
+          } catch {
+            return null;
+          }
+        })
+        .filter((v): v is number => typeof v === 'number' && v > 0);
+      return computeGeometricMappingSummary({
+        slots,
+        wallWidthM: summaryWallW > 0 ? summaryWallW : undefined,
+        wallHeightM: summaryWallH > 0 ? summaryWallH : undefined,
+        gamma,
+        otherSurfaceMmPerPx: otherMm,
+      });
+    } catch {
+      return null;
+    }
+  }, [L, slots, summaryWallW, summaryWallH, gamma, screens, activeScreen?.id]);
   const v = view ?? (L ? { x: 0, y: 0, w: L.canvasW, h: L.canvasH } : null);
   const svg = L && v ? layoutToSvg(L, { gridStep: grid, safeAreaPct: showSafe ? safe : undefined, rulers, view: v }) : '';
 
@@ -867,6 +918,226 @@ export default function PixelMappingStudio() {
               <div className="grid grid-cols-4 gap-1">{blendField('Sol', 'l')}{blendField('Sağ', 'r')}{blendField('Üst', 't')}{blendField('Alt', 'b')}</div>
             </div>
 
+            {/* 3. Keystone Düzeltmesi */}
+            <div className="border-t border-slate-800 pt-2 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-semibold">3. Keystone Düzeltmesi (Açı &amp; Shift)</span>
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { keystone: { vDeg: 0, hDeg: 0, useOpticalShift: false } })}
+                  className="text-[10px] text-sky-400 hover:underline"
+                >
+                  Sıfırla
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <label className="text-xs">
+                  Dikey Keystone (°)
+                  <input
+                    className="inp font-mono"
+                    type="number"
+                    min="-40"
+                    max="40"
+                    step="1"
+                    value={s.keystone?.vDeg ?? 0}
+                    onChange={e =>
+                      update(s.id, {
+                        keystone: {
+                          vDeg: Math.max(-40, Math.min(40, +e.target.value || 0)),
+                          hDeg: s.keystone?.hDeg ?? 0,
+                          useOpticalShift: s.keystone?.useOpticalShift ?? false,
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label className="text-xs">
+                  Yatay Keystone (°)
+                  <input
+                    className="inp font-mono"
+                    type="number"
+                    min="-40"
+                    max="40"
+                    step="1"
+                    value={s.keystone?.hDeg ?? 0}
+                    onChange={e =>
+                      update(s.id, {
+                        keystone: {
+                          vDeg: s.keystone?.vDeg ?? 0,
+                          hDeg: Math.max(-40, Math.min(40, +e.target.value || 0)),
+                          useOpticalShift: s.keystone?.useOpticalShift ?? false,
+                        },
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <label className="flex items-center gap-1.5 text-[10.5px] text-emerald-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(s.keystone?.useOpticalShift)}
+                  onChange={e =>
+                    update(s.id, {
+                      keystone: {
+                        vDeg: s.keystone?.vDeg ?? 0,
+                        hDeg: s.keystone?.hDeg ?? 0,
+                        useOpticalShift: e.target.checked,
+                      },
+                    })
+                  }
+                  className="accent-emerald-500"
+                />
+                <span>Optik Lens Shift Kullanılıyor (Dijital piksel kaybı %0)</span>
+              </label>
+            </div>
+
+            {/* 4. Warp / Mesh Mapping & Surface Mapping */}
+            <div className="border-t border-slate-800 pt-2 space-y-1.5">
+              <div className="text-slate-400 font-semibold">4. Warp / Mesh &amp; Surface Mapping</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <label className="text-xs">
+                  Yüzey Geometrisi
+                  <select
+                    className="inp"
+                    value={s.surfaceGeometry ?? 'flat'}
+                    onChange={e =>
+                      update(s.id, {
+                        surfaceGeometry: e.target.value as MappingSurfaceGeometry,
+                      })
+                    }
+                  >
+                    <option value="flat">Düz Yüzey (Planar)</option>
+                    <option value="concave_arc">İçbükey Kavis (Concave Arc)</option>
+                    <option value="convex_arc">Dışbükey Kavis (Convex Arc)</option>
+                    <option value="cylinder_360">360° Silindir</option>
+                    <option value="dome">Kubbe / Fulldome</option>
+                    <option value="corner_l">Çoklu Köşe / L-Duvar</option>
+                  </select>
+                </label>
+                <label className="text-xs">
+                  Mesh Izgara (Warp Grid)
+                  <select
+                    className="inp"
+                    value={s.warp ? `${s.warp.cols}x${s.warp.rows}` : 'none'}
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val === 'none') {
+                        update(s.id, { warp: undefined });
+                      } else {
+                        const [c, r] = val.split('x').map(Number);
+                        update(s.id, { warp: createUniformWarp(s.w, s.h, c, r) });
+                      }
+                    }}
+                  >
+                    <option value="none">Warp Yok</option>
+                    <option value="2x2">2×2 Mesh (9 nokta)</option>
+                    <option value="3x3">3×3 Mesh (16 nokta)</option>
+                    <option value="4x4">4×4 Mesh (25 nokta)</option>
+                    <option value="6x6">6×6 Mesh (49 nokta)</option>
+                  </select>
+                </label>
+              </div>
+              {s.surfaceGeometry && s.surfaceGeometry !== 'flat' && (
+                <div className="grid grid-cols-2 gap-1.5">
+                  <label className="text-xs">
+                    Kavis Yarıçapı R (m)
+                    <input
+                      className="inp font-mono"
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      value={s.surfaceRadiusM ?? 5}
+                      onChange={e => update(s.id, { surfaceRadiusM: Math.max(0.5, +e.target.value || 5) })}
+                    />
+                  </label>
+                  <label className="text-xs">
+                    Kavis Açısı (°)
+                    <input
+                      className="inp font-mono"
+                      type="number"
+                      step="5"
+                      min="10"
+                      max="360"
+                      value={s.surfaceAngleDeg ?? 90}
+                      onChange={e => update(s.id, { surfaceAngleDeg: Math.max(10, Math.min(360, +e.target.value || 90)) })}
+                    />
+                  </label>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { warp: createUniformWarp(s.w, s.h, 4, 4) })}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 border border-slate-700 text-slate-300 hover:bg-slate-800"
+                >
+                  Düz 4×4
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { warp: createCurvedWarp(s.w, s.h, 4, 4, 12, 'concave'), surfaceGeometry: 'concave_arc' })}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-sky-950/70 border border-sky-700/70 text-sky-300 hover:bg-sky-900"
+                >
+                  İçbükey Warp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { warp: createCurvedWarp(s.w, s.h, 4, 4, 12, 'convex'), surfaceGeometry: 'convex_arc' })}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-950/70 border border-indigo-700/70 text-indigo-300 hover:bg-indigo-900"
+                >
+                  Dışbükey Warp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { warp: createCurvedWarp(s.w, s.h, 4, 4, 15, 'keystone') })}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/70 border border-amber-700/70 text-amber-300 hover:bg-amber-900"
+                >
+                  Keystone Pin
+                </button>
+              </div>
+            </div>
+
+            {/* 5. Gelişmiş Maskeleme (Poligon & Bezier Maske) */}
+            <div className="border-t border-slate-800 pt-2 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-semibold">5. Gelişmiş Maskeleme (Poligon / Bezier)</span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  {s.polygonMask?.length ? `${s.polygonMask.length} nokta` : s.bezierMask?.length ? 'Bezier Aktif' : 'Yok'}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPolyDrawMode(v => !v)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                    polyDrawMode
+                      ? 'bg-amber-600 border-amber-400 text-white'
+                      : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  {polyDrawMode ? '✓ Poligon Çizimi Açık (Canvas’a Tıkla)' : '✏️ Poligon Maske Çiz'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update(s.id, { bezierMask: createDefaultBezierMask(s.w, s.h, 0.08) })}
+                  className="px-2 py-0.5 rounded text-[10px] bg-rose-950/70 border border-rose-700/70 text-rose-300 hover:bg-rose-900"
+                >
+                  ⭕ Eliptik Bezier Maske
+                </button>
+                {(s.polygonMask || s.bezierMask) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPolyDrawMode(false);
+                      update(s.id, { polygonMask: undefined, bezierMask: undefined });
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  >
+                    Temizle
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="flex gap-2 pt-1 border-t border-slate-800">
               <button
                 className="px-2.5 py-1 bg-sky-800 hover:bg-sky-700 rounded text-white font-medium"
@@ -1035,6 +1306,211 @@ export default function PixelMappingStudio() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 8 Adımlı Pixel Map & Çözünürlük Hesap Zinciri (Toplam Sonuç Özeti) */}
+        {L && pixelMapSummary && (
+          <div className="bg-slate-900 border border-emerald-800/70 rounded p-2.5 text-xs space-y-2">
+            <div className="flex flex-wrap justify-between items-center gap-2 border-b border-slate-800 pb-1.5">
+              <span className="font-bold text-emerald-400">
+                📐 8 Adımlı Pixel Map &amp; Çözünürlük Hesap Zinciri (Toplam Sonuç Özeti)
+              </span>
+              <div className="flex items-center gap-2 text-[11px] text-slate-300">
+                <label className="flex items-center gap-1">
+                  <span>Duvar En (m):</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.5"
+                    value={summaryWallW}
+                    onChange={e => setSummaryWallW(Math.max(0.5, +e.target.value || 1))}
+                    className="w-16 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-sky-300"
+                  />
+                </label>
+                <label className="flex items-center gap-1">
+                  <span>Duvar Boy (m):</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.5"
+                    value={summaryWallH}
+                    onChange={e => setSummaryWallH(Math.max(0.5, +e.target.value || 1))}
+                    className="w-16 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-sky-300"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] text-left border-collapse">
+                <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">1. Projektör Native Çözünürlüğü</td>
+                    <td className="py-1 font-mono text-sky-300"><b>{pixelMapSummary.nativeW} × {pixelMapSummary.nativeH} px</b> ({pixelMapSummary.nativeMP} MP)</td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-400">{pixelMapSummary.projectorCount} Adet Çıkış</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">2. Görüntünün Fiziksel Piksel Yoğunluğu</td>
+                    <td className="py-1 font-mono text-emerald-300">
+                      {pixelMapSummary.pxPerM2 !== null ? <><b>{pixelMapSummary.pxPerM2.toLocaleString('tr-TR')} px/m²</b> · {pixelMapSummary.ppi} PPI</> : '—'}
+                    </td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-400">
+                      {pixelMapSummary.pxPerCm !== null ? `${pixelMapSummary.pxPerCm} px/cm` : ''}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">3. Pixel per Meter (px/m)</td>
+                    <td className="py-1 font-mono text-sky-300">
+                      {pixelMapSummary.pxPerMeterW !== null ? <>Yatay: <b>{pixelMapSummary.pxPerMeterW} px/m</b> · Dikey: <b>{pixelMapSummary.pxPerMeterH} px/m</b></> : '—'}
+                    </td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-400">
+                      {pixelMapSummary.avgPxPerMeter !== null ? `Ortalama: ${pixelMapSummary.avgPxPerMeter} px/m` : ''}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">4. Piksel Aralığı (mm/px)</td>
+                    <td className="py-1 font-mono text-amber-300">
+                      {pixelMapSummary.avgMmPerPx !== null ? <>Ort: <b>{pixelMapSummary.avgMmPerPx} mm/px</b> (W: {pixelMapSummary.mmPerPxW} / H: {pixelMapSummary.mmPerPxH})</> : '—'}
+                    </td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-400">Piksel Pitch</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">5. Duvarın Toplam Piksel Karşılığı</td>
+                    <td className="py-1 font-mono text-slate-200">
+                      {pixelMapSummary.wallAspectPixelsW !== null ? <b>{pixelMapSummary.wallAspectPixelsW} × {pixelMapSummary.wallAspectPixelsH} px</b> : '—'}
+                    </td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-400">
+                      {pixelMapSummary.wallWidthM && pixelMapSummary.wallHeightM ? `${pixelMapSummary.wallWidthM}m × ${pixelMapSummary.wallHeightM}m` : ''}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">6. Çoklu Projektörlerde Birleşik Çözünürlük</td>
+                    <td className="py-1 font-mono text-sky-300"><b>{pixelMapSummary.combinedW} × {pixelMapSummary.combinedH} px</b> ({pixelMapSummary.combinedMP} MP)</td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-400">Ham Toplam: {pixelMapSummary.rawTotalW} × {pixelMapSummary.rawTotalH} px</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">7. Overlap Nedeniyle Kaybedilen Efektif Alan</td>
+                    <td className="py-1 font-mono text-amber-300">
+                      Yatay -{pixelMapSummary.lostPxW} px · Dikey -{pixelMapSummary.lostPxH} px (<b>-%{pixelMapSummary.lostOverlapPct}</b>)
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-amber-400">
+                      -{(pixelMapSummary.lostOverlapPixels / 1_000_000).toFixed(2)} MP
+                      {pixelMapSummary.lostAreaM2 !== null ? ` · -${pixelMapSummary.lostAreaM2} m²` : ''}
+                    </td>
+                  </tr>
+                  <tr className="bg-emerald-950/50 border-t-2 border-emerald-700/70">
+                    <td className="py-1.5 pr-2 font-bold text-emerald-300">8. TOPLAM İÇERİK ÜRETİM ÇÖZÜNÜRLÜĞÜ</td>
+                    <td className="py-1.5 font-mono font-extrabold text-emerald-300">
+                      {pixelMapSummary.contentProductionW} × {pixelMapSummary.contentProductionH} px ({pixelMapSummary.contentProductionMP} MP)
+                    </td>
+                    <td className="py-1.5 text-right font-mono text-emerald-200">
+                      Oran {pixelMapSummary.contentAspect}:1 · Kanvas {pixelMapSummary.combinedW}×{pixelMapSummary.combinedH}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 7 Adımlı Geometrik Düzeltme & Mapping Hesap Zinciri */}
+        {L && geometricMappingSummary && (
+          <div className="bg-slate-900 border border-indigo-800/70 rounded p-2.5 text-xs space-y-2">
+            <div className="flex flex-wrap justify-between items-center gap-2 border-b border-slate-800 pb-1.5">
+              <span className="font-bold text-indigo-300">
+                🎯 7 Adımlı Geometrik Düzeltme &amp; Mapping Hesap Zinciri (Toplam Kalite Özeti)
+              </span>
+              <span className={`px-2 py-0.5 rounded font-mono text-[10.5px] font-bold ${
+                geometricMappingSummary.distortionSeverity === 'low'
+                  ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800'
+                  : geometricMappingSummary.distortionSeverity === 'moderate'
+                    ? 'bg-amber-950/70 text-amber-300 border border-amber-800'
+                    : 'bg-rose-950/70 text-rose-300 border border-rose-800'
+              }`}>
+                {geometricMappingSummary.qualityGrade}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] text-left border-collapse">
+                <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">1. Keystone Düzeltmesi</td>
+                    <td className="py-1 font-mono text-amber-300">
+                      Dikey: ±{geometricMappingSummary.maxKeystoneVDeg}° · Yatay: ±{geometricMappingSummary.maxKeystoneHDeg}°
+                      {geometricMappingSummary.opticalShiftActive ? ' (Optik Lens Shift)' : ''}
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-amber-400">
+                      Trapez Daralma: %{geometricMappingSummary.trapezoidShrinkPct} · Kayıp: -%{geometricMappingSummary.keystonePixelLossPct}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">2. Warp / Mesh Mapping</td>
+                    <td className="py-1 font-mono text-sky-300">
+                      {geometricMappingSummary.meshGridLabel} ({geometricMappingSummary.activeWarpSlots} aktif PJ)
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-sky-300">
+                      Ort. Sapma: {geometricMappingSummary.avgWarpDisplacementPx} px (-%{geometricMappingSummary.warpPixelLossPct})
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">3. Surface Mapping</td>
+                    <td className="py-1 font-mono text-slate-200">
+                      {geometricMappingSummary.surfaceGeometryLabel}
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-slate-400">
+                      Açınım: {geometricMappingSummary.effectiveWidthM}m · Kiriş: {geometricMappingSummary.chordWidthM}m · Kavis: {geometricMappingSummary.sagittaM}m
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">4. Masking (Kırpma &amp; Maske)</td>
+                    <td className="py-1 font-mono text-rose-300">
+                      Kırpma: {geometricMappingSummary.croppedPixels.toLocaleString('tr-TR')} px · Poligon: {geometricMappingSummary.polygonMaskCount} · Bezier: {geometricMappingSummary.bezierMaskCount}
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-emerald-300">
+                      Maskeli Kayıp: -%{geometricMappingSummary.maskedOutPct} · Aktif: <b>%{geometricMappingSummary.visibleActivePct}</b>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">5. Edge Blending</td>
+                    <td className="py-1 font-mono text-sky-300">
+                      {geometricMappingSummary.overlapZoneCount} Bölge · Yatay {geometricMappingSummary.blendWidthPxX}px ({geometricMappingSummary.blendPhysicalWidthM}m) · Dikey {geometricMappingSummary.blendWidthPxY}px
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-sky-300">
+                      γ={geometricMappingSummary.gamma} · Orta Nokta: %{geometricMappingSummary.midpointDrivePct}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">6. Geometrik Bozulma Analizi</td>
+                    <td className="py-1 font-mono text-amber-300">
+                      Anizotropi: {geometricMappingSummary.pixelAnisotropyRatio}:1 · Köşe Gerilimi: %{geometricMappingSummary.cornerStretchPct} · Odak Farkı: {geometricMappingSummary.depthOfFieldSpreadM}m
+                    </td>
+                    <td className="py-1 text-right text-[10.5px] text-slate-300">
+                      {geometricMappingSummary.distortionLabel}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="py-1 pr-2 font-semibold text-slate-200">7. Çoklu Yüzey Eşleştirme</td>
+                    <td className="py-1 font-mono text-indigo-300">
+                      {geometricMappingSummary.matchedSurfacesCount} / {geometricMappingSummary.totalSurfacesCount} Yüzey · {geometricMappingSummary.seamTransitionCount} Geçiş
+                    </td>
+                    <td className="py-1 text-right font-mono text-[10.5px] text-indigo-300">
+                      Sapma: %{geometricMappingSummary.densitySpreadPct} ({geometricMappingSummary.multiSurfaceStatus})
+                    </td>
+                  </tr>
+                  <tr className="bg-indigo-950/50 border-t-2 border-indigo-700/70">
+                    <td className="py-1.5 pr-2 font-bold text-indigo-300">8. TOPLAM EFEKTİF ÇÖZÜNÜRLÜK &amp; VERİM</td>
+                    <td className="py-1.5 font-mono font-extrabold text-emerald-300">
+                      {geometricMappingSummary.effectiveResolutionW} × {geometricMappingSummary.effectiveResolutionH} px ({geometricMappingSummary.effectiveUsableMP} MP aktif)
+                    </td>
+                    <td className="py-1.5 text-right font-mono font-bold text-indigo-200">
+                      Geometrik Verim: %{geometricMappingSummary.geometricEfficiencyPct} (Kayıp: -%{geometricMappingSummary.totalGeometricLossPct})
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

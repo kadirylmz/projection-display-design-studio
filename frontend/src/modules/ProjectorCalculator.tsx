@@ -8,6 +8,7 @@ import {
   widthFromHeight,
 } from '../engine/aspect';
 import { solveProjection, ProjectionResult } from '../engine/throw';
+import { computeProjectorFov } from '../engine/fovProjection';
 import {
   LensRecord,
   STANDARD_LENS_PRESETS,
@@ -929,10 +930,17 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
             </div>
 
             {/* Özet Metrik Kartları */}
-            <div className="grid sm:grid-cols-3 xl:grid-cols-6 gap-2 text-sm">
+            <div className="grid sm:grid-cols-4 xl:grid-cols-7 gap-2 text-sm">
               <Card k="Genişlik × Yükseklik" v={`${f(out.r.imageWidth, 2)} × ${f(out.r.imageHeight, 2)}`} />
               <Card k="Diagonal" v={`${round(fromMeters(out.r.diagonal, 'in'), 1)}" (${f(out.r.diagonal, 2)})`} />
               <Card k="Throw Ratio" v={`${round(out.r.throwRatio, 3)}:1`} />
+              <Card
+                k="Optik FOV (H × V)"
+                v={(() => {
+                  const fovRes = computeProjectorFov(out.r.throwRatio, out.r.imageWidth / Math.max(0.01, out.r.imageHeight));
+                  return `${fovRes.hfovDeg}° × ${fovRes.vfovDeg}° (D ${fovRes.dfovDeg}°)`;
+                })()}
+              />
               <Card
                 k="Zoom Konumu"
                 v={out.r.zoomPosition === undefined ? 'Sabit / —' : `%${round(out.r.zoomPosition * 100, 0)} (0=Geniş)`}

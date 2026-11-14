@@ -87,8 +87,8 @@ export default function App() {
 
   return (
     <div className={dark ? 'dark' : ''}>
-      <div className="flex h-screen bg-slate-950 text-slate-200">
-        <aside className="w-64 shrink-0 border-r border-slate-800 bg-slate-900 flex flex-col">
+      <div className="flex h-screen bg-slate-950 text-slate-200 print:block print:h-auto print:bg-white print:text-slate-900">
+        <aside className="w-64 shrink-0 border-r border-slate-800 bg-slate-900 flex flex-col print:hidden">
           <div className="p-4 text-sm font-bold tracking-wide text-sky-400">
             PROJEKSİYON &amp; EKRAN<br />TASARIM STÜDYOSU
           </div>
@@ -118,7 +118,7 @@ export default function App() {
             </button>
           </div>
         </aside>
-        <main className="flex-1 p-4 overflow-auto">
+        <main className="flex-1 p-4 overflow-auto print:p-0 print:overflow-visible">
           {visited.has('projector') && <div className={active === 'projector' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Ekran, Projektör & Lens"><ProjectorCalculator unit={unit} /></ModuleErrorBoundary></div>}
           {visited.has('lux') && <div className={active === 'lux' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Lux & Parlaklık"><LuxCalculator unit={unit} /></ModuleErrorBoundary></div>}
           {visited.has('content') && <div className={active === 'content' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="İçerik Çözünürlüğü Planlayıcı"><ContentPlanner unit={unit} /></ModuleErrorBoundary></div>}

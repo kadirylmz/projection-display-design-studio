@@ -74,6 +74,18 @@ export function layoutToSvg(L: LayoutResult, o: SvgOptions = {}): string {
         parts.push(`<circle cx="${s.x + pt.x}" cy="${s.y + pt.y}" r="${fs / 5}" fill="#38bdf8"/>`);
       }
     }
+    if (s.keystone && (Math.abs(s.keystone.vDeg) > 0.1 || Math.abs(s.keystone.hDeg) > 0.1)) {
+      const vInset = Math.min(0.35, (Math.abs(s.keystone.vDeg) / 45) * 0.35) * (s.w * 0.5);
+      const hInset = Math.min(0.35, (Math.abs(s.keystone.hDeg) / 45) * 0.35) * (s.h * 0.5);
+      let tlX = s.x, tlY = s.y, trX = s.x + s.w, trY = s.y;
+      let brX = s.x + s.w, brY = s.y + s.h, blX = s.x, blY = s.y + s.h;
+      if (s.keystone.vDeg > 0.1) { tlX += vInset; trX -= vInset; }
+      else if (s.keystone.vDeg < -0.1) { blX += vInset; brX -= vInset; }
+      if (s.keystone.hDeg > 0.1) { trY += hInset; brY -= hInset; }
+      else if (s.keystone.hDeg < -0.1) { tlY += hInset; blY -= hInset; }
+      const kPts = `${tlX.toFixed(1)},${tlY.toFixed(1)} ${trX.toFixed(1)},${trY.toFixed(1)} ${brX.toFixed(1)},${brY.toFixed(1)} ${blX.toFixed(1)},${blY.toFixed(1)}`;
+      parts.push(`<polygon data-keystone="${esc(s.id)}" points="${kPts}" fill="none" stroke="#f59e0b" stroke-width="${fs / 12}" stroke-dasharray="${fs / 2} ${fs / 3}"/>`);
+    }
   });
   if (o.showOverlaps !== false)
     for (const r of L.overlaps)

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { buildReportHtml, DEFAULT_SECTIONS, ReportLang, ReportSectionFlags } from '../engine/report';
+import { buildReportHtml, DEFAULT_SECTIONS, ReportLang, ReportPayload, ReportSectionFlags } from '../engine/report';
+import { computeSurfacePointLuxDistribution } from '../engine/feasibility';
+import { validateReportConsistency } from '../engine/reportValidation';
 import { useProjectStore } from '../projectStore';
 import { usePlannerStore } from '../plannerStore';
 import { usePhotometricStore } from '../photometricStore';
@@ -16,6 +18,7 @@ export default function ReportGenerator() {
   const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
 
   const [lang, setLang] = useState<ReportLang>('tr');
+  const [reportMode, setReportMode] = useState<'design' | 'as_built'>('design');
   const [sections, setSections] = useState<ReportSectionFlags>(() => ({
     ...DEFAULT_SECTIONS,
     led: false, // Projeksiyon mekanlarında varsayılan olarak kapalı; kullanıcı dilediğinde kutucuktan tek tıkla ekler/çıkarır
@@ -50,27 +53,98 @@ export default function ReportGenerator() {
     }
   }, [meta.archPlanRotation]);
 
+  const canonicalIpSurfaces = useMemo(() => {
+    return ipSurfaces.map(s => {
+      if ((s.cols || 1) <= 1 || !(s.throwDistM > 0) || !(s.throwRatio > 0)) return s;
+      const sExt = s as unknown as {
+        effectiveWidthM?: number;
+        effectiveHeightM?: number;
+        projW?: number;
+        projH?: number;
+        projNetH?: number;
+        netW?: number;
+        netH?: number;
+        customW?: number;
+        customH?: number;
+      };
+      const beamW = s.throwDistM / s.throwRatio;
+      const effW = sExt.effectiveWidthM || s.widthM;
+      const effH = sExt.effectiveHeightM || s.heightM;
+      if (s.cols * beamW <= effW + 0.05) return s;
+
+      const stepW = Math.max(0.1, (effW - beamW) / (s.cols - 1));
+      const physOvRatio = Math.min(0.995, Math.max(0, (beamW - stepW) / beamW));
+      const physOvPct = +(physOvRatio * 100).toFixed(1);
+      const pW = sExt.projW || sExt.customW || 1920;
+      const pH = sExt.projH || sExt.customH || 1200;
+      const beamH = beamW * (pH / Math.max(1, pW));
+      const projNetH = sExt.projNetH || ((s.rows || 1) * pH);
+      const physOvPxX = Math.round(pW * physOvRatio);
+      const physCombinedW = s.cols * pW - (s.cols - 1) * physOvPxX;
+      const physTotalOvW = (s.cols - 1) * physOvPxX;
+      const rawAreaPx = s.cols * pW * (s.rows || 1) * pH;
+      const combAreaPx = physCombinedW * projNetH;
+      const physLostPx = Math.max(0, rawAreaPx - combAreaPx);
+      const physLostPct = +((physLostPx / Math.max(1, rawAreaPx)) * 100).toFixed(1);
+
+      // Fiziksel duvarın optik yoğunluk (px/m) karşılığı; net içerik kanvası birleşik rasteri aşamaz
+      const optPxPerM = pW / Math.max(0.1, beamW);
+      const optPxPerMH = pH / Math.max(0.1, beamH);
+      const targetAspect = effW / Math.max(0.1, effH);
+      let syncedNetW = Math.min(physCombinedW, Math.max(100, Math.round(effW * optPxPerM)));
+      let syncedNetH = Math.min(projNetH, Math.max(100, Math.round(effH * optPxPerMH)));
+      if (syncedNetW > physCombinedW || syncedNetH > projNetH) {
+        if (physCombinedW / Math.max(1, projNetH) >= targetAspect) {
+          syncedNetH = projNetH;
+          syncedNetW = Math.min(physCombinedW, Math.max(100, Math.round(projNetH * targetAspect)));
+        } else {
+          syncedNetW = physCombinedW;
+          syncedNetH = Math.min(projNetH, Math.max(100, Math.round(physCombinedW / Math.max(0.1, targetAspect))));
+        }
+      }
+      const syncedPxPerM = +(syncedNetW / Math.max(0.1, effW)).toFixed(1);
+      const syncedPxPerMH = +(syncedNetH / Math.max(0.1, effH)).toFixed(1);
+
+      return {
+        ...s,
+        overlapX: physOvPct,
+        ovPxX: physOvPxX,
+        projNetW: physCombinedW,
+        projNetH,
+        netW: syncedNetW,
+        netH: syncedNetH,
+        pxPerMeter: syncedPxPerM,
+        pxPerMeterH: syncedPxPerMH,
+        aspectProjector: +(physCombinedW / Math.max(1, projNetH)).toFixed(2),
+        aspectContent: +(syncedNetW / Math.max(1, syncedNetH)).toFixed(2),
+        totalOvW: physTotalOvW,
+        lostPixelsTotal: physLostPx,
+        lostPixelsPct: physLostPct,
+      };
+    });
+  }, [ipSurfaces]);
+
   const interProjectorAnalysis = useMemo(() => {
     // Elektrik yüklerinden projektör gücünü al, yoksa 1350W varsay
-    const pjLoad = electrical.loads.find(l => l.name.includes('Projektör') || l.id.includes('PJ'));
-    const singleWatt = pjLoad ? pjLoad.powerW : 1350;
+    const pjLoad = electrical.loads.find(l => l.name.toLowerCase().includes('projekt') || l.id.toUpperCase().includes('PJ'));
+    const singleWatt = pjLoad && pjLoad.powerW > 0 ? pjLoad.powerW : 1350;
     const breakerA = electrical.circuits[0]?.ampacityA ? (electrical.circuits[0].ampacityA <= 18 ? 10 : electrical.circuits[0].ampacityA <= 25 ? 16 : 32) : 16;
 
     return calculateInterProjectorDistances(
-      ipSurfaces,
+      canonicalIpSurfaces,
       physicalRoom,
       singleWatt,
       pjLoad?.name || 'Lazer Projeksiyon Cihazı (WUXGA / 4K)',
       breakerA
     );
-  }, [ipSurfaces, physicalRoom, electrical]);
+  }, [canonicalIpSurfaces, physicalRoom, electrical]);
 
   // 2. 2B MİMARİ YERLEŞİM ODA PLANI SVG ÇİZİMİ
   const architecturalPlanSvg = useMemo(() => {
     try {
       const planDrawing = contentPlannerRoomPlan(
         physicalRoom,
-        ipSurfaces,
+        canonicalIpSurfaces,
         {
           showRoomDimensions: true,
           showThrowDimensions: true,
@@ -93,58 +167,71 @@ export default function ReportGenerator() {
       : (meta.room3dSnapshotUrl ? [meta.room3dSnapshotUrl] : []);
   }, [meta.room3dSnapshots, meta.room3dSnapshotUrl]);
 
-  const reportPhotometricSurfaces = useMemo(() => {
-    const storedList = Object.values(surfacePhotometrics);
-    // Kullanıcı Lux Hesaplayıcı'dan en az 1 yüzey kaydettiyse, İçerik Planlayıcı'dan otomatik hayalet/tahmini duvar üretme;
-    // yalnızca kullanıcının gerçekten hesaplayıp eklediği yüzeyleri göster (böylece 1 duvar varken 2 duvar çıkmaz).
-    if (storedList.length > 0) {
-      const seenIds = new Set<string>();
-      const seenNames = new Set<string>();
-      return storedList.filter(item => {
-        const n = item.surfaceName.trim().toLocaleLowerCase('tr-TR');
-        if (seenIds.has(item.surfaceId) || seenNames.has(n)) return false;
-        seenIds.add(item.surfaceId);
-        seenNames.add(n);
-        return true;
-      });
+  // TEK KAYNAK ANSI LÜMEN & CİHAZ MODELİ (Tüm modüller bu tek kaynaktan beslenir)
+  const canonicalUnitLumens = useMemo(() => {
+    const activeScr = projectionScreens.find(
+      sc => sc.includeInReport !== false && sc.snap && sc.snap.ansiLumens && sc.snap.ansiLumens > 0
+    );
+    if (activeScr?.snap?.ansiLumens && activeScr.snap.ansiLumens > 0) {
+      return activeScr.snap.ansiLumens;
     }
+    if (projectionSnap?.ansiLumens && projectionSnap.ansiLumens > 0) {
+      return projectionSnap.ansiLumens;
+    }
+    const firstStored = Object.values(surfacePhotometrics)[0] as
+      | { nominalLumensPerProj?: number; effectiveTotalLumens?: number; projectorCount?: number; netEfficiencyPct?: number }
+      | undefined;
+    if (firstStored?.nominalLumensPerProj && firstStored.nominalLumensPerProj > 0) {
+      return firstStored.nominalLumensPerProj;
+    }
+    if (firstStored?.effectiveTotalLumens && firstStored.effectiveTotalLumens > 0 && (firstStored.projectorCount || 0) > 0) {
+      const eff = (firstStored.netEfficiencyPct ?? 90) / 100;
+      return Math.round((firstStored.effectiveTotalLumens / Math.max(0.1, eff)) / Math.max(1, firstStored.projectorCount || 1));
+    }
+    return 10000;
+  }, [projectionScreens, projectionSnap?.ansiLumens, surfacePhotometrics]);
 
-    return ipSurfaces.map(s => {
-      const wM = +(s.widthM || 10).toFixed(2);
-      const hM = +(s.heightM || 4).toFixed(2);
-      const area = wM * hM;
-      const count = (s.cols || 1) * (s.rows || 1);
-      const lumensPerPj = 10000;
-      const totalFlux = count * lumensPerPj * 0.90;
-      const avgL = Math.round(totalFlux / Math.max(1, area));
-      const minL = Math.round(avgL * 0.72);
-      const maxL = Math.round(avgL * 1.25);
-      const nits = Math.round((avgL * 1.0) / Math.PI);
-      const fl = +(nits * 0.2919).toFixed(1);
-      const acr = Math.round((avgL + 20) / 20);
+  const canonicalProjectorModel = useMemo(() => {
+    const activeScr = projectionScreens.find(sc => sc.includeInReport !== false && sc.snap?.projectorName);
+    const rawName = (activeScr?.snap?.projectorName || projectionSnap?.projectorName || '').trim();
+    const cleaned = rawName
+      .replace(/^\d+\s*x\s*/i, '')
+      .replace(/\s*\([\d.,]+\s*(?:ANSI\s*)?lm[^)]*\)/gi, '')
+      .trim();
+    if (!cleaned || /^projektör$/i.test(cleaned)) {
+      return interProjectorAnalysis.projectors[0]?.model || 'Lazer Projeksiyon Cihazı';
+    }
+    return cleaned;
+  }, [projectionScreens, projectionSnap?.projectorName, interProjectorAnalysis.projectors]);
 
-      const tr = s.throwRatio || 0.8;
-      const dist = s.throwDistM || 4.5;
-      const beamW = +(dist / tr).toFixed(2);
-      const stepW = (s.cols || 1) > 1 ? Math.max(0.1, (wM - beamW) / ((s.cols || 1) - 1)) : 0;
-
+  const reportPhotometricSurfaces = useMemo(() => {
+    const buildDistributionRows = (
+      surfName: string,
+      wM: number,
+      cols: number,
+      rows: number,
+      dist: number,
+      tr: number
+    ) => {
+      const beamW = +(dist / Math.max(0.1, tr)).toFixed(2);
+      const stepW = cols > 1 ? Math.max(0.1, (wM - beamW) / (cols - 1)) : 0;
       const distRows = [];
       let pjIdx = 1;
-      for (let r = 0; r < (s.rows || 1); r++) {
-        for (let c = 0; c < (s.cols || 1); c++) {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
           const stX = +(c * stepW).toFixed(2);
           const enX = +(stX + beamW).toFixed(2);
           const cX = +((stX + enX) / 2).toFixed(2);
           let ovText = '— (Kenar)';
-          if (c < (s.cols || 1) - 1) {
+          if (c < cols - 1) {
             const nextStX = +((c + 1) * stepW).toFixed(2);
             const ovW = +(enX - nextStX).toFixed(2);
             ovText = `${ovW}m (%${Math.round((ovW / Math.max(0.1, beamW)) * 100)} Blend)`;
           }
           distRows.push({
             code: `PJ ${pjIdx}`,
-            name: `${s.name} - PJ ${pjIdx}`,
-            rowName: (s.rows || 1) > 1 ? `Sıra ${r + 1}` : undefined,
+            name: `${surfName} - PJ ${pjIdx}`,
+            rowName: rows > 1 ? `Sıra ${r + 1}` : undefined,
             startX: stX,
             endX: enX,
             widthM: beamW,
@@ -156,6 +243,152 @@ export default function ReportGenerator() {
           pjIdx++;
         }
       }
+      return distRows;
+    };
+
+    const storedList = Object.values(surfacePhotometrics);
+    // Kullanıcı Lux Hesaplayıcı'dan en az 1 yüzey kaydettiyse, İçerik Planlayıcı'dan otomatik hayalet/tahmini duvar üretme;
+    // yalnızca kullanıcının gerçekten hesaplayıp eklediği yüzeyleri göster (böylece 1 duvar varken 2 duvar çıkmaz).
+    if (storedList.length > 0) {
+      const seenIds = new Set<string>();
+      const seenNames = new Set<string>();
+      return storedList
+        .filter(item => {
+          const n = item.surfaceName.trim().toLocaleLowerCase('tr-TR');
+          if (seenIds.has(item.surfaceId) || seenNames.has(n)) return false;
+          seenIds.add(item.surfaceId);
+          seenNames.add(n);
+          return true;
+        })
+        .map(item => {
+          const n = item.surfaceName.trim().toLocaleLowerCase('tr-TR');
+          const matchedSurf = ipSurfaces.find(
+            s => s.id === item.surfaceId || s.name.trim().toLocaleLowerCase('tr-TR') === n
+          );
+          const wM = matchedSurf ? +(matchedSurf.widthM || item.widthM).toFixed(2) : item.widthM;
+          const hM = matchedSurf ? +(matchedSurf.heightM || item.heightM).toFixed(2) : item.heightM;
+          const count = matchedSurf ? (matchedSurf.cols || 1) * (matchedSurf.rows || 1) : item.projectorCount;
+          const cols = matchedSurf?.cols || Math.max(1, count);
+          const rows = matchedSurf?.rows || 1;
+          const dist = matchedSurf?.throwDistM || item.distributionRows?.[0]?.throwDistM || 4.5;
+          const tr = matchedSurf?.throwRatio || item.distributionRows?.[0]?.throwRatio || 0.8;
+          const area = Math.max(1, wM * hM);
+          const rawEffLumens = item.effectiveTotalLumens && item.effectiveTotalLumens > 0
+            ? item.effectiveTotalLumens
+            : count * 10000 * 0.90;
+          const effLumens =
+            matchedSurf && item.projectorCount > 0 && item.projectorCount !== count
+              ? Math.round(rawEffLumens * (count / item.projectorCount))
+              : rawEffLumens;
+          const expectedAvg = Math.round(effLumens / area);
+          const expectedNitsForItem = (item.avgLux * (item.screenGain || 1.0)) / Math.PI;
+          const distRowsMismatch =
+            !!item.distributionRows &&
+            (item.distributionRows.length !== count ||
+              Math.abs((item.distributionRows[0]?.throwDistM ?? dist) - dist) > 0.05 ||
+              Math.abs((item.distributionRows[0]?.throwRatio ?? tr) - tr) > 0.05);
+          const isStale = !item.isManualLux && (
+            item.minLux === 0 ||
+            distRowsMismatch ||
+            Math.abs(item.avgLux - expectedAvg) > Math.max(20, expectedAvg * 0.1) ||
+            (typeof item.idealNits === 'number' && item.idealNits > 0 && Math.abs(item.idealNits - expectedNitsForItem) > Math.max(10, expectedNitsForItem * 0.1)) ||
+            (matchedSurf && (Math.abs(item.widthM - wM) > 0.05 || Math.abs(item.heightM - hM) > 0.05 || item.projectorCount !== count))
+          );
+          const netEffPct = (item as { netEfficiencyPct?: number }).netEfficiencyPct ?? 90;
+          const unitNomLm = canonicalUnitLumens;
+          const savedUnitNomLm = (item as { nominalLumensPerProj?: number }).nominalLumensPerProj
+            || Math.round((effLumens / Math.max(0.1, netEffPct / 100)) / Math.max(1, count));
+          const syncedEffLumens = Math.round(count * unitNomLm * (netEffPct / 100));
+          const totalNomLm = count * unitNomLm;
+          const lumenMismatch = Math.abs(savedUnitNomLm - unitNomLm) > 50 || Math.abs(effLumens - syncedEffLumens) > 50;
+          if (!isStale && !lumenMismatch) {
+            return {
+              ...item,
+              nominalLumensPerProj: unitNomLm,
+              totalNominalLumens: totalNomLm,
+              effectiveTotalLumens: syncedEffLumens,
+              singleProjectorLux: Math.round(item.avgLux / Math.max(1, item.projectorCount)),
+            };
+          }
+
+          const refl = item.surfaceReflectance ?? 0.85;
+          const ptDist = computeSurfacePointLuxDistribution({
+            widthM: wM,
+            heightM: hM,
+            cols,
+            rows,
+            avgLux: Math.round(syncedEffLumens / area),
+            uniformityU0: 82,
+            overlapPct: cols > 1 ? 15 : 0,
+            screenGain: item.screenGain || 1.0,
+            reflectance: refl,
+            ambientLux: item.ambientLux ?? 20,
+          });
+          const avgL = Math.round(ptDist.avgLux);
+          const minL = Math.round(Math.min(...ptDist.zones9.map(z => z.lux)));
+          const maxL = Math.round(Math.max(...ptDist.zones9.map(z => z.lux)));
+          const idealNitsVal = Math.round((avgL * (item.screenGain || 1.0)) / Math.PI);
+          const nits = Math.round((avgL * (item.screenGain || 1.0) * refl) / Math.PI);
+          const fl = +(nits * 0.2919).toFixed(1);
+          const ambNits = (Math.max(1, item.ambientLux ?? 20) * (item.screenGain || 1.0) * refl) / Math.PI;
+          const acr = Math.round((nits + ambNits) / Math.max(0.01, ambNits));
+          return {
+            ...item,
+            widthM: wM,
+            heightM: hM,
+            projectorCount: count,
+            nominalLumensPerProj: unitNomLm,
+            totalNominalLumens: totalNomLm,
+            effectiveTotalLumens: syncedEffLumens,
+            surfaceReflectance: refl,
+            avgLux: avgL,
+            singleProjectorLux: Math.round(avgL / Math.max(1, count)),
+            minLux: minL,
+            maxLux: maxL,
+            uniformityU0: minL / Math.max(1, avgL),
+            uniformityU1: minL / Math.max(1, maxL),
+            luminanceNits: nits,
+            idealNits: idealNitsVal,
+            luminanceFL: fl,
+            ambientContrastRatio: acr,
+            distributionRows: buildDistributionRows(item.surfaceName, wM, cols, rows, dist, tr),
+          };
+        });
+    }
+
+    return ipSurfaces.map(s => {
+      const wM = +(s.widthM || 10).toFixed(2);
+      const hM = +(s.heightM || 4).toFixed(2);
+      const area = wM * hM;
+      const count = (s.cols || 1) * (s.rows || 1);
+      const lumensPerPj = canonicalUnitLumens;
+      const totalFlux = count * lumensPerPj * 0.90;
+      const baseAvgL = Math.round(totalFlux / Math.max(1, area));
+      const ptDist = computeSurfacePointLuxDistribution({
+        widthM: wM,
+        heightM: hM,
+        cols: s.cols || 1,
+        rows: s.rows || 1,
+        avgLux: baseAvgL,
+        uniformityU0: 82,
+        overlapPct: (s.cols || 1) > 1 ? 15 : 0,
+        screenGain: 1.0,
+        reflectance: 0.85,
+        ambientLux: 20,
+      });
+      const avgL = Math.round(ptDist.avgLux);
+      const minL = Math.round(Math.min(...ptDist.zones9.map(z => z.lux)));
+      const maxL = Math.round(Math.max(...ptDist.zones9.map(z => z.lux)));
+      const refl = 0.85;
+      const idealNitsVal = Math.round((avgL * 1.0) / Math.PI);
+      const nits = Math.round((avgL * 1.0 * refl) / Math.PI);
+      const fl = +(nits * 0.2919).toFixed(1);
+      const ambNits = (20 * 1.0 * refl) / Math.PI;
+      const acr = Math.round((nits + ambNits) / Math.max(0.01, ambNits));
+
+      const tr = s.throwRatio || 0.8;
+      const dist = s.throwDistM || 4.5;
+      const distRows = buildDistributionRows(s.name, wM, s.cols || 1, s.rows || 1, dist, tr);
 
       return {
         surfaceId: s.id,
@@ -164,21 +397,27 @@ export default function ReportGenerator() {
         widthM: wM,
         heightM: hM,
         projectorCount: count,
+        nominalLumensPerProj: lumensPerPj,
+        totalNominalLumens: count * lumensPerPj,
+        effectiveTotalLumens: totalFlux,
         avgLux: avgL,
+        singleProjectorLux: Math.round(avgL / Math.max(1, count)),
         minLux: minL,
         maxLux: maxL,
         uniformityU0: minL / Math.max(1, avgL),
         uniformityU1: minL / Math.max(1, maxL),
         luminanceNits: nits,
+        idealNits: idealNitsVal,
         luminanceFL: fl,
         screenGain: 1.0,
+        surfaceReflectance: refl,
         ambientLux: 20,
         ambientContrastRatio: acr,
         isManualLux: false,
         distributionRows: distRows,
       };
     });
-  }, [ipSurfaces, surfacePhotometrics]);
+  }, [ipSurfaces, surfacePhotometrics, canonicalUnitLumens]);
 
   const [hiddenLuxIds, setHiddenLuxIds] = useState<string[]>(() => {
     try {
@@ -199,59 +438,365 @@ export default function ReportGenerator() {
     [reportPhotometricSurfaces, hiddenLuxIds]
   );
 
-  // 3. HTML RAPORUNU OLUŞTUR
-  const html = useMemo(() => buildReportHtml({
-    lang,
-    meta,
-    sections,
-    room3dSnapshotUrl: snapshots[0] || meta.room3dSnapshotUrl,
-    room3dSnapshots: snapshots,
-    architecturalPlanSvg,
-    interProjectorAnalysis,
-    projection: projectionSnap,
-    projectionScreens: projectionScreens
-      .filter(sc => sc.includeInReport && sc.snap.imageWidthM > 0 && sc.snap.distanceM > 0)
-      .map(sc => ({
-        ...sc.snap,
-        screenName: sc.name || sc.snap.screenName,
-        screenPhotoUrl: sc.photoUrl ?? sc.snap.screenPhotoUrl,
-      })),
-    lux: luxSnap,
-    photometricSurfaces: activePhotometricSurfaces,
-    mappingSlots: slots,
-    mappingScreens: mappingScreens
-      .filter(sc => sc.includeInReport && (sc.slots.length > 0 || sc.photoUrl))
+  // 2B. TEKİL PROJE VERİ KAYNAĞI EŞİTLEMESİ (Elektrik, Lens/Ekran, Pixel Map)
+  const effectiveElectrical = useMemo(() => {
+    const totalPj = interProjectorAnalysis.totalProjectors;
+    if (totalPj <= 0) return electrical;
+    const isPjLoad = (l: { name: string; id: string }) =>
+      l.name.toLowerCase().includes('projekt') || l.id.toUpperCase().includes('PJ');
+    const pjLoads = electrical.loads.filter(isPjLoad);
+    const pjQty = pjLoads.reduce((acc, l) => acc + (l.qty || 0), 0);
+    const is3Phase = electrical.supply.phases === 3;
+
+    const buildBalancedPjSetup = (singleWatt: number, pf = electrical.supply.defaultPf || 1) => {
+      const baseC = electrical.circuits[0];
+      const cableMm2 = baseC?.cableMm2 ?? 2.5;
+      const lengthM = baseC?.lengthM ?? 25;
+      const ampacityA = baseC?.ampacityA ?? 24;
+
+      // 1 veya 2 projektörde 3 fazlı dağıtımda L3 boş kalıp %150-%300 faz dengesizliği üreteceğinden tek faz (230V) besleme kullan
+      if (!is3Phase || totalPj < 3) {
+        const loads = [
+          {
+            id: 'PJ-AUTO-1',
+            name: `Projeksiyon Sistemi (${totalPj}x Projektör)`,
+            powerW: singleWatt,
+            qty: totalPj,
+            pf,
+          },
+        ];
+        const circuits = [
+          {
+            id: baseC?.id || 'C-PJ-1',
+            name: baseC?.name || `Linye-1 (${totalPj}x Projektör)`,
+            loadIds: ['PJ-AUTO-1'],
+            phase: (baseC?.phase && baseC.phase !== '3P' ? baseC.phase : 'L1') as 'L1' | 'L2' | 'L3' | '3P',
+            cableMm2,
+            lengthM,
+            ampacityA,
+            breakerIcuKa: baseC?.breakerIcuKa,
+            prospectiveFaultKa: baseC?.prospectiveFaultKa,
+            tripCurve: baseC?.tripCurve,
+            inrushA: baseC?.inrushA,
+            inrushMultiplier: baseC?.inrushMultiplier,
+            selectivityVerified: baseC?.selectivityVerified,
+          },
+        ];
+        return {
+          loads,
+          circuits,
+          supply: totalPj < 3 ? { ...electrical.supply, phases: 1 as const } : electrical.supply,
+        };
+      }
+      const phases = ['L1', 'L2', 'L3'] as const;
+      const counts = [0, 0, 0];
+      for (let i = 0; i < totalPj; i++) counts[i % 3]++;
+      const items = phases
+        .map((ph, idx) => ({ ph, q: counts[idx] }))
+        .filter(item => item.q > 0);
+      const loads = items.map((item, idx) => ({
+        id: `PJ-AUTO-${idx + 1}`,
+        name: `Projeksiyon Faz ${item.ph} (${item.q}x Projektör)`,
+        powerW: singleWatt,
+        qty: item.q,
+        pf,
+      }));
+      const circuits = items.map((item, idx) => ({
+        id: `C-PJ-${idx + 1}`,
+        name: `Linye-${idx + 1} (${item.ph} · ${item.q}x Projektör)`,
+        loadIds: [`PJ-AUTO-${idx + 1}`],
+        phase: item.ph,
+        cableMm2,
+        lengthM,
+        ampacityA,
+        breakerIcuKa: baseC?.breakerIcuKa,
+        prospectiveFaultKa: baseC?.prospectiveFaultKa,
+        tripCurve: baseC?.tripCurve,
+        inrushA: baseC?.inrushA,
+        inrushMultiplier: baseC?.inrushMultiplier,
+        selectivityVerified: baseC?.selectivityVerified,
+      }));
+      return { loads, circuits, supply: electrical.supply };
+    };
+
+    if (electrical.loads.length === 0) {
+      const singleWatt = interProjectorAnalysis.projectors[0]?.powerW || 1350;
+      const balanced = buildBalancedPjSetup(singleWatt);
+      return {
+        ...electrical,
+        supply: balanced.supply,
+        loads: balanced.loads,
+        circuits: electrical.circuits.length <= 1 ? balanced.circuits : electrical.circuits,
+      };
+    }
+
+    const hasStaleAutoLabel = electrical.circuits.some(c => /(\d+)x\s*Projektör/i.test(c.name) && Number(c.name.match(/(\d+)x\s*Projektör/i)?.[1]) !== totalPj);
+    const hasPfMismatch = pjLoads.some(l => l.id.startsWith('PJ-AUTO-') && l.pf !== undefined && Math.abs(l.pf - (electrical.supply.defaultPf || 1)) > 0.01);
+    if (pjLoads.length >= 1 && (pjQty !== totalPj || hasStaleAutoLabel || hasPfMismatch || (is3Phase && totalPj > 1 && electrical.loads.length === 1))) {
+      const singleLoad = pjLoads[0];
+      const allLoadsArePj = pjLoads.length === electrical.loads.length;
+      if (allLoadsArePj || (is3Phase && totalPj > 1 && electrical.loads.length === 1)) {
+        const balanced = buildBalancedPjSetup(singleLoad.powerW > 0 ? singleLoad.powerW : 1350, electrical.supply.defaultPf || singleLoad.pf || 1);
+        return {
+          ...electrical,
+          supply: balanced.supply,
+          loads: balanced.loads,
+          circuits: electrical.circuits.length <= pjLoads.length ? balanced.circuits : electrical.circuits,
+        };
+      }
+      return {
+        ...electrical,
+        loads: electrical.loads.map(l =>
+          l.id === singleLoad.id ? { ...l, qty: Math.max(1, totalPj - (pjQty - (l.qty || 0))) } : l
+        ),
+      };
+    }
+    return electrical;
+  }, [electrical, interProjectorAnalysis]);
+
+  const canonicalProjection = useMemo(() => {
+    if (ipSurfaces.length === 0) {
+      return {
+        ...projectionSnap,
+        projectorName: canonicalProjectorModel,
+        ansiLumens: canonicalUnitLumens,
+      };
+    }
+    const s0 = ipSurfaces[0];
+    const pjCount0 = Math.max(1, (s0.cols || 1) * (s0.rows || 1));
+    const s0Ext = s0 as unknown as {
+      singleProjWidthM?: number;
+      projW?: number;
+      projH?: number;
+      customW?: number;
+      customH?: number;
+    };
+    const tr0 = s0.throwRatio > 0 ? s0.throwRatio : 0.8;
+    const dist0 = s0.throwDistM > 0 ? s0.throwDistM : 4.5;
+    const w0 = s0Ext.singleProjWidthM && s0Ext.singleProjWidthM > 0
+      ? +s0Ext.singleProjWidthM.toFixed(2)
+      : (interProjectorAnalysis.projectors[0]?.singleWidthM || +(dist0 / tr0).toFixed(2));
+    const pW0 = s0Ext.projW || s0Ext.customW || 1920;
+    const pH0 = s0Ext.projH || s0Ext.customH || 1200;
+
+    const snapTr = projectionSnap.throwRatio ?? 0;
+    const snapCalcTr = projectionSnap.imageWidthM > 0 && projectionSnap.distanceM > 0
+      ? projectionSnap.distanceM / projectionSnap.imageWidthM
+      : 0;
+    const hasInternalConflict = !projectionSnap.distanceM || !projectionSnap.imageWidthM
+      || Math.abs(snapCalcTr - snapTr) > 0.08
+      || Math.abs(snapTr - tr0) > 0.05
+      || Math.abs(projectionSnap.distanceM - dist0) > 0.05
+      || Math.abs(projectionSnap.imageWidthM - w0) > 0.05;
+
+    if (!hasInternalConflict) {
+      return {
+        ...projectionSnap,
+        projectorName: `${pjCount0}x ${canonicalProjectorModel}`,
+        ansiLumens: canonicalUnitLumens,
+      };
+    }
+
+    return {
+      ...projectionSnap,
+      screenName: s0.name || projectionSnap.screenName,
+      projectorName: `${pjCount0}x ${canonicalProjectorModel}`,
+      ansiLumens: canonicalUnitLumens,
+      distanceM: dist0,
+      throwRatio: tr0,
+      imageWidthM: w0,
+      resolution: `${pW0}×${pH0}`,
+      aspectW: 16,
+      aspectH: pW0 === 1920 && pH0 === 1200 ? 10 : Math.max(1, Math.round((16 * pH0) / pW0)),
+      throwMin: projectionSnap.throwMin > 0 && projectionSnap.throwMin <= tr0
+        ? projectionSnap.throwMin
+        : +(tr0 * 0.9).toFixed(2),
+      throwMax: projectionSnap.throwMax > 0 && projectionSnap.throwMax >= tr0
+        ? projectionSnap.throwMax
+        : +(tr0 * 1.15).toFixed(2),
+    };
+  }, [ipSurfaces, projectionSnap, interProjectorAnalysis.projectors, canonicalProjectorModel, canonicalUnitLumens]);
+
+  const effectiveProjectionScreens = useMemo(() => {
+    return projectionScreens
+      .filter(sc => {
+        if (!sc.includeInReport || sc.snap.imageWidthM <= 0 || sc.snap.distanceM <= 0) return false;
+        // İçerik Planlayıcı aktifken dokunulmamış varsayılan 4×2.25m (5.68m, TR 1.42) ekranı rapora sızdırma
+        const isUntouchedDefault =
+          ipSurfaces.length > 0 &&
+          sc.id === 'proj-scr-1' &&
+          Math.abs(sc.snap.imageWidthM - 4) < 0.05 &&
+          Math.abs(sc.snap.distanceM - 5.68) < 0.05 &&
+          Math.abs((sc.snap.throwRatio ?? 0) - 1.42) < 0.05;
+        return !isUntouchedDefault;
+      })
+      .map((sc, idx) => {
+        const scrName = (sc.name || sc.snap.screenName || '').trim().toLowerCase();
+        const matchedIp = canonicalIpSurfaces.find(
+          s => s.id === sc.id || s.name.trim().toLowerCase() === scrName
+        ) || canonicalIpSurfaces[idx];
+        const pjCount = matchedIp ? Math.max(1, (matchedIp.cols || 1) * (matchedIp.rows || 1)) : 1;
+        if (!matchedIp) {
+          return {
+            ...sc.snap,
+            screenName: sc.name || sc.snap.screenName,
+            screenPhotoUrl: sc.photoUrl ?? sc.snap.screenPhotoUrl,
+            projectorName: canonicalProjectorModel,
+            ansiLumens: canonicalUnitLumens,
+          };
+        }
+        const mExt = matchedIp as unknown as {
+          singleProjWidthM?: number;
+          projW?: number;
+          projH?: number;
+          customW?: number;
+          customH?: number;
+        };
+        const trIp = matchedIp.throwRatio > 0 ? matchedIp.throwRatio : (sc.snap.throwRatio || 0.8);
+        const distIp = matchedIp.throwDistM > 0 ? matchedIp.throwDistM : (sc.snap.distanceM || 4.5);
+        const wIp = mExt.singleProjWidthM && mExt.singleProjWidthM > 0
+          ? +mExt.singleProjWidthM.toFixed(2)
+          : +(distIp / Math.max(0.1, trIp)).toFixed(2);
+        const pWIp = mExt.projW || mExt.customW || 1920;
+        const pHIp = mExt.projH || mExt.customH || 1200;
+        const aspectHIp = pWIp === 1920 && pHIp === 1200 ? 10 : Math.max(1, Math.round((16 * pHIp) / Math.max(1, pWIp)));
+        return {
+          ...sc.snap,
+          screenName: matchedIp.name || sc.name || sc.snap.screenName,
+          screenPhotoUrl: sc.photoUrl ?? sc.snap.screenPhotoUrl,
+          projectorName: `${pjCount}x ${canonicalProjectorModel}`,
+          ansiLumens: canonicalUnitLumens,
+          distanceM: distIp,
+          throwRatio: trIp,
+          imageWidthM: wIp,
+          resolution: `${pWIp}×${pHIp}`,
+          aspectW: 16,
+          aspectH: aspectHIp,
+        };
+      });
+  }, [projectionScreens, ipSurfaces.length, canonicalIpSurfaces, canonicalProjectorModel, canonicalUnitLumens]);
+
+  const effectiveMappingScreens = useMemo(() => {
+    return mappingScreens
+      .filter(sc => {
+        if (!sc.includeInReport || (sc.slots.length === 0 && !sc.photoUrl)) return false;
+        // İçerik Planlayıcı aktifken varsayılan 3x 1920×1080 (4992×1080) şablon ekranını gizle
+        const isUntouchedDefault =
+          ipSurfaces.length > 0 &&
+          !sc.photoUrl &&
+          sc.name === 'Ekran / Duvar 1' &&
+          sc.slots.length === 3 &&
+          sc.slots.every(sl => sl.w === 1920 && sl.h === 1080);
+        return !isUntouchedDefault;
+      })
       .map(sc => ({
         name: sc.name,
         photoUrl: sc.photoUrl,
         slots: sc.slots,
         content: sc.content,
         gamma: sc.gamma,
-      })),
+      }));
+  }, [mappingScreens, ipSurfaces.length]);
+
+  // 3. TEKİL RAPOR PAYLOAD'U & ÇAPRAZ DOĞRULAMA + HTML ÜRETİMİ
+  const scenarios = useMemo(() => {
+    return canonicalIpSurfaces.map((s, idx) => {
+      const sExt = s as unknown as {
+        effectiveWidthM?: number;
+        effectiveHeightM?: number;
+        projW?: number;
+        projH?: number;
+        projNetW?: number;
+        projNetH?: number;
+        netW?: number;
+        netH?: number;
+        lensModel?: string;
+        projectorModel?: string;
+      };
+      const pjCount = Math.max(1, (s.cols || 1) * (s.rows || 1));
+      const matchedPhoto = activePhotometricSurfaces.find(ps => ps.surfaceId === s.id);
+      const matchedPj = interProjectorAnalysis.projectors.find(pj => pj.surfaceId === s.id);
+      const pW = sExt.projW || 1920;
+      const pH = sExt.projH || 1200;
+      const ovPx = s.cols > 1 ? Math.round(pW * ((s.overlapX ?? 15) / 100)) : 0;
+      const combW = sExt.projNetW || (s.cols * pW - Math.max(0, s.cols - 1) * ovPx);
+      const combH = sExt.projNetH || (s.rows * pH);
+      return {
+        scenarioId: `SCN-${idx + 1}-${s.id}`,
+        surfaceId: s.id,
+        surfaceName: s.name,
+        projectorCount: pjCount,
+        projectorModels: [sExt.projectorModel || matchedPj?.model || canonicalProjectorModel],
+        lensModels: [sExt.lensModel || matchedPj?.lensModel || canonicalProjection?.lensName || 'Standart Lens'],
+        unitLumens: canonicalUnitLumens,
+        unitPowerW: matchedPj?.powerW || 0,
+        throwDistM: s.throwDistM,
+        imageWidthM: sExt.effectiveWidthM || s.widthM,
+        imageHeightM: sExt.effectiveHeightM || s.heightM,
+        overlapPct: s.cols > 1 ? (s.overlapX ?? 15) : 0,
+        combinedW: combW,
+        combinedH: combH,
+        canvasW: sExt.netW || combW,
+        canvasH: sExt.netH || combH,
+      };
+    });
+  }, [canonicalIpSurfaces, activePhotometricSurfaces, interProjectorAnalysis, canonicalProjection, canonicalProjectorModel, canonicalUnitLumens]);
+
+  const reportPayload: ReportPayload = useMemo(() => ({
+    lang,
+    reportMode,
+    meta,
+    sections,
+    scenarios,
+    room3dSnapshotUrl: snapshots[0] || meta.room3dSnapshotUrl,
+    room3dSnapshots: snapshots,
+    architecturalPlanSvg,
+    interProjectorAnalysis,
+    projection: canonicalProjection,
+    projectionScreens: effectiveProjectionScreens,
+    lux: (() => {
+      if (!luxSnap) return luxSnap;
+      if (activePhotometricSurfaces.length === 0 && effectiveProjectionScreens.length === 1 && canonicalProjection && canonicalProjection.imageWidthM > 0) {
+        const syncedH = +(canonicalProjection.imageWidthM * (canonicalProjection.aspectH / Math.max(1, canonicalProjection.aspectW))).toFixed(2);
+        return {
+          ...luxSnap,
+          widthM: canonicalProjection.imageWidthM,
+          heightM: syncedH,
+        };
+      }
+      return luxSnap;
+    })(),
+    photometricSurfaces: activePhotometricSurfaces,
+    mappingSlots: slots,
+    mappingScreens: effectiveMappingScreens,
     led: ledSnap,
-    electrical,
+    electrical: effectiveElectrical,
     equipmentList,
-    plannerSurfaces: ipSurfaces,
+    plannerSurfaces: canonicalIpSurfaces,
     enabledSurfaceIds,
   }), [
     lang,
+    reportMode,
     meta,
     snapshots,
     sections,
     architecturalPlanSvg,
     interProjectorAnalysis,
-    projectionSnap,
-    projectionScreens,
+    canonicalProjection,
+    effectiveProjectionScreens,
     luxSnap,
     activePhotometricSurfaces,
     slots,
-    mappingScreens,
+    effectiveMappingScreens,
     ledSnap,
-    electrical,
+    effectiveElectrical,
     equipmentList,
-    ipSurfaces,
+    canonicalIpSurfaces,
     enabledSurfaceIds,
   ]);
+
+  const validationRes = useMemo(() => validateReportConsistency(reportPayload), [reportPayload]);
+  const html = useMemo(() => buildReportHtml(reportPayload), [reportPayload]);
 
   const printPdf = () => {
     const w = window.open('', '_blank');
@@ -260,7 +805,28 @@ export default function ReportGenerator() {
     w.document.write(html);
     w.document.close();
     w.focus();
-    setTimeout(() => w.print(), 300);
+
+    let printed = false;
+    const triggerPrint = () => {
+      if (printed || w.closed) return;
+      printed = true;
+      w.print();
+    };
+
+    const imgs = Array.from(w.document.images || []);
+    const pending = imgs.filter(img => !img.complete).map(
+      img => new Promise<void>(res => {
+        img.addEventListener('load', () => res(), { once: true });
+        img.addEventListener('error', () => res(), { once: true });
+      }),
+    );
+
+    if (pending.length === 0) {
+      setTimeout(triggerPrint, 250);
+    } else {
+      Promise.all(pending).then(() => setTimeout(triggerPrint, 150));
+      setTimeout(triggerPrint, 2000);
+    }
   };
 
   const toggle = (k: keyof ReportSectionFlags) => setSections(s => ({ ...s, [k]: !s[k] }));
@@ -292,15 +858,24 @@ export default function ReportGenerator() {
           <span className="text-[10px] text-slate-400 font-mono">v2.4 Pro</span>
         </div>
 
-        {/* Dil, Firma Logosu ve Müşteri Logosu */}
+        {/* Dil, Rapor Modu, Firma Logosu ve Müşteri Logosu */}
         <div className="space-y-2">
-          <label className="block">
-            Rapor Dili
-            <select className="inp font-semibold" value={lang} onChange={e => setLang(e.target.value as ReportLang)}>
-              <option value="tr">🇹🇷 Türkçe</option>
-              <option value="en">🇬🇧 English</option>
-            </select>
-          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              Rapor Dili
+              <select className="inp font-semibold" value={lang} onChange={e => setLang(e.target.value as ReportLang)}>
+                <option value="tr">🇹🇷 Türkçe</option>
+                <option value="en">🇬🇧 English</option>
+              </select>
+            </label>
+            <label className="block">
+              Rapor Modu
+              <select className="inp font-semibold" value={reportMode} onChange={e => setReportMode(e.target.value as 'design' | 'as_built')}>
+                <option value="design">📐 Tasarım Raporu</option>
+                <option value="as_built">🏗️ Uygulama / Saha</option>
+              </select>
+            </label>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="p-2 rounded bg-slate-950 border border-slate-800 space-y-1">
               <div className="flex items-center justify-between">
@@ -696,6 +1271,66 @@ export default function ReportGenerator() {
               )}
             </div>
           ))}
+
+          {/* ANALİZ & HESAPLAMA ZİNCİRLERİ (SEÇMELİ ALT BLOKLAR) */}
+          <div className="pt-2.5 mt-2 border-t border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <b className="text-cyan-300 text-[11px]">Analiz &amp; Hesap Zincirleri (Seçmeli)</b>
+              <button
+                type="button"
+                className="text-[10px] text-sky-400 hover:text-sky-300 underline"
+                onClick={() => {
+                  const anyOff =
+                    sections.includePixelMapChain === false ||
+                    sections.includeGeometricChain === false ||
+                    sections.includeBrightnessChain === false ||
+                    sections.includeViewingQuality === false ||
+                    sections.includePointLuxMap === false ||
+                    sections.includeFeasibilityAndRecs === false ||
+                    sections.includeValidationEngine === false;
+                  setSections(prev => ({
+                    ...prev,
+                    includePixelMapChain: anyOff,
+                    includeGeometricChain: anyOff,
+                    includeBrightnessChain: anyOff,
+                    includeViewingQuality: anyOff,
+                    includePointLuxMap: anyOff,
+                    includeFeasibilityAndRecs: anyOff,
+                    includeValidationEngine: anyOff,
+                  }));
+                }}
+              >
+                {sections.includePixelMapChain === false ||
+                sections.includeGeometricChain === false ||
+                sections.includeBrightnessChain === false ||
+                sections.includeViewingQuality === false ||
+                sections.includePointLuxMap === false ||
+                sections.includeFeasibilityAndRecs === false ||
+                sections.includeValidationEngine === false
+                  ? 'Tümünü Aç'
+                  : 'Tümünü Kapat'}
+              </button>
+            </div>
+            {([
+              ['includePixelMapChain', '📐 8 Adımlı Pixel Map & Çözünürlük Zinciri'],
+              ['includeGeometricChain', '🎯 7 Adımlı Geometrik & Mapping Zinciri'],
+              ['includeBrightnessChain', '📊 9 Adımlı Işık, Kayıp & Parlaklık Zinciri'],
+              ['includeViewingQuality', '👁️ 7 Adımlı İzleme & Görüntü Kalitesi Analizi'],
+              ['includePointLuxMap', '☀️ 9-Bölge Noktasal Lux Dağılım Haritası'],
+              ['includeFeasibilityAndRecs', '⚠️ Efektif Piksel, 5 Kriterli Hata & Öneriler'],
+              ['includeValidationEngine', '🛡️ Mühendislik Çapraz Doğrulama Motoru'],
+            ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
+              <label key={k} className="flex items-center gap-2 cursor-pointer text-[11px] text-slate-300 hover:text-white transition">
+                <input
+                  type="checkbox"
+                  checked={sections[k] !== false}
+                  onChange={() => setSections(s => ({ ...s, [k]: s[k] === false }))}
+                  className="accent-cyan-500"
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
         </div>
 
         
@@ -733,6 +1368,13 @@ export default function ReportGenerator() {
             <span>Toplam Cihaz: <b className="text-sky-300">{interProjectorAnalysis.totalProjectors}</b></span>
             <span>Toplam Güç: <b className="text-amber-300">{(interProjectorAnalysis.totalPowerW / 1000).toFixed(2)} kW</b></span>
             <span>Toplam Akım (Ib): <b className="text-rose-400">{(interProjectorAnalysis.totalPowerW / (230 * 0.95)).toFixed(1)} A</b></span>
+            <span className={validationRes.hasCriticalErrors ? 'text-rose-400 font-bold' : validationRes.warningCount > 0 ? 'text-amber-300 font-bold' : 'text-emerald-400 font-bold'}>
+              {validationRes.hasCriticalErrors
+                ? `⛔ Taslak (${validationRes.errorCount} Hata · %${validationRes.consistencyScorePct})`
+                : validationRes.warningCount > 0
+                ? `⚠ ${validationRes.warningCount} Uyarı (%${validationRes.consistencyScorePct})`
+                : `✓ Doğrulandı (%${validationRes.consistencyScorePct})`}
+            </span>
           </div>
         </div>
         <iframe title="rapor-onizleme" srcDoc={html} className="w-full flex-1 bg-white" />

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { blendDrive, computeLayout, gridLayout, horizontalBlendAt, pctToPx } from './multiproj';
+import {
+  blendDrive,
+  calculatePixelDensity,
+  computeGeometricMappingSummary,
+  computeLayout,
+  computePixelMapSummary,
+  createCurvedWarp,
+  gridLayout,
+  horizontalBlendAt,
+  pctToPx,
+  polygonAreaPx,
+} from './multiproj';
 
 describe('çoklu projektör kanvası (kabul testi 4)', () => {
   const ox = pctToPx(10, 1920);
@@ -81,5 +92,126 @@ describe('kenar harmanlama', () => {
     expect(horizontalBlendAt(p1, 960, 2.2)).toBe(1);
     expect(horizontalBlendAt(p1, 1919, 2.2)).toBeLessThan(0.1);
     expect(horizontalBlendAt(p2, 0, 2.2)).toBeLessThan(0.1);
+  });
+});
+
+describe('8 kalemli pixel map ve çözünürlük özeti', () => {
+  it('calculatePixelDensity px/m ve mm/px değerlerini doğru hesaplar', () => {
+    const d = calculatePixelDensity(3648, 1200, 9.12, 3.0);
+    expect(d).not.toBeNull();
+    expect(d!.pxPerMeterW).toBeCloseTo(400, 1);
+    expect(d!.pxPerMeterH).toBeCloseTo(400, 1);
+    expect(d!.mmPerPxW).toBeCloseTo(2.5, 2);
+    expect(d!.mmPerPxH).toBeCloseTo(2.5, 2);
+    expect(d!.pxPerM2).toBe(160000);
+  });
+
+  it('computePixelMapSummary 2×1 overlap ve içerik üretim çözünürlüğünü doğru döndürür', () => {
+    const slots = gridLayout({ cols: 2, rows: 1, w: 1920, h: 1200, overlapX: 192, overlapY: 0 });
+    const summary = computePixelMapSummary({
+      slots,
+      wallWidthM: 9.12,
+      wallHeightM: 3.0,
+    });
+    expect(summary.nativeW).toBe(1920);
+    expect(summary.nativeH).toBe(1200);
+    expect(summary.combinedW).toBe(3648);
+    expect(summary.combinedH).toBe(1200);
+    expect(summary.lostPxW).toBe(192);
+    expect(summary.lostOverlapPixels).toBe(192 * 1200);
+    expect(summary.pxPerMeterW).toBeCloseTo(400, 1);
+    expect(summary.avgMmPerPx).toBeCloseTo(2.5, 2);
+    expect(summary.wallAspectPixelsW).toBe(3648);
+    expect(summary.wallAspectPixelsH).toBe(1200);
+    expect(summary.contentProductionW).toBe(3648);
+    expect(summary.contentProductionH).toBe(1200);
+  });
+});
+
+describe('7 kalemli geometrik düzeltme ve mapping özeti', () => {
+  it('keystone, curved warp, concave_arc sagitta ve edge blend metriklerini doğru hesaplar', () => {
+    const base = gridLayout({ cols: 2, rows: 1, w: 1920, h: 1200, overlapX: 192, overlapY: 0 });
+    const slots = base.map((s, idx) =>
+      idx === 0
+        ? {
+            ...s,
+            keystone: { vDeg: 15, hDeg: 0, useOpticalShift: false },
+            warp: createCurvedWarp(s.w, s.h, 4, 4, 10, 'concave'),
+            surfaceGeometry: 'concave_arc' as const,
+            surfaceRadiusM: 6,
+            surfaceAngleDeg: 90,
+          }
+        : s,
+    );
+
+    const g = computeGeometricMappingSummary({
+      slots,
+      wallWidthM: 9.42,
+      wallHeightM: 3.0,
+      gamma: 2.2,
+      otherSurfaceMmPerPx: [2.6, 2.55],
+    });
+
+    expect(g.maxKeystoneVDeg).toBe(15);
+    expect(g.trapezoidShrinkPct).toBeGreaterThan(10);
+    expect(g.keystonePixelLossPct).toBeGreaterThan(8);
+    expect(g.activeWarpSlots).toBe(1);
+    expect(g.meshCols).toBe(4);
+    expect(g.meshRows).toBe(4);
+    expect(g.totalControlPoints).toBe(25);
+    expect(g.avgWarpDisplacementPx).toBeGreaterThan(0);
+    expect(g.surfaceGeometry).toBe('concave_arc');
+    expect(g.chordWidthM).toBeCloseTo(2 * 6 * Math.sin(Math.PI / 4), 2);
+    expect(g.sagittaM).toBeCloseTo(6 * (1 - Math.cos(Math.PI / 4)), 2);
+    expect(g.overlapZoneCount).toBe(1);
+    expect(g.blendWidthPxX).toBe(192);
+    expect(g.midpointDrivePct).toBeCloseTo(73.0, 1);
+    expect(g.totalSurfacesCount).toBe(3);
+    expect(g.matchedSurfacesCount).toBe(3);
+    expect(g.densitySpreadPct).toBeLessThan(10);
+    expect(g.geometricEfficiencyPct).toBeLessThan(100);
+    expect(g.effectiveUsablePixels).toBeGreaterThan(0);
+    expect(g.effectiveUsablePixels).toBeLessThan(3648 * 1200);
+  });
+
+  it('optik lens shift ile keystone kaybını sıfırlar ve poligon/crop maskelemesini hesaplar', () => {
+    const poly = [
+      { x: 0, y: 0 },
+      { x: 1000, y: 0 },
+      { x: 1000, y: 600 },
+      { x: 0, y: 600 },
+    ];
+    expect(polygonAreaPx(poly)).toBe(600000);
+
+    const g = computeGeometricMappingSummary({
+      slots: [
+        {
+          id: 'P1',
+          label: 'PJ-1',
+          x: 0,
+          y: 0,
+          w: 2000,
+          h: 1000,
+          crop: { l: 100, r: 100, t: 0, b: 0 },
+          polygonMask: [
+            { x: 100, y: 0 },
+            { x: 1900, y: 0 },
+            { x: 1900, y: 500 },
+            { x: 100, y: 500 },
+          ],
+          keystone: { vDeg: 12, hDeg: 5, useOpticalShift: true },
+        },
+      ],
+      wallWidthM: 4,
+      wallHeightM: 2,
+    });
+
+    expect(g.opticalShiftActive).toBe(true);
+    expect(g.keystonePixelLossPct).toBe(0);
+    expect(g.croppedPixels).toBe(200 * 1000);
+    expect(g.polygonMaskCount).toBe(1);
+    expect(g.maskedOutPct).toBeCloseTo(55, 1);
+    expect(g.visibleActivePct).toBeCloseTo(45, 1);
+    expect(g.geometricEfficiencyPct).toBeCloseTo(45, 1);
   });
 });

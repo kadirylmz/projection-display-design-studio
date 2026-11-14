@@ -37,6 +37,21 @@ export interface SurfacePhotometricEntry {
   isManualLux: boolean;
   heatmapSnapshotUrl?: string;
   distributionRows: ProjectorDistributionRow[];
+  lumenStandard?: 'ansi' | 'iso' | 'center';
+  nominalLumensPerProj?: number;
+  totalNominalLumens?: number;
+  isoEquivalentLumens?: number;
+  opticalEfficiencyPct?: number;
+  calibrationFactorPct?: number;
+  netEfficiencyPct?: number;
+  effectiveTotalLumens?: number;
+  lostLumens?: number;
+  theoreticalAvgLux?: number;
+  singleProjectorLux?: number;
+  surfaceReflectance?: number;
+  theoreticalNits?: number;
+  idealNits?: number;
+  ambientNits?: number;
 }
 
 export interface PhotometricStoreState {

@@ -20,6 +20,15 @@ export interface ProjectorSpatialData {
   rowIndex: number;            // 1-based satır sırası
   model: string;               // Projektör modeli / açıklaması
   powerW: number;              // Birim güç tüketimi (W)
+  lumens?: number;             // Birim ışık akısı (ANSI lm)
+  nativeW: number;             // Cihaz native yatay çözünürlüğü (px)
+  nativeH: number;             // Cihaz native dikey çözünürlüğü (px)
+  throwRatio: number;          // Gerçekleşen / seçili atım oranı (TR = D / W)
+  throwMin?: number;           // Lens katalog min TR
+  throwMax?: number;           // Lens katalog max TR
+  lensModel?: string;          // Lens modeli
+  startX: number;              // Yüzeyde sol kenar başlangıç koordinatı (m)
+  endX: number;                // Yüzeyde sağ kenar bitiş koordinatı (m)
   
   // Optik ve Atım Boyutları
   throwDistM: number;          // Duvardan dik lens mesafesi (m)
@@ -70,8 +79,22 @@ export interface SurfaceProjectorStat {
   surfaceWidthM: number;
   surfaceHeightM: number;
   projectorCount: number;
+  projectorIds: string[];
   cols: number;
   rows: number;
+  nativeW: number;
+  nativeH: number;
+  rawTotalW: number;
+  rawTotalH: number;
+  overlapPx: number;
+  combinedW: number;
+  combinedH: number;
+  pxPerMeterH: number;
+  pxPerMeterV: number;
+  mmPerPxH: number;
+  mmPerPxV: number;
+  pixelAspectRatio: number;
+  pixelGeometryDistorted: boolean;
   singleWidthM: number;
   singleHeightM: number;
   spacingM: number;            // Eksen aralığı (ΔX)
@@ -120,9 +143,14 @@ export interface InputSurfaceGeometry {
   projShiftYM?: number;
   customW?: number;
   customH?: number;
+  lumens?: number;
+  throwMin?: number;
+  throwMax?: number;
+  lensModel?: string;
 }
 
 export interface InputRoomConfig {
+  enabled?: boolean;
   widthM: number;
   lengthM: number;
   heightM: number;
@@ -139,9 +167,19 @@ export function calculateInterProjectorDistances(
   singleModel = 'Lazer Projeksiyon Cihazı (WUXGA / 4K)',
   breakerA = 16
 ): InterProjectorAnalysis {
-  const roomW = roomConfig?.widthM ?? 8.5;
-  const roomL = roomConfig?.lengthM ?? 25.0;
-  const roomH = roomConfig?.heightM ?? 5.5;
+  const maxSurfW = surfaces.length > 0 ? Math.max(...surfaces.map(s => s.widthM || 0)) : 0;
+  const maxSurfH = surfaces.length > 0 ? Math.max(...surfaces.map(s => s.heightM || 0)) : 0;
+  const maxThrowD = surfaces.length > 0 ? Math.max(...surfaces.map(s => s.throwDistM || 0)) : 0;
+  const useCustomRoom = roomConfig?.enabled !== false;
+  const roomW = useCustomRoom && roomConfig?.widthM && roomConfig.widthM > 0
+    ? roomConfig.widthM
+    : (maxSurfW > 0 ? round(maxSurfW, 2) : 8.5);
+  const roomL = useCustomRoom && roomConfig?.lengthM && roomConfig.lengthM > 0
+    ? roomConfig.lengthM
+    : (maxThrowD > 0 ? round(Math.max(maxThrowD + 2, 6), 2) : 25.0);
+  const roomH = useCustomRoom && roomConfig?.heightM && roomConfig.heightM > 0
+    ? roomConfig.heightM
+    : (maxSurfH > 0 ? round(maxSurfH + 0.5, 2) : 5.5);
 
   const hw = roomW / 2;
   const hl = roomL / 2;
@@ -174,11 +212,43 @@ export function calculateInterProjectorDistances(
       ? surf.singleProjHeightM
       : round(singleW * (pH / pW), 3);
 
-    const ovPct = surf.overlapX !== undefined ? surf.overlapX : 15;
-    const ovRatioX = ovPct / 100;
-    const stepW = round(singleW * (1 - ovRatioX), 3);
-    const overlapWidthM = round(singleW * ovRatioX, 3);
-    const overlapPx = Math.round(pW * ovRatioX);
+    // Fiziksel yerleşim ve örtüşme (overlap) koordinatlardan üretilir
+    let stepW = 0;
+    let overlapWidthM = 0;
+    let ovPct = 0;
+    let overlapPx = 0;
+    if (cols > 1) {
+      if (surf.widthM > 0 && cols * singleW > surf.widthM + 0.05) {
+        // Fiziksel duvar genişliği toplam tekil ışın genişliğinden dar -> gerçek fiziksel örtüşme zorunlu
+        stepW = round(Math.max(0.1, (surf.widthM - singleW) / (cols - 1)), 4);
+        const rawOvM = Math.max(0, singleW - stepW);
+        const ovRatioX = Math.min(0.9, Math.max(0, rawOvM / Math.max(0.01, singleW)));
+        ovPct = round(ovRatioX * 100, 1);
+        overlapPx = Math.round(pW * ovRatioX);
+        overlapWidthM = round(singleW * (overlapPx / Math.max(1, pW)), 3);
+      } else {
+        ovPct = surf.overlapX !== undefined ? surf.overlapX : 15;
+        const ovRatioX = Math.min(0.9, Math.max(0, ovPct / 100));
+        overlapPx = Math.round(pW * ovRatioX);
+        overlapWidthM = round(singleW * (overlapPx / Math.max(1, pW)), 3);
+        stepW = round(singleW - overlapWidthM, 4);
+      }
+    }
+
+    const ovPctY = rows > 1 ? (surf.overlapY !== undefined ? surf.overlapY : 15) : 0;
+    const overlapPy = rows > 1 ? Math.round(pH * (ovPctY / 100)) : 0;
+    const rawTotalW = cols * pW;
+    const rawTotalH = rows * pH;
+    const combinedW = rawTotalW - Math.max(0, cols - 1) * overlapPx;
+    const combinedH = rawTotalH - Math.max(0, rows - 1) * overlapPy;
+    const effW = Math.max(0.1, surf.widthM || singleW);
+    const effH = Math.max(0.1, surf.heightM || singleH);
+    const pxPerMeterH = round(combinedW / effW, 1);
+    const pxPerMeterV = round(combinedH / effH, 1);
+    const mmPerPxH = round(1000 / Math.max(0.01, pxPerMeterH), 2);
+    const mmPerPxV = round(1000 / Math.max(0.01, pxPerMeterV), 2);
+    const pixelAspectRatio = round(pxPerMeterH / Math.max(0.01, pxPerMeterV), 2);
+    const pixelGeometryDistorted = Math.abs(pxPerMeterH - pxPerMeterV) / Math.max(pxPerMeterH, pxPerMeterV, 0.01) > 0.05;
 
     const totalOptW = cols === 1 ? singleW : round(singleW + (cols - 1) * stepW, 3);
     const mountH = surf.projMountHeightM && surf.projMountHeightM > 0
@@ -191,24 +261,39 @@ export function calculateInterProjectorDistances(
     const mmPerPx = surf.distMmPerPx || round((singleW * 1000) / pW, 2);
     const ppi = surf.distPpi || round(25.4 / Math.max(0.01, mmPerPx), 1);
 
-    surfaceStats.push({
+    const statEntry: SurfaceProjectorStat = {
       surfaceId: surf.id,
       surfaceName: surf.name,
       surfaceType: isFloor ? 'floor' : 'wall',
       surfaceWidthM: surf.widthM,
       surfaceHeightM: surf.heightM,
       projectorCount: cols * rows,
+      projectorIds: [],
       cols,
       rows,
+      nativeW: pW,
+      nativeH: pH,
+      rawTotalW,
+      rawTotalH,
+      overlapPx,
+      combinedW,
+      combinedH,
+      pxPerMeterH,
+      pxPerMeterV,
+      mmPerPxH,
+      mmPerPxV,
+      pixelAspectRatio,
+      pixelGeometryDistorted,
       singleWidthM: singleW,
       singleHeightM: singleH,
-      spacingM: cols > 1 ? stepW : 0,
+      spacingM: cols > 1 ? round(stepW, 3) : 0,
       overlapWidthM,
       overlapPct: ovPct,
       throwDistM: surf.throwDistM,
       mountHeightM: mountH,
       totalPowerW: cols * rows * singleWatt,
-    });
+    };
+    surfaceStats.push(statEntry);
 
     const shiftX = surf.projShiftXM || 0;
     const shiftY = surf.projShiftYM || 0;
@@ -276,6 +361,8 @@ export function calculateInterProjectorDistances(
           const phase = phaseList[(circuitNum - 1) % 3];
 
           const pjId = `${wIdx === 0 ? 'SOL' : wIdx === 1 ? 'ON' : wIdx === 2 ? 'SAG' : 'DW'}-PJ-${colNum}${rows > 1 ? `.${rowNum}` : ''}`;
+          const startX = round(wallStartOffset + c * stepW, 2);
+          const endX = round(startX + singleW, 2);
 
           const item: ProjectorSpatialData = {
             id: pjId,
@@ -286,6 +373,15 @@ export function calculateInterProjectorDistances(
             rowIndex: rowNum,
             model: singleModel,
             powerW: singleWatt,
+            lumens: surf.lumens,
+            nativeW: pW,
+            nativeH: pH,
+            throwRatio: round(surf.throwDistM / Math.max(0.01, singleW), 2),
+            throwMin: surf.throwMin,
+            throwMax: surf.throwMax,
+            lensModel: surf.lensModel,
+            startX,
+            endX,
             throwDistM: surf.throwDistM,
             singleWidthM: singleW,
             singleHeightM: singleH,
@@ -295,8 +391,8 @@ export function calculateInterProjectorDistances(
             rightEdgeDistM,
             mountHeightM: py,
             ceilingDistM: round(Math.max(0.1, roomH - py), 2),
-            spacingToNextM,
-            spacingToPrevM,
+            spacingToNextM: spacingToNextM !== null ? round(spacingToNextM, 3) : null,
+            spacingToPrevM: spacingToPrevM !== null ? round(spacingToPrevM, 3) : null,
             overlapWidthM,
             overlapPct: ovPct,
             overlapPx,
@@ -310,6 +406,7 @@ export function calculateInterProjectorDistances(
 
           projectors.push(item);
           surfacePjs.push(item);
+          statEntry.projectorIds.push(pjId);
         }
       }
     } else {
@@ -336,8 +433,12 @@ export function calculateInterProjectorDistances(
           const circuitNum = Math.ceil(globalPjIndex / Math.max(1, Math.floor((breakerA * 230 * 0.95 * 0.80) / singleWatt)));
           const phase = phaseList[(circuitNum - 1) % 3];
 
+          const pjId = `ZMN-PJ-${colNum}.${rowNum}`;
+          const startX = round(Math.max(0, (surf.widthM - totalOptW) / 2) + c * stepW + shiftX, 2);
+          const endX = round(startX + singleW, 2);
+
           const item: ProjectorSpatialData = {
-            id: `ZMN-PJ-${colNum}.${rowNum}`,
+            id: pjId,
             surfaceId: surf.id,
             surfaceName: surf.name,
             surfaceType: 'floor',
@@ -345,6 +446,15 @@ export function calculateInterProjectorDistances(
             rowIndex: rowNum,
             model: singleModel,
             powerW: singleWatt,
+            lumens: surf.lumens,
+            nativeW: pW,
+            nativeH: pH,
+            throwRatio: round(surf.throwDistM / Math.max(0.01, singleW), 2),
+            throwMin: surf.throwMin,
+            throwMax: surf.throwMax,
+            lensModel: surf.lensModel,
+            startX,
+            endX,
             throwDistM: surf.throwDistM,
             singleWidthM: singleW,
             singleHeightM: singleH,
@@ -354,8 +464,8 @@ export function calculateInterProjectorDistances(
             rightEdgeDistM,
             mountHeightM: py,
             ceilingDistM: round(Math.max(0.1, roomH - py), 2),
-            spacingToNextM,
-            spacingToPrevM,
+            spacingToNextM: spacingToNextM !== null ? round(spacingToNextM, 3) : null,
+            spacingToPrevM: spacingToPrevM !== null ? round(spacingToPrevM, 3) : null,
             overlapWidthM,
             overlapPct: ovPct,
             overlapPx,
@@ -369,6 +479,7 @@ export function calculateInterProjectorDistances(
 
           projectors.push(item);
           surfacePjs.push(item);
+          statEntry.projectorIds.push(pjId);
         }
       }
     }

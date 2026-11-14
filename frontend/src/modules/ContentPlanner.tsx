@@ -1,5 +1,18 @@
 import { useState, useMemo, lazy, Suspense, useEffect, useRef } from 'react';
-import { pctToPx } from '../engine/multiproj';
+import { computeViewingQualityAnalysis } from '../engine/lux';
+import {
+  computeEffectiveMultiProjectorPixelArea,
+  computeSurfacePointLuxDistribution,
+  evaluateSystemFeasibility,
+  recommendProjectorAndLenses,
+} from '../engine/feasibility';
+import {
+  computeGeometricMappingSummary,
+  createCurvedWarp,
+  MappingSurfaceGeometry,
+  pctToPx,
+  ProjectorSlot,
+} from '../engine/multiproj';
 import { LengthUnit, round } from '../engine/units';
 import { download } from '../util';
 import { usePlannerStore } from '../plannerStore';
@@ -64,7 +77,7 @@ export interface SurfaceItem {
     density?: { x: number; y: number };
     dimensions?: { x: number; y: number };
   };
-  customProjectorOffsets?: Record<string, { shiftX: number; shiftY: number; shiftZ?: number; rotYaw?: number; rotPitch?: number; rotRoll?: number }>;
+  customProjectorOffsets?: Record<string, { shiftX: number; shiftY: number; shiftZ?: number; throwRatio?: number; rotYaw?: number; rotPitch?: number; rotRoll?: number }>;
   color: string;        // Şemadaki yüzey rengi
   canvasX: number;      // Özel yerleşim modunda X koordinatı (px)
   canvasY: number;      // Özel yerleşim modunda Y koordinatı (px)
@@ -130,6 +143,11 @@ export interface CalculatedSurface extends SurfaceItem {
   totalOvH: number;
   projNetW: number;
   projNetH: number;
+  lostPixelsTotal: number;
+  lostPixelsPct: number;
+  lostOpticalWidthM: number;
+  lostWallWidthM: number;
+  lostWallAreaM2: number;
 
   // İçerik (Oran) için gereken ideal overlap
   impliedTotalOvW: number;
@@ -316,6 +334,766 @@ export interface PhysicalRoomConfig {
   heightM: number;  // Fiziksel oda tavan yüksekliği (Y - m) (Duvar yüksekliğinden bağımsız!)
 }
 
+/** 8 Adımlı Pixel Map & Çözünürlük Hesap Zinciri Özet Tablosu */
+function PixelMapChainSummary({
+  surface,
+  totalCanvasW,
+  totalCanvasH,
+  totalActivePixels,
+}: {
+  surface: CalculatedSurface;
+  totalCanvasW: number;
+  totalCanvasH: number;
+  totalActivePixels: number;
+}) {
+  const nativeMp = round((surface.projW * surface.projH) / 1_000_000, 2);
+  const netMp = round((surface.netW * surface.netH) / 1_000_000, 2);
+  const masterMp = round(totalActivePixels / 1_000_000, 2);
+  const lostMp = round(surface.lostPixelsTotal / 1_000_000, 2);
+
+  return (
+    <div className="p-2.5 rounded bg-slate-950 border border-emerald-800/70 space-y-1.5">
+      <div className="flex justify-between items-center border-b border-slate-800 pb-1">
+        <span className="font-bold text-emerald-400 text-[11px] uppercase tracking-wider">
+          📐 8 Adımlı Pixel Map &amp; Çözünürlük Hesap Zinciri
+        </span>
+        <span className="text-[10px] font-mono text-slate-400">
+          {surface.name}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[10.5px] text-left border-collapse">
+          <tbody className="divide-y divide-slate-800/80 text-slate-300">
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">1. Projektör Native Çözünürlüğü</td>
+              <td className="py-1 font-mono text-sky-300">
+                <b>{surface.projW} × {surface.projH} px</b> ({nativeMp} MP)
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-400">
+                {surface.orient === 'portrait' ? 'Dikey (Portrait)' : 'Yatay (Landscape)'}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">2. Fiziksel Piksel Yoğunluğu</td>
+              <td className="py-1 font-mono text-emerald-300">
+                <b>{surface.pxPerM2.toLocaleString('tr-TR')} px/m²</b> · {surface.ppi} PPI
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-400">
+                {surface.pxPerCm} px/cm (Optik: {surface.distPpi} PPI)
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">3. Pixel per Meter (px/m)</td>
+              <td className="py-1 font-mono text-sky-300">
+                Yatay: <b>{surface.pxPerMeterW} px/m</b> · Dikey: <b>{surface.pxPerMeterH} px/m</b>
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-400">
+                Optik @{surface.throwDistM}m: {surface.distPxPerMeter} px/m
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">4. Piksel Aralığı (mm/px)</td>
+              <td className="py-1 font-mono text-amber-300">
+                Duvar Ort: <b>{surface.avgMmPerPx} mm/px</b> (W: {surface.mmPerPxW} / H: {surface.mmPerPxH})
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-400">
+                Optik: {surface.distMmPerPx} mm/px
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">5. Duvarın Toplam Piksel Karşılığı</td>
+              <td className="py-1 font-mono text-slate-200">
+                <b>{surface.aspectW} × {surface.aspectH} px</b> (Oran {surface.aspectPhysical}:1)
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-400">
+                {surface.effectiveWidthM}m × {surface.effectiveHeightM}m ({surface.areaM2} m²)
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">6. Çoklu Projektör Birleşik Çözünürlük</td>
+              <td className="py-1 font-mono text-sky-300">
+                {surface.cols}×{surface.rows} ({surface.totalProjectors} PJ): <b>{surface.projNetW} × {surface.projNetH} px</b>
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-400">
+                Ham Toplam: {surface.totalRawW} × {surface.totalRawH} px
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">7. Overlap Kaybedilen Efektif Alan</td>
+              <td className="py-1 font-mono text-amber-300">
+                Yatay -{surface.totalOvW} px · Dikey -{surface.totalOvH} px (<b>-%{surface.lostPixelsPct}</b>)
+              </td>
+              <td className="py-1 text-right text-[10px] text-amber-400 font-mono">
+                -{lostMp} MP · Duvar: -{surface.lostWallWidthM}m (-{surface.lostWallAreaM2} m²)
+              </td>
+            </tr>
+            <tr className="bg-emerald-950/50 border-t-2 border-emerald-700/70">
+              <td className="py-1.5 pr-2 font-bold text-emerald-300">8. TOPLAM İÇERİK ÜRETİM ÇÖZÜNÜRLÜĞÜ</td>
+              <td className="py-1.5 font-mono font-extrabold text-emerald-300 text-[11px]">
+                Yüzey: {surface.netW} × {surface.netH} px ({netMp} MP)
+              </td>
+              <td className="py-1.5 text-right font-mono font-bold text-emerald-200 text-[10.5px]">
+                Tüm Oda Kanvas: {totalCanvasW} × {totalCanvasH} px ({masterMp} MP)
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function buildGeometricSummaryForSurface(surface: CalculatedSurface, allSurfaces: CalculatedSurface[]) {
+  const safeOvX = Math.min(Math.max(0, surface.projW - 1), Math.max(0, surface.ovPxX));
+  const safeOvY = Math.min(Math.max(0, surface.projH - 1), Math.max(0, surface.ovPxY));
+  const stepX = Math.max(1, surface.projW - safeOvX);
+  const stepY = Math.max(1, surface.projH - safeOvY);
+
+  const isCurved =
+    surface.geometry === 'concave_arc' ||
+    surface.geometry === 'cylinder_360' ||
+    surface.geometry === 'dome' ||
+    surface.geometry === 'sphere';
+  const curveBendPct = isCurved
+    ? Math.min(25, Math.max(5, Math.round((surface.sagittaM / Math.max(0.5, surface.effectiveWidthM)) * 100)))
+    : 0;
+  const warpTemplate = isCurved
+    ? createCurvedWarp(surface.projW, surface.projH, 4, 4, curveBendPct, 'concave')
+    : undefined;
+
+  const customOffsets = Object.values(surface.customProjectorOffsets ?? {});
+  const maxCustomPitch = customOffsets.reduce((m, o) => Math.max(m, Math.abs(o.rotPitch ?? 0)), 0);
+  const maxCustomYaw = customOffsets.reduce((m, o) => Math.max(m, Math.abs(o.rotYaw ?? 0)), 0);
+
+  const wallCenterH = surface.effectiveHeightM / 2 + (surface.projShiftYM ?? 0);
+  const mountDiff =
+    surface.type === 'wall' && surface.projMountHeightM !== undefined
+      ? Math.abs(surface.projMountHeightM - wallCenterH)
+      : 0;
+  const optikTiltDeg =
+    mountDiff > 0.05 ? round((Math.atan2(mountDiff, Math.max(0.5, surface.throwDistM)) * 180) / Math.PI, 1) : 0;
+  const keystoneVDeg = Math.max(maxCustomPitch, optikTiltDeg);
+
+  const shiftXDiff = Math.abs(surface.projShiftXM ?? 0);
+  const hTiltDeg =
+    shiftXDiff > 0.05 ? round((Math.atan2(shiftXDiff, Math.max(0.5, surface.throwDistM)) * 180) / Math.PI, 1) : 0;
+  const keystoneHDeg = Math.max(maxCustomYaw, hTiltDeg);
+
+  const opticalShiftCompensates =
+    maxCustomPitch === 0 &&
+    maxCustomYaw === 0 &&
+    mountDiff <= surface.singleProjHeightM * 0.5 &&
+    shiftXDiff <= surface.singleProjWidthM * 0.35;
+
+  const slots: ProjectorSlot[] = [];
+  for (let r = 0; r < surface.rows; r++) {
+    for (let c = 0; c < surface.cols; c++) {
+      slots.push({
+        id: `${surface.id}-P${r * surface.cols + c + 1}`,
+        label: `PJ-${r * surface.cols + c + 1}`,
+        x: c * stepX,
+        y: r * stepY,
+        w: surface.projW,
+        h: surface.projH,
+        blend: {
+          l: c > 0 ? safeOvX : 0,
+          r: c < surface.cols - 1 ? safeOvX : 0,
+          t: r > 0 ? safeOvY : 0,
+          b: r < surface.rows - 1 ? safeOvY : 0,
+        },
+        warp: warpTemplate,
+        keystone:
+          keystoneVDeg > 0 || keystoneHDeg > 0
+            ? { vDeg: keystoneVDeg, hDeg: keystoneHDeg, useOpticalShift: opticalShiftCompensates }
+            : undefined,
+      });
+    }
+  }
+
+  return computeGeometricMappingSummary({
+    slots,
+    wallWidthM: surface.effectiveWidthM,
+    wallHeightM: surface.effectiveHeightM,
+    gamma: 2.2,
+    surfaceGeometry: surface.geometry as MappingSurfaceGeometry,
+    radiusM: surface.radiusM,
+    angleDeg: surface.angleDeg,
+    chordWidthM: surface.chordWidthM,
+    sagittaM: surface.sagittaM,
+    throwDistM: surface.throwDistM,
+    mmPerPxW: surface.mmPerPxW,
+    mmPerPxH: surface.mmPerPxH,
+    isCircularMask: surface.isCircularMask,
+    otherSurfaceMmPerPx: allSurfaces.filter(o => o.id !== surface.id).map(o => o.avgMmPerPx),
+    keystoneVDeg,
+    keystoneHDeg,
+    useOpticalShift: opticalShiftCompensates,
+  });
+}
+
+function GeometricMappingChainSummary({
+  surface,
+  allSurfaces,
+}: {
+  surface: CalculatedSurface;
+  allSurfaces: CalculatedSurface[];
+}) {
+  const g = useMemo(() => buildGeometricSummaryForSurface(surface, allSurfaces), [surface, allSurfaces]);
+
+  return (
+    <div className="p-2.5 rounded bg-slate-950 border border-indigo-800/70 space-y-1.5">
+      <div className="flex flex-wrap justify-between items-center gap-2 border-b border-slate-800 pb-1">
+        <span className="font-bold text-indigo-300 text-[11px] uppercase tracking-wider">
+          🎯 7 Adımlı Geometrik Düzeltme &amp; Mapping Hesap Zinciri
+        </span>
+        <span
+          className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${
+            g.distortionSeverity === 'low'
+              ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800'
+              : g.distortionSeverity === 'moderate'
+                ? 'bg-amber-950/70 text-amber-300 border border-amber-800'
+                : 'bg-rose-950/70 text-rose-300 border border-rose-800'
+          }`}
+        >
+          {g.qualityGrade}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[10.5px] text-left border-collapse">
+          <tbody className="divide-y divide-slate-800/80 text-slate-300">
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">1. Keystone Düzeltmesi</td>
+              <td className="py-1 font-mono text-amber-300">
+                Dikey: ±{g.maxKeystoneVDeg}° · Yatay: ±{g.maxKeystoneHDeg}°
+                {g.opticalShiftActive ? ' (Optik Shift)' : ''}
+              </td>
+              <td className="py-1 text-right font-mono text-[10px] text-amber-400">
+                Daralma: %{g.trapezoidShrinkPct} · Kayıp: -%{g.keystonePixelLossPct}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">2. Warp / Mesh Mapping</td>
+              <td className="py-1 font-mono text-sky-300">
+                {g.meshGridLabel} ({g.activeWarpSlots} PJ)
+              </td>
+              <td className="py-1 text-right font-mono text-[10px] text-sky-300">
+                Ort. Deformasyon: {g.avgWarpDisplacementPx} px (-%{g.warpPixelLossPct})
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">3. Surface Mapping</td>
+              <td className="py-1 font-mono text-slate-200">{g.surfaceGeometryLabel}</td>
+              <td className="py-1 text-right font-mono text-[10px] text-slate-400">
+                Açınım: {g.effectiveWidthM}m · Kiriş: {g.chordWidthM}m · Kavis: {g.sagittaM}m
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">4. Masking (Maskeleme)</td>
+              <td className="py-1 font-mono text-rose-300">
+                {g.circularMaskActive ? 'Dairesel / Kubbe Maske Aktif' : 'Dikdörtgen Tam Çerçeve'}
+              </td>
+              <td className="py-1 text-right font-mono text-[10px] text-emerald-300">
+                Maskeli: -%{g.maskedOutPct} · Aktif Alan: <b>%{g.visibleActivePct}</b>
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">5. Edge Blending</td>
+              <td className="py-1 font-mono text-sky-300">
+                {g.overlapZoneCount} Bölge · Yatay {g.blendWidthPxX}px ({g.blendPhysicalWidthM}m) · Dikey {g.blendWidthPxY}px
+              </td>
+              <td className="py-1 text-right font-mono text-[10px] text-sky-300">
+                γ={g.gamma} · Orta Nokta: %{g.midpointDrivePct}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">6. Geometrik Bozulma Analizi</td>
+              <td className="py-1 font-mono text-amber-300">
+                Anizotropi: {g.pixelAnisotropyRatio}:1 · Köşe Gerilimi: %{g.cornerStretchPct} · Odak ΔD: {g.depthOfFieldSpreadM}m
+              </td>
+              <td className="py-1 text-right text-[10px] text-slate-300">{g.distortionLabel}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 font-semibold text-slate-200">7. Çoklu Yüzey Eşleştirme</td>
+              <td className="py-1 font-mono text-indigo-300">
+                {g.matchedSurfacesCount} / {g.totalSurfacesCount} Yüzey · {g.seamTransitionCount} Geçiş
+              </td>
+              <td className="py-1 text-right font-mono text-[10px] text-indigo-300">
+                Sapma: %{g.densitySpreadPct} ({g.multiSurfaceStatus})
+              </td>
+            </tr>
+            <tr className="bg-indigo-950/50 border-t-2 border-indigo-700/70">
+              <td className="py-1.5 pr-2 font-bold text-indigo-300">8. TOPLAM EFEKTİF ÇÖZÜNÜRLÜK &amp; VERİM</td>
+              <td className="py-1.5 font-mono font-extrabold text-emerald-300 text-[11px]">
+                {g.effectiveResolutionW} × {g.effectiveResolutionH} px ({g.effectiveUsableMP} MP aktif)
+              </td>
+              <td className="py-1.5 text-right font-mono font-bold text-indigo-200 text-[10.5px]">
+                Geometrik Verim: %{g.geometricEfficiencyPct} (Kayıp: -%{g.totalGeometricLossPct})
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 7 Adımlı İzleme ve Görüntü Kalitesi Analizi + Toplam Kalite Özeti Tablosu
+ */
+function ViewingQualityChainSummary({
+  surface,
+}: {
+  surface: CalculatedSurface;
+}) {
+  const [assumedAvgLux, setAssumedAvgLux] = useState<number>(350);
+  const [assumedAmbientLux, setAssumedAmbientLux] = useState<number>(50);
+  const [offAxisDeg, setOffAxisDeg] = useState<number>(0);
+
+  const vq = useMemo(() => computeViewingQualityAnalysis({
+    widthM: surface.effectiveWidthM,
+    heightM: surface.effectiveHeightM,
+    resW: surface.netW,
+    resH: surface.netH,
+    viewingDistanceM: surface.viewDistM,
+    offAxisAngleDeg: offAxisDeg,
+    screenGain: 1.0,
+    reflectance: 0.85,
+    avgLux: assumedAvgLux,
+    ambientLux: assumedAmbientLux,
+    nativeContrast: 2000,
+    uniformityU0: 78,
+    uniformityU1: 85,
+    projectorCount: Math.max(1, surface.cols * surface.rows),
+    overlapPct: surface.overlapMode === 'percent' ? surface.overlapX : 15,
+    colorCalibrated: true,
+  }), [surface, assumedAvgLux, assumedAmbientLux, offAxisDeg]);
+
+  return (
+    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider">
+          👁️ 7 Adımlı İzleme &amp; Görüntü Kalitesi Analizi — {surface.name}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-[10px]">
+          <label className="flex items-center gap-1 text-slate-400">
+            Lux:
+            <input
+              type="number"
+              min={50}
+              step={50}
+              value={assumedAvgLux}
+              onChange={e => setAssumedAvgLux(Math.max(50, parseFloat(e.target.value) || 350))}
+              className="w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-emerald-300 font-mono"
+            />
+          </label>
+          <label className="flex items-center gap-1 text-slate-400">
+            Ortam:
+            <input
+              type="number"
+              min={5}
+              step={10}
+              value={assumedAmbientLux}
+              onChange={e => setAssumedAmbientLux(Math.max(1, parseFloat(e.target.value) || 50))}
+              className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-amber-300 font-mono"
+            />
+          </label>
+          <label className="flex items-center gap-1 text-slate-400">
+            Açı°:
+            <input
+              type="number"
+              min={0}
+              max={70}
+              step={5}
+              value={offAxisDeg}
+              onChange={e => setOffAxisDeg(Math.max(0, Math.min(70, parseFloat(e.target.value) || 0)))}
+              className="w-11 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200 font-mono"
+            />
+          </label>
+          <span className="font-mono font-bold text-cyan-300">
+            Skor: %{vq.overallQualityScorePct}
+          </span>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] border-collapse">
+          <tbody className="divide-y divide-slate-800/70">
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">1. İzleme Mesafesi</td>
+              <td className="py-1 font-mono text-cyan-300">{vq.viewingDistanceM}m (Oran {vq.distanceRatioToHeight}×H · İdeal {vq.optimalViewingDistMinM}–{vq.optimalViewingDistMaxM}m)</td>
+              <td className="py-1 text-right font-mono text-slate-300">{vq.viewingDistanceStatus}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">2. Görüş Açısı (FOV)</td>
+              <td className="py-1 font-mono text-sky-300">H {vq.horizontalFovDeg}° · V {vq.verticalFovDeg}° · D {vq.diagonalFovDeg}°</td>
+              <td className="py-1 text-right font-mono text-amber-300">Eksen dışı {vq.offAxisAngleDeg}° (-%{vq.offAxisLuminanceDropPct}) · {vq.fovCategory}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">3. Görüntü Keskinliği</td>
+              <td className="py-1 font-mono text-emerald-300">{vq.ppd} PPD · {vq.arcminPerPixel} arcmin/px ({vq.resW}×{vq.resH})</td>
+              <td className="py-1 text-right font-mono text-emerald-400">%{vq.sharpnessScorePct} · {vq.sharpnessLabel}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">4. Piksel Görünürlüğü</td>
+              <td className="py-1 font-mono text-indigo-300">{vq.mmPerPx} mm/px ({vq.ppi} PPI) · Retina ≥ {vq.minRetinaDistM}m</td>
+              <td className="py-1 text-right font-mono text-indigo-200">İndeks {vq.pixelVisibilityIndex} · {vq.pixelVisibilityLabel}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">5. Kontrast Oranı (ACR)</td>
+              <td className="py-1 font-mono text-purple-300">ACR {vq.ambientContrastRatio}:1 (Efektif {vq.effectiveSystemContrast}:1 · {vq.whiteLevelNits}/{vq.blackLevelNits} Nit)</td>
+              <td className="py-1 text-right font-mono text-slate-300">{vq.contrastStandardGrade}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">6. Renk Uniformitesi</td>
+              <td className="py-1 font-mono text-amber-300">ΔE2000: {vq.deltaE2000} · ΔCCT ±{vq.deltaCCTKelvin}K</td>
+              <td className="py-1 text-right font-mono text-amber-200">%{vq.colorUniformityPct} · {vq.colorUniformityLabel}</td>
+            </tr>
+            <tr>
+              <td className="py-1 pr-2 text-slate-300 font-medium">7. Parlaklık Uniformitesi</td>
+              <td className="py-1 font-mono text-emerald-300">U0 %{vq.luminanceUniformityU0Pct} · U1 %{vq.luminanceUniformityU1Pct} · Kenar -%{vq.centerToCornerDropPct}</td>
+              <td className="py-1 text-right font-mono text-emerald-200">Blend ±%{vq.blendZoneRipplePct} · {vq.brightnessUniformityLabel}</td>
+            </tr>
+            <tr className="bg-cyan-950/50 border-t-2 border-cyan-700/70">
+              <td className="py-1.5 pr-2 font-bold text-cyan-300">8. TOPLAM KALİTE ÖZETİ</td>
+              <td className="py-1.5 font-mono text-cyan-200">{vq.overallRecommendation}</td>
+              <td className="py-1.5 text-right font-mono font-bold text-cyan-200 text-[10.5px]">
+                %{vq.overallQualityScorePct} · {vq.overallQualityGrade}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Otomatik Projektör/Lens Önerisi, Çoklu Projektör Efektif Piksel Alanı,
+ * 9-Bölge Noktasal Lux Dağılımı ve 5 Kategorili Hata/Uygulanabilirlik Analizi Paneli
+ */
+function SurfaceEngineeringFeasibilityPanel({
+  surface,
+  physicalRoom,
+  onApplyRecommendation,
+}: {
+  surface: CalculatedSurface;
+  physicalRoom: PhysicalRoomConfig;
+  onApplyRecommendation?: (patch: Partial<SurfaceItem>) => void;
+}) {
+  const [targetLux, setTargetLux] = useState<number>(350);
+  const [ambientLux, setAmbientLux] = useState<number>(50);
+  const [assumedAvgLux, setAssumedAvgLux] = useState<number>(380);
+
+  const overlapX = surface.overlapMode === 'percent' ? surface.overlapX : Math.round((surface.ovPxX / Math.max(1, surface.projW)) * 100);
+  const overlapY = surface.overlapMode === 'percent' ? surface.overlapY : Math.round((surface.ovPxY / Math.max(1, surface.projH)) * 100);
+  const maxRoomThrowM = physicalRoom.enabled
+    ? (surface.type === 'floor' ? physicalRoom.heightM : Math.max(physicalRoom.widthM, physicalRoom.lengthM))
+    : undefined;
+  const roomHeightM = physicalRoom.enabled ? physicalRoom.heightM : surface.effectiveHeightM + 0.6;
+  const isCurvedSurf =
+    surface.geometry === 'concave_arc' ||
+    surface.geometry === 'cylinder_360' ||
+    surface.geometry === 'dome' ||
+    surface.geometry === 'sphere';
+
+  const effectivePixel = useMemo(
+    () =>
+      computeEffectiveMultiProjectorPixelArea({
+        widthM: surface.effectiveWidthM,
+        heightM: surface.effectiveHeightM,
+        projW: surface.projW,
+        projH: surface.projH,
+        cols: surface.cols,
+        rows: surface.rows,
+        overlapPctX: overlapX,
+        overlapPctY: overlapY,
+        isClosedLoopX: surface.geometry === 'cylinder_360' || surface.geometry === 'sphere',
+        isCurved: isCurvedSurf,
+      }),
+    [surface, overlapX, overlapY, isCurvedSurf]
+  );
+
+  const pointLux = useMemo(
+    () =>
+      computeSurfacePointLuxDistribution({
+        widthM: surface.effectiveWidthM,
+        heightM: surface.effectiveHeightM,
+        cols: surface.cols,
+        rows: surface.rows,
+        avgLux: assumedAvgLux,
+        uniformityU0: surface.cols > 1 && overlapX >= 12 && overlapX <= 28 ? 82 : 72,
+        overlapPct: overlapX,
+        screenGain: 1.0,
+        reflectance: 0.85,
+        ambientLux,
+      }),
+    [surface, overlapX, assumedAvgLux, ambientLux]
+  );
+
+  const feasibility = useMemo(
+    () =>
+      evaluateSystemFeasibility({
+        widthM: surface.effectiveWidthM,
+        heightM: surface.effectiveHeightM,
+        throwDistM: surface.throwDistM,
+        throwRatio: surface.throwRatio,
+        maxRoomThrowM,
+        roomHeightM,
+        projMountHeightM: surface.projMountHeightM ?? Math.max(2.2, surface.effectiveHeightM - 0.15),
+        viewDistM: surface.viewDistM,
+        cols: surface.cols,
+        rows: surface.rows,
+        projW: surface.projW,
+        projH: surface.projH,
+        overlapPct: overlapX,
+        avgLux: assumedAvgLux,
+        ambientLux,
+        uniformityU0: surface.cols > 1 && overlapX >= 12 ? 80 : 72,
+        isCurved: isCurvedSurf,
+      }),
+    [surface, maxRoomThrowM, roomHeightM, overlapX, assumedAvgLux, ambientLux, isCurvedSurf]
+  );
+
+  const recommendations = useMemo(
+    () =>
+      recommendProjectorAndLenses({
+        widthM: surface.effectiveWidthM,
+        heightM: surface.effectiveHeightM,
+        throwDistM: surface.throwDistM,
+        maxRoomThrowM,
+        cols: surface.cols,
+        rows: surface.rows,
+        overlapPct: Math.max(8, overlapX),
+        targetLux,
+        ambientLux,
+      }),
+    [surface, maxRoomThrowM, overlapX, targetLux, ambientLux]
+  );
+
+  return (
+    <div className="space-y-3">
+      {/* 1. ÇOKLU PROJEKTÖR OVERLAP & EFEKTİF PİKSEL ALANI + 9-BÖLGE NOKTASAL LUX HARİTASI */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="bg-slate-950/80 border border-emerald-900/60 rounded-xl p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
+              🧩 Çoklu Projektör Overlap &amp; Efektif Piksel Alanı
+            </span>
+            <span className="text-[10.5px] font-mono font-bold text-emerald-400">
+              Verim: %{effectivePixel.totalRetentionPct}
+            </span>
+          </div>
+          <table className="w-full text-[11px] border-collapse">
+            <tbody className="divide-y divide-slate-800/70">
+              <tr>
+                <td className="py-1 text-slate-300">Ham Projektör Dizilimi</td>
+                <td className="py-1 text-right font-mono text-slate-200">
+                  {effectivePixel.totalProjectors} PJ ({surface.cols}×{surface.rows}) → {effectivePixel.rawW}×{effectivePixel.rawH} px ({effectivePixel.rawMP} MP)
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-300">Overlap Bindirme Kaybı</td>
+                <td className="py-1 text-right font-mono text-rose-300">
+                  -{effectivePixel.totalOverlapPxW}px / -%{effectivePixel.overlapLostPct} ({effectivePixel.overlapPhysicalAreaM2} m²)
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-300">Geometrik / Warp Kaybı</td>
+                <td className="py-1 text-right font-mono text-amber-300">
+                  -%{effectivePixel.geometricLossPct} ({isCurvedSurf ? 'Eğrisel Warp' : 'Düzlem'})
+                </td>
+              </tr>
+              <tr className="bg-emerald-950/40 font-bold">
+                <td className="py-1.5 text-emerald-300">İçerik Efektif Piksel Alanı</td>
+                <td className="py-1.5 text-right font-mono text-emerald-300">
+                  {effectivePixel.usableContentW}×{effectivePixel.usableContentH} px ({effectivePixel.usableEffectiveMP} MP · {effectivePixel.mmPerPx} mm/px)
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-slate-950/80 border border-amber-900/60 rounded-xl p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider">
+              📍 Noktasal Lux &amp; Nit Dağılım Haritası (9 Bölge)
+            </span>
+            <div className="flex items-center gap-1.5 text-[10px]">
+              <label className="text-slate-400">
+                Ort Lux:
+                <input
+                  type="number"
+                  min={50}
+                  step={50}
+                  value={assumedAvgLux}
+                  onChange={e => setAssumedAvgLux(Math.max(50, parseFloat(e.target.value) || 350))}
+                  className="ml-1 w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-amber-300 font-mono"
+                />
+              </label>
+              <label className="text-slate-400">
+                Ortam:
+                <input
+                  type="number"
+                  min={5}
+                  step={10}
+                  value={ambientLux}
+                  onChange={e => setAmbientLux(Math.max(0, parseFloat(e.target.value) || 50))}
+                  className="ml-1 w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200 font-mono"
+                />
+              </label>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono">
+            {pointLux.zones9.map(pt => (
+              <div
+                key={pt.id}
+                className={`p-1.5 rounded border ${
+                  pt.zoneKind === 'center'
+                    ? 'bg-amber-950/40 border-amber-700/70 text-amber-200'
+                    : pt.zoneKind === 'corner'
+                    ? 'bg-sky-950/30 border-slate-800 text-sky-300'
+                    : 'bg-slate-900/80 border-slate-800 text-slate-200'
+                }`}
+              >
+                <div className="text-[9px] text-slate-400 truncate">{pt.label}</div>
+                <div className="font-bold">{pt.lux} lx · {pt.nits} Nit</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-1.5 flex justify-between text-[10px] font-mono text-slate-400">
+            <span>Merkez Tepe: <b className="text-amber-300">{pointLux.peakCenterLux} lx</b></span>
+            <span>Blend Dikişi: <b className="text-sky-300">{pointLux.blendSeamLux} lx</b></span>
+            <span>Köşe Düşüşü: <b className="text-rose-300">-%{pointLux.centerToCornerDropPct}</b></span>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. 5 KATEGORİLİ HATA VE UYGULANABİLİRLİK ANALİZİ */}
+      <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <span className="text-[11px] font-bold text-rose-300 uppercase tracking-wider">
+            ⚠️ Hata ve Uygulanabilirlik Analizi (5 Kritik Kriter)
+          </span>
+          <span
+            className={`text-[10.5px] font-mono font-bold px-2 py-0.5 rounded border ${
+              feasibility.overallSeverity === 'ok'
+                ? 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
+                : feasibility.overallSeverity === 'warning'
+                ? 'bg-amber-950/60 border-amber-700 text-amber-300'
+                : 'bg-rose-950/60 border-rose-700 text-rose-300'
+            }`}
+          >
+            Skor %{feasibility.overallScorePct} · {feasibility.overallVerdict}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+          {feasibility.categories.map(cat => (
+            <div
+              key={cat.id}
+              className={`p-2 rounded-lg border text-[10.5px] space-y-1 ${
+                cat.severity === 'ok'
+                  ? 'bg-emerald-950/20 border-emerald-800/50'
+                  : cat.severity === 'warning'
+                  ? 'bg-amber-950/25 border-amber-700/60'
+                  : 'bg-rose-950/30 border-rose-700/70'
+              }`}
+            >
+              <div className="font-bold text-slate-200">{cat.title}</div>
+              <div
+                className={`text-[10px] font-bold ${
+                  cat.severity === 'ok'
+                    ? 'text-emerald-400'
+                    : cat.severity === 'warning'
+                    ? 'text-amber-300'
+                    : 'text-rose-400'
+                }`}
+              >
+                {cat.badgeText}
+              </div>
+              <div className="font-mono text-[9.5px] text-slate-400">{cat.metricsText}</div>
+              <div className="text-[10px] text-slate-300 leading-snug">{cat.issues[0]}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 3. OTOMATİK PROJEKTÖR VE LENS ÖNERİSİ */}
+      <div className="bg-slate-950/80 border border-indigo-900/60 rounded-xl p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div>
+            <span className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">
+              🤖 Otomatik Projektör &amp; Lens Önerisi ({surface.effectiveWidthM}×{surface.effectiveHeightM}m @ D={surface.throwDistM}m)
+            </span>
+            <div className="text-[10px] text-slate-400 font-mono">
+              Gereken Toplam Akı: {recommendations.requiredTotalLumens.toLocaleString('tr-TR')} lm · Mevcut TR: {recommendations.requiredTR}:1 · Önerilen Müze Dizilimi: {recommendations.autoOptimalCols} PJ
+            </div>
+          </div>
+          <label className="text-[10px] text-slate-400 flex items-center gap-1">
+            Hedef Lux:
+            <input
+              type="number"
+              min={100}
+              step={50}
+              value={targetLux}
+              onChange={e => setTargetLux(Math.max(100, parseFloat(e.target.value) || 350))}
+              className="w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-indigo-300 font-mono"
+            />
+          </label>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[10.5px] border-collapse">
+            <thead>
+              <tr className="text-left text-slate-400 border-b border-slate-800">
+                <th className="py-1 pr-2">Kademe</th>
+                <th className="py-1 pr-2">Cihaz &amp; Uyumlu Lens</th>
+                <th className="py-1 pr-2">Adet &amp; TR</th>
+                <th className="py-1 pr-2">Tahmini Işık / Piksel</th>
+                <th className="py-1 text-right">Uygula</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/70">
+              {recommendations.alternatives.slice(0, 5).map(opt => (
+                <tr key={opt.id}>
+                  <td className="py-1.5 pr-2 text-indigo-300 font-semibold whitespace-nowrap">{opt.tierLabel} (%{opt.matchScore})</td>
+                  <td className="py-1.5 pr-2">
+                    <div className="font-bold text-slate-200">{opt.manufacturer} {opt.projectorModel} ({opt.ansiLumens.toLocaleString('tr-TR')} lm)</div>
+                    <div className="text-[9.5px] text-slate-400 font-mono">{opt.lensModel} [{opt.throwMin}–{opt.throwMax}:1]</div>
+                  </td>
+                  <td className="py-1.5 pr-2 font-mono text-sky-300">
+                    {opt.recommendedCols}×{opt.recommendedRows} PJ · TR {opt.appliedTR}:1 (Zoom %{opt.zoomPositionPct})
+                  </td>
+                  <td className="py-1.5 pr-2 font-mono text-emerald-300">
+                    {opt.estimatedAvgLux} lx · {opt.effectiveCanvasW}×{opt.effectiveCanvasH} ({opt.mmPerPx} mm/px)
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {onApplyRecommendation && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onApplyRecommendation({
+                            cols: opt.recommendedCols,
+                            rows: opt.recommendedRows,
+                            throwRatio: opt.appliedTR,
+                            resIdx: RESOLUTIONS.length - 1,
+                            customW: opt.nativeW,
+                            customH: opt.nativeH,
+                          })
+                        }
+                        className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px]"
+                      >
+                        ✓ Yüzeye Uygula
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const storeSurfaces = usePlannerStore(state => state.surfaces);
   const storePhysicalRoom = usePlannerStore(state => state.physicalRoom);
@@ -340,6 +1118,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [plannerViewMode, setPlannerViewMode] = useState<'simple' | 'detailed'>('simple');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
+  const [selectedPjKey, setSelectedPjKey] = useState<string>('all');
   const [report2dToast, setReport2dToast] = useState(false);
   const svg2dRef = useRef<SVGSVGElement | null>(null);
 
@@ -887,6 +1666,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       // N adet projektörün bu uzaklıktan toplam kapladığı optik genişlik (m):
       const totalOpticalWidthM = round(singleProjWidthM * (projNetW / projW), 2);
 
+      // Overlap nedeniyle kaybedilen efektif piksel ve fiziksel alan:
+      const lostPixelsTotal = Math.max(0, totalRawW * totalRawH - projNetW * projNetH);
+      const lostPixelsPct = round((lostPixelsTotal / Math.max(1, totalRawW * totalRawH)) * 100, 1);
+      const lostOpticalWidthM = round((totalOvW / Math.max(1, projW)) * singleProjWidthM, 2);
+      const lostWallWidthM = round((totalOvW / Math.max(1, totalRawW)) * effectiveWidthM, 2);
+      const lostWallAreaM2 = round(areaM2 * (lostPixelsPct / 100), 2);
+
       // Duvar yüksekliğini (effectiveHeightM) tam doldurmak için projektörün konulması gereken İDEAL UZAKLIK (m):
       const neededSingleProjHeightM = effectiveHeightM / (projNetH / projH);
       const neededSingleProjWidthM = neededSingleProjHeightM * (projW / projH);
@@ -982,6 +1768,11 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         totalOvH,
         projNetW,
         projNetH,
+        lostPixelsTotal,
+        lostPixelsPct,
+        lostOpticalWidthM,
+        lostWallWidthM,
+        lostWallAreaM2,
         impliedTotalOvW,
         impliedOvPxX,
         impliedOvPctX,
@@ -1819,41 +2610,163 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
               {/* 3. Atım Mesafesi (Throw Distance) & Lens */}
               <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 space-y-2">
+                {(() => {
+                  const totalPjs = (activeSurface.cols || 1) * (activeSurface.rows || 1);
+                  const pjKeys: { key: string; label: string }[] = [];
+                  for (let r = 0; r < (activeSurface.rows || 1); r++) {
+                    for (let c = 0; c < (activeSurface.cols || 1); c++) {
+                      pjKeys.push({ key: `${r}-${c}`, label: `PJ ${r * (activeSurface.cols || 1) + c + 1}` });
+                    }
+                  }
+                  const activePjKey = totalPjs > 1 && pjKeys.some(p => p.key === selectedPjKey) ? selectedPjKey : 'all';
+                  const isSinglePjMode = activePjKey !== 'all';
+                  const curPjOffset = isSinglePjMode
+                    ? (activeSurface.customProjectorOffsets?.[activePjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 })
+                    : null;
+
+                  const updateSinglePjOffset = (patch: Partial<{ shiftX: number; shiftY: number; shiftZ: number; throwRatio?: number }>) => {
+                    const prevOffsets = activeSurface.customProjectorOffsets || {};
+                    const prev = prevOffsets[activePjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 };
+                    updateSurface(activeSurface.id, {
+                      customProjectorOffsets: {
+                        ...prevOffsets,
+                        [activePjKey]: { ...prev, ...patch },
+                      },
+                    });
+                  };
+
+                  const resetSinglePjOffset = () => {
+                    if (!activeSurface.customProjectorOffsets) return;
+                    const next = { ...activeSurface.customProjectorOffsets };
+                    delete next[activePjKey];
+                    updateSurface(activeSurface.id, { customProjectorOffsets: next });
+                  };
+
+                  const dispThrow = isSinglePjMode
+                    ? round(Math.max(0.5, activeSurface.throwDistM + (curPjOffset?.shiftZ || 0)), 2)
+                    : activeSurface.throwDistM;
+                  const dispTr = isSinglePjMode
+                    ? (curPjOffset?.throwRatio ?? activeSurface.throwRatio)
+                    : activeSurface.throwRatio;
+                  const activePjLabel = pjKeys.find(p => p.key === activePjKey)?.label || '';
+
+                  return (
+                    <>
                 <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center justify-between">
                   <span>3. Atım Mesafesi & Lens:</span>
                   <button
                     type="button"
-                    onClick={() => updateSurface(activeSurface.id, { throwDistM: activeSurface.requiredThrowDistM })}
+                    onClick={() => {
+                      if (isSinglePjMode) {
+                        updateSinglePjOffset({ shiftZ: +(activeSurface.requiredThrowDistM - activeSurface.throwDistM).toFixed(3) });
+                      } else {
+                        updateSurface(activeSurface.id, { throwDistM: activeSurface.requiredThrowDistM });
+                      }
+                    }}
                     className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900"
                     title="Projektör mesafesini duvar yüksekliğini tam dolduracak optik mesafeye eşitler"
                   >
                     Duvara Eşitle ({activeSurface.requiredThrowDistM}m)
                   </button>
                 </div>
+
+                {totalPjs > 1 && (
+                  <div className="flex flex-wrap items-center gap-1 bg-slate-900/90 p-1.5 rounded border border-slate-800">
+                    <span className="text-[10px] text-slate-400 mr-1 font-semibold">Hedef:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPjKey('all')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                        activePjKey === 'all'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Tümü ({totalPjs} PJ)
+                    </button>
+                    {pjKeys.map(pk => {
+                      const ov = activeSurface.customProjectorOffsets?.[pk.key];
+                      const hasCustom = !!ov && (
+                        Math.abs(ov.shiftX || 0) > 0.001 ||
+                        Math.abs(ov.shiftY || 0) > 0.001 ||
+                        Math.abs(ov.shiftZ || 0) > 0.001 ||
+                        ov.throwRatio !== undefined
+                      );
+                      return (
+                        <button
+                          key={pk.key}
+                          type="button"
+                          onClick={() => setSelectedPjKey(pk.key)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            activePjKey === pk.key
+                              ? 'bg-amber-600 text-white'
+                              : hasCustom
+                                ? 'bg-amber-950/60 text-amber-300 border border-amber-700/60 hover:bg-amber-900/60'
+                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                          }`}
+                        >
+                          {pk.label}{hasCustom ? ' •' : ''}
+                        </button>
+                      );
+                    })}
+                    {isSinglePjMode && (
+                      <button
+                        type="button"
+                        onClick={resetSinglePjOffset}
+                        className="ml-auto px-1.5 py-0.5 rounded bg-slate-800 hover:bg-rose-900/70 text-[10px] text-slate-300 hover:text-rose-200"
+                        title="Seçili projektörün bireysel ayarını sıfırla"
+                      >
+                        Sıfırla
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Atım Uzaklığı (m):</label>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {isSinglePjMode ? `${activePjLabel} Atım Uzaklığı (m):` : 'Atım Uzaklığı (m):'}
+                    </label>
                     <input
                       className="inp font-bold text-emerald-300"
                       type="number"
                       step="0.1"
                       min="0.5"
-                      value={activeSurface.throwDistM}
-                      onChange={e => updateSurface(activeSurface.id, { throwDistM: Math.max(0.5, +e.target.value) })}
+                      value={dispThrow}
+                      onChange={e => {
+                        const val = Math.max(0.5, +e.target.value);
+                        if (isSinglePjMode) {
+                          updateSinglePjOffset({ shiftZ: +(val - activeSurface.throwDistM).toFixed(3) });
+                        } else {
+                          updateSurface(activeSurface.id, { throwDistM: val });
+                        }
+                      }}
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Lens Throw Ratio (TR):</label>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {isSinglePjMode ? `${activePjLabel} Lens TR:` : 'Lens Throw Ratio (TR):'}
+                    </label>
                     <input
                       className="inp font-bold text-emerald-300"
                       type="number"
                       step="0.05"
                       min="0.15"
-                      value={activeSurface.throwRatio}
-                      onChange={e => updateSurface(activeSurface.id, { throwRatio: Math.max(0.15, +e.target.value) })}
+                      value={dispTr}
+                      onChange={e => {
+                        const val = Math.max(0.15, +e.target.value);
+                        if (isSinglePjMode) {
+                          updateSinglePjOffset({ throwRatio: val });
+                        } else {
+                          updateSurface(activeSurface.id, { throwRatio: val });
+                        }
+                      }}
                     />
                   </div>
                 </div>
+                    </>
+                  );
+                })()}
               </div>
 
               {/* 4. Büyük Sonuç Rozeti ve İnce Ayar Butonu */}
@@ -1886,6 +2799,28 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </button>
                 </div>
               </div>
+
+              <PixelMapChainSummary
+                surface={activeSurface}
+                totalCanvasW={calculation.totalCanvasW}
+                totalCanvasH={calculation.totalCanvasH}
+                totalActivePixels={calculation.totalActivePixels}
+              />
+
+              <GeometricMappingChainSummary
+                surface={activeSurface}
+                allSurfaces={calculation.surfaces}
+              />
+
+              <ViewingQualityChainSummary
+                surface={activeSurface}
+              />
+
+              <SurfaceEngineeringFeasibilityPanel
+                surface={activeSurface}
+                physicalRoom={physicalRoom}
+                onApplyRecommendation={patch => updateSurface(activeSurface.id, patch)}
+              />
             </div>
           )}
 
@@ -2281,12 +3216,72 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
               {/* C) UZAKLIK (MESAFE), LENS VE İZLEYİCİ BAKIŞ MESAFESİ GİRİŞİ VE PİKSEL YOĞUNLUĞU KARTI */}
               <div className="p-2.5 rounded bg-slate-950 border border-sky-700/80 space-y-2.5">
+                {(() => {
+                  const totalPjs = (activeSurface.cols || 1) * (activeSurface.rows || 1);
+                  const pjKeys: { key: string; label: string }[] = [];
+                  for (let r = 0; r < (activeSurface.rows || 1); r++) {
+                    for (let c = 0; c < (activeSurface.cols || 1); c++) {
+                      pjKeys.push({ key: `${r}-${c}`, label: `PJ ${r * (activeSurface.cols || 1) + c + 1}` });
+                    }
+                  }
+                  const activePjKey = totalPjs > 1 && pjKeys.some(p => p.key === selectedPjKey) ? selectedPjKey : 'all';
+                  const isSinglePjMode = activePjKey !== 'all';
+                  const curPjOffset = isSinglePjMode
+                    ? (activeSurface.customProjectorOffsets?.[activePjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 })
+                    : null;
+                  const baseMountH = activeSurface.projMountHeightM ?? round(Math.max(2.2, activeSurface.effectiveHeightM - 0.15), 2);
+                  const baseShiftX = activeSurface.projShiftXM ?? 0;
+                  const baseShiftY = activeSurface.projShiftYM ?? 0;
+
+                  const updateSinglePjOffset = (patch: Partial<{ shiftX: number; shiftY: number; shiftZ: number; throwRatio?: number }>) => {
+                    const prevOffsets = activeSurface.customProjectorOffsets || {};
+                    const prev = prevOffsets[activePjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 };
+                    updateSurface(activeSurface.id, {
+                      customProjectorOffsets: {
+                        ...prevOffsets,
+                        [activePjKey]: { ...prev, ...patch },
+                      },
+                    });
+                  };
+
+                  const resetSinglePjOffset = () => {
+                    if (!activeSurface.customProjectorOffsets) return;
+                    const next = { ...activeSurface.customProjectorOffsets };
+                    delete next[activePjKey];
+                    updateSurface(activeSurface.id, { customProjectorOffsets: next });
+                  };
+
+                  const dispThrow = isSinglePjMode
+                    ? round(Math.max(0.5, activeSurface.throwDistM + (curPjOffset?.shiftZ || 0)), 2)
+                    : activeSurface.throwDistM;
+                  const dispMountH = isSinglePjMode
+                    ? round(Math.max(0.3, baseMountH + (curPjOffset?.shiftY || 0)), 2)
+                    : baseMountH;
+                  const dispShiftX = isSinglePjMode
+                    ? round(baseShiftX + (curPjOffset?.shiftX || 0), 2)
+                    : baseShiftX;
+                  const dispShiftY = isSinglePjMode
+                    ? round(baseShiftY + (curPjOffset?.shiftY || 0), 2)
+                    : baseShiftY;
+                  const dispTr = isSinglePjMode
+                    ? (curPjOffset?.throwRatio ?? activeSurface.throwRatio)
+                    : activeSurface.throwRatio;
+                  const activePjLabel = pjKeys.find(p => p.key === activePjKey)?.label || '';
+
+                  return (
+                    <>
                 <div className="flex justify-between items-center border-b border-slate-800 pb-1">
                   <span className="font-bold text-sky-400 text-[11px] uppercase tracking-wider">
                     Uzaklık (Mesafe) & Piksel Yoğunluğu Hesabı
                   </span>
                   <button
-                    onClick={() => updateSurface(activeSurface.id, { throwDistM: activeSurface.requiredThrowDistM })}
+                    onClick={() => {
+                      if (isSinglePjMode) {
+                        updateSinglePjOffset({ shiftZ: +(activeSurface.requiredThrowDistM - activeSurface.throwDistM).toFixed(3) });
+                      } else {
+                        updateSurface(activeSurface.id, { throwDistM: activeSurface.requiredThrowDistM });
+                      }
+                    }}
                     className="px-2 py-0.5 rounded bg-sky-800 hover:bg-sky-700 text-white text-[10px] font-semibold"
                     title="Projektör atım mesafesini duvar yüksekliğini tam dolduracak optik mesafeye eşitle"
                   >
@@ -2294,28 +3289,94 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   </button>
                 </div>
 
+                {/* Çoklu Projektörde Bireysel Seçim Çubuğu */}
+                {totalPjs > 1 && (
+                  <div className="flex flex-wrap items-center gap-1 bg-slate-900/90 p-1.5 rounded border border-slate-800">
+                    <span className="text-[10px] text-slate-400 mr-1 font-semibold">Hedef:</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPjKey('all')}
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                        activePjKey === 'all'
+                          ? 'bg-sky-600 text-white'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Tümü ({totalPjs} PJ)
+                    </button>
+                    {pjKeys.map(pk => {
+                      const hasCustom = !!activeSurface.customProjectorOffsets?.[pk.key] && (
+                        Math.abs(activeSurface.customProjectorOffsets[pk.key].shiftX || 0) > 0.001 ||
+                        Math.abs(activeSurface.customProjectorOffsets[pk.key].shiftY || 0) > 0.001 ||
+                        Math.abs(activeSurface.customProjectorOffsets[pk.key].shiftZ || 0) > 0.001
+                      );
+                      return (
+                        <button
+                          key={pk.key}
+                          type="button"
+                          onClick={() => setSelectedPjKey(pk.key)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                            activePjKey === pk.key
+                              ? 'bg-amber-600 text-white'
+                              : hasCustom
+                                ? 'bg-amber-950/60 text-amber-300 border border-amber-700/60 hover:bg-amber-900/60'
+                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                          }`}
+                          title={`${pk.label} cihazını diğerlerinden bağımsız hareket ettir`}
+                        >
+                          {pk.label}{hasCustom ? ' •' : ''}
+                        </button>
+                      );
+                    })}
+                    {isSinglePjMode && (
+                      <button
+                        type="button"
+                        onClick={resetSinglePjOffset}
+                        className="ml-auto px-1.5 py-0.5 rounded bg-slate-800 hover:bg-rose-900/70 text-[10px] text-slate-300 hover:text-rose-200"
+                        title="Seçili projektörün bireysel kaydırmasını sıfırla"
+                      >
+                        Sıfırla
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* 3'lü Uzaklık ve Lens Girişi */}
                 <div className="grid grid-cols-3 gap-2">
                   <label>
-                    Projektör Uzaklığı D (m)
+                    {isSinglePjMode ? `${activePjLabel} Uzaklık D (m)` : 'Projektör Uzaklığı D (m)'}
                     <input
                       className="inp font-bold text-amber-300"
                       type="number"
                       step="0.1"
                       min="0.5"
-                      value={activeSurface.throwDistM}
-                      onChange={e => updateSurface(activeSurface.id, { throwDistM: Math.max(0.5, +e.target.value) })}
+                      value={dispThrow}
+                      onChange={e => {
+                        const val = Math.max(0.5, +e.target.value);
+                        if (isSinglePjMode) {
+                          updateSinglePjOffset({ shiftZ: +(val - activeSurface.throwDistM).toFixed(3) });
+                        } else {
+                          updateSurface(activeSurface.id, { throwDistM: val });
+                        }
+                      }}
                     />
                   </label>
                   <label>
-                    Lens Throw Ratio (TR)
+                    {isSinglePjMode ? `${activePjLabel} Lens TR` : 'Lens Throw Ratio (TR)'}
                     <input
                       className="inp font-bold text-amber-300"
                       type="number"
                       step="0.05"
                       min="0.2"
-                      value={activeSurface.throwRatio}
-                      onChange={e => updateSurface(activeSurface.id, { throwRatio: Math.max(0.15, +e.target.value) })}
+                      value={dispTr}
+                      onChange={e => {
+                        const val = Math.max(0.15, +e.target.value);
+                        if (isSinglePjMode) {
+                          updateSinglePjOffset({ throwRatio: val });
+                        } else {
+                          updateSurface(activeSurface.id, { throwRatio: val });
+                        }
+                      }}
                     />
                   </label>
                   <label>
@@ -2334,31 +3395,48 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 {/* 3'lü Projektör Montaj Yüksekliği, Sağa-Sola ve Yukarı-Aşağı Kaydırma (Shift) */}
                 <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-900">
                   <label>
-                    PJ Montaj Yüksekliği (m)
+                    {isSinglePjMode ? `${activePjLabel} Montaj Yük. (m)` : 'PJ Montaj Yüksekliği (m)'}
                     <input
                       className="inp font-bold text-sky-300"
                       type="number"
                       step="0.1"
                       min="0.3"
                       max="25"
-                      value={activeSurface.projMountHeightM ?? round(Math.max(2.2, activeSurface.effectiveHeightM - 0.15), 2)}
-                      onChange={e => updateSurface(activeSurface.id, { projMountHeightM: Math.max(0.3, +e.target.value) })}
+                      value={dispMountH}
+                      onChange={e => {
+                        const val = Math.max(0.3, +e.target.value);
+                        if (isSinglePjMode) {
+                          updateSinglePjOffset({ shiftY: +(val - baseMountH).toFixed(3) });
+                        } else {
+                          updateSurface(activeSurface.id, { projMountHeightM: val });
+                        }
+                      }}
                     />
                   </label>
                   <label>
-                    PJ Sağa/Sola Kaydır (m)
+                    {isSinglePjMode ? `${activePjLabel} Sağa/Sola (m)` : 'PJ Sağa/Sola Kaydır (m)'}
                     <div className="flex items-center gap-1">
                       <input
                         className="inp font-bold text-amber-300"
                         type="number"
                         step="0.2"
-                        value={activeSurface.projShiftXM ?? 0}
-                        onChange={e => updateSurface(activeSurface.id, { projShiftXM: +e.target.value })}
+                        value={dispShiftX}
+                        onChange={e => {
+                          const val = +e.target.value;
+                          if (isSinglePjMode) {
+                            updateSinglePjOffset({ shiftX: +(val - baseShiftX).toFixed(3) });
+                          } else {
+                            updateSurface(activeSurface.id, { projShiftXM: val });
+                          }
+                        }}
                       />
-                      {(activeSurface.projShiftXM ?? 0) !== 0 && (
+                      {dispShiftX !== 0 && (
                         <button
                           type="button"
-                          onClick={() => updateSurface(activeSurface.id, { projShiftXM: 0 })}
+                          onClick={() => {
+                            if (isSinglePjMode) updateSinglePjOffset({ shiftX: 0 });
+                            else updateSurface(activeSurface.id, { projShiftXM: 0 });
+                          }}
                           className="px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
                           title="Yatay kaydırmayı sıfırla (Merkezle)"
                         >
@@ -2368,19 +3446,29 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     </div>
                   </label>
                   <label>
-                    Görüntü Dikey Offset (m)
+                    {isSinglePjMode ? `${activePjLabel} Dikey Offset (m)` : 'Görüntü Dikey Offset (m)'}
                     <div className="flex items-center gap-1">
                       <input
                         className="inp font-bold text-amber-300"
                         type="number"
                         step="0.1"
-                        value={activeSurface.projShiftYM ?? 0}
-                        onChange={e => updateSurface(activeSurface.id, { projShiftYM: +e.target.value })}
+                        value={dispShiftY}
+                        onChange={e => {
+                          const val = +e.target.value;
+                          if (isSinglePjMode) {
+                            updateSinglePjOffset({ shiftY: +(val - baseShiftY).toFixed(3) });
+                          } else {
+                            updateSurface(activeSurface.id, { projShiftYM: val });
+                          }
+                        }}
                       />
-                      {(activeSurface.projShiftYM ?? 0) !== 0 && (
+                      {dispShiftY !== 0 && (
                         <button
                           type="button"
-                          onClick={() => updateSurface(activeSurface.id, { projShiftYM: 0 })}
+                          onClick={() => {
+                            if (isSinglePjMode) updateSinglePjOffset({ shiftY: 0 });
+                            else updateSurface(activeSurface.id, { projShiftYM: 0 });
+                          }}
                           className="px-1.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
                           title="Dikey kaydırmayı sıfırla"
                         >
@@ -2390,6 +3478,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     </div>
                   </label>
                 </div>
+                    </>
+                  );
+                })()}
 
                 {/* 3'lü Karşılaştırma: 1. Uzaklığa Göre Optik Piksel | 2. Duvar Piksel Boyutu | 3. İzleyici Mesafesine Göre İdeal Piksel */}
                 <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
@@ -2497,6 +3588,28 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   <b>~{activeSurface.impliedOvPxX} px / %{activeSurface.impliedOvPctX}</b>)
                 </div>
               </div>
+
+              <PixelMapChainSummary
+                surface={activeSurface}
+                totalCanvasW={calculation.totalCanvasW}
+                totalCanvasH={calculation.totalCanvasH}
+                totalActivePixels={calculation.totalActivePixels}
+              />
+
+              <GeometricMappingChainSummary
+                surface={activeSurface}
+                allSurfaces={calculation.surfaces}
+              />
+
+              <ViewingQualityChainSummary
+                surface={activeSurface}
+              />
+
+              <SurfaceEngineeringFeasibilityPanel
+                surface={activeSurface}
+                physicalRoom={physicalRoom}
+                onApplyRecommendation={patch => updateSurface(activeSurface.id, patch)}
+              />
 
               {/* E) Projektör Çözünürlüğü, Sayısı ve Overlap */}
               <div className="p-2.5 rounded bg-slate-950 border border-slate-800 space-y-2">
@@ -2707,7 +3820,13 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   <span className="text-[10px] text-sky-400 font-medium px-1.5 py-0.5 rounded bg-sky-950/70 border border-sky-850" title="Yazıların üzerine tıklayıp basılı tutarak dilediğiniz konuma kaydırabilirsiniz">
                     ✋ Yazıları Sürükle
                   </span>
-                  {surfaces.some(s => (s.textOffsetX && s.textOffsetX !== 0) || (s.textOffsetY && s.textOffsetY !== 0)) && (
+                  {surfaces.some(
+                    s =>
+                      (s.textOffsetX && s.textOffsetX !== 0) ||
+                      (s.textOffsetY && s.textOffsetY !== 0) ||
+                      (s.textOffsets &&
+                        Object.values(s.textOffsets).some(o => o && (o.x !== 0 || o.y !== 0)))
+                  ) && (
                     <button
                       onClick={resetAllTextOffsets}
                       className="px-1.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
@@ -3393,6 +4512,29 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 ))}
               </tbody>
             </table>
+
+            {activeSurface && (
+              <div className="mt-2.5 space-y-2.5">
+                <PixelMapChainSummary
+                  surface={activeSurface}
+                  totalCanvasW={calculation.totalCanvasW}
+                  totalCanvasH={calculation.totalCanvasH}
+                  totalActivePixels={calculation.totalActivePixels}
+                />
+                <GeometricMappingChainSummary
+                  surface={activeSurface}
+                  allSurfaces={calculation.surfaces}
+                />
+                <ViewingQualityChainSummary
+                  surface={activeSurface}
+                />
+                <SurfaceEngineeringFeasibilityPanel
+                  surface={activeSurface}
+                  physicalRoom={physicalRoom}
+                  onApplyRecommendation={patch => updateSurface(activeSurface.id, patch)}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>

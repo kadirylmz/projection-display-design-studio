@@ -17,6 +17,10 @@ export interface Circuit {
   id: string; name: string; loadIds: string[];
   phase: 'L1' | 'L2' | 'L3' | '3P';        // tek faz hattı veya üç faz devre
   cableMm2?: number; lengthM?: number; ampacityA?: number;   // Iz kullanıcıdan
+  breakerIcuKa?: number; prospectiveFaultKa?: number;        // Icu/Icn ve beklenen kısa devre akımı (kA)
+  tripCurve?: 'B' | 'C' | 'D';                               // MCB açma eğrisi
+  inrushA?: number; inrushMultiplier?: number;               // İlk kalkış (inrush) akımı (A veya Ib çarpanı)
+  selectivityVerified?: boolean;                             // Üretici koordinasyon tablosu selektivite onayı
 }
 export interface Supply { voltage: number; phases: 1 | 3; defaultPf: number; designMargin: number; maxDropPct: number; rho: number; diversity: number }
 
@@ -48,7 +52,7 @@ export interface CircuitResult {
 }
 export interface ElectricalResult {
   circuits: CircuitResult[]; totalW: number; demandW: number; totalIbA: number;
-  mainBreakerA: number | null; phaseLoadsW: Record<string, number>; imbalancePct: number | null;
+  mainBreakerA: number | null; mainBreakerReason?: string; phaseLoadsW: Record<string, number>; imbalancePct: number | null;
   warnings: string[]; assumptions: string[];
 }
 
@@ -87,23 +91,115 @@ export function analyze(loads: Load[], circuits: Circuit[], s: Supply): Electric
   }
   for (const l of loads) if (!used.has(l.id)) warnings.push(`${l.name} hiçbir devreye atanmadı.`);
   const total = res.reduce((a, r) => a + r.powerW, 0), demand = total * s.diversity;
-  const totalIb = s.phases === 3 ? loadCurrent(Math.max(demand, 1e-9), s.voltage, s.defaultPf, true) : loadCurrent(Math.max(demand, 1e-9), s.voltage, s.defaultPf, false);
+  // Türkiye/IEC 3 fazlı sistemde s.voltage faz-nötr (≤ 260 V, örn. 230 V) girilmişse hatlar arası gerilim √3 × V_LN (~400 V) kullanılır.
+  const effectiveLineV = s.phases === 3 && s.voltage <= 260 ? s.voltage * Math.sqrt(3) : s.voltage;
+  const totalIb = s.phases === 3 ? loadCurrent(Math.max(demand, 1e-9), effectiveLineV, s.defaultPf, true) : loadCurrent(Math.max(demand, 1e-9), s.voltage, s.defaultPf, false);
   let imb: number | null = null;
   if (s.phases === 3) {
     const v = Object.values(phaseLoads), avg = v.reduce((a, b) => a + b, 0) / 3;
     imb = avg > 0 ? (Math.max(...v) - Math.min(...v)) / avg * 100 : 0;
     if (imb > 20) warnings.push(`Faz dengesizliği %${imb.toFixed(0)}; yükleri fazlara yeniden dağıtın.`);
   }
-  const main = total > 0 ? selectBreaker(s.phases === 3 ? totalIb : totalIb, s.designMargin) : { inA: null, required: 0 };
-  if (total > 0 && main.inA === null) warnings.push('Ana koruma 125 A tercihli değerlerin üstünde; elle seçin.');
+  const main = total > 0 ? selectBreaker(totalIb, s.designMargin) : { inA: null, required: 0 };
+  const activeBreakerRatings = res.map(r => r.breakerA).filter((b): b is number => b !== null);
+  const maxCircuitBreakerA = activeBreakerRatings.length > 0 ? Math.max(...activeBreakerRatings) : 0;
+  // Çoklu linyeli panoda ana kesici, alt linye sigortalarıyla 1.6× selektiviteyi sağlayacak en küçük tercihli değerden seçilir
+  const selectiveMinA = activeBreakerRatings.length > 1 ? Math.max(main.required, maxCircuitBreakerA * 1.6) : main.required;
+  const selectiveMainA = total > 0 ? (BREAKER_RATINGS_A.find(r => r >= selectiveMinA - 1e-9) ?? null) : null;
+  if (total > 0 && selectiveMainA === null) warnings.push('Ana koruma 125 A tercihli değerlerin üstünde; elle seçin.');
+  const mainBreakerReason = total > 0 && selectiveMainA !== null
+    ? (activeBreakerRatings.length > 1 && maxCircuitBreakerA * 1.6 > main.required
+      ? `Yük akımı minimumu ${main.required.toFixed(2)} A (Ib×${(1 + s.designMargin).toFixed(2)}) olmasına karşın, alt linye min. MCB (${maxCircuitBreakerA} A) için ön-tasarım 1.6× kuralı (${(maxCircuitBreakerA * 1.6).toFixed(1)} A) gereği IEC 60898-1 serisinden ${selectiveMainA} A seçildi (kesin selektivite garantisi için üretici zaman-akım / selektivite tabloları ve Ik gereklidir).`
+      : `Yük akımı Ib=${totalIb.toFixed(2)} A × ${(1 + s.designMargin).toFixed(2)} = ${main.required.toFixed(2)} A kriterini sağlayan en küçük IEC 60898-1 standart değeri (${selectiveMainA} A) seçildi.`)
+    : undefined;
   return {
-    circuits: res, totalW: total, demandW: demand, totalIbA: total > 0 ? totalIb : 0, mainBreakerA: main.inA,
+    circuits: res, totalW: total, demandW: demand, totalIbA: total > 0 ? totalIb : 0, mainBreakerA: selectiveMainA, mainBreakerReason,
     phaseLoadsW: phaseLoads, imbalancePct: imb, warnings,
     assumptions: [
       `Gerilim ${s.voltage} V, ${s.phases} fazlı besleme; güç faktörü yük başına girilmediyse ${s.defaultPf}.`,
       `Koruma seçimi: In ≥ Ib × (1+${s.designMargin}); IEC 60898-1 tercihli değerlerinden en küçüğü.`,
+      ...(mainBreakerReason ? [`Ana Kesici Seçim Gerekçesi: ${mainBreakerReason}`] : []),
+      'Not: Kablo döşeme şekli (kanal/hava/grup düzeltme faktörü), ortam sıcaklığı, gerçek cihaz markası/modeli ve saha kısa devre/selektivite tabloları girilmeden kesin koruma koordinasyonu onaylanmaz.',
       `Gerilim düşümü reaktanssız, ρ=${s.rho} Ω·mm²/m (bakır).`,
-      'Kablo Iz değeri ve selektivite/kısa devre hesabı kapsam dışıdır; proje mühendisi tarafından doğrulanmalıdır.',
+      'Kablo Iz değeri girilmedikçe ve Icu/Icn, açma eğrisi ile inrush akımı tanımlanmadıkça tam koruma koordinasyonu proje mühendisi tarafından doğrulanmalıdır.',
     ],
+  };
+}
+
+export interface ProtectionCoordinationResult {
+  defined: boolean;
+  passed: boolean;
+  selectivityVerified: boolean;
+  issues: string[];
+  summary: string;
+}
+
+const CURVE_MAGNETIC_MULT: Record<'B' | 'C' | 'D', number> = { B: 3, C: 5, D: 10 };
+
+/**
+ * Devrelerin kısa devre kesme kapasitesi (Icu/Icn >= Ik), açma eğrisi/inrush ve selektivite koordinasyonunu değerlendirir.
+ * Gerekli alanlar tüm aktif devrelerde tanımlı değilse `defined: false` döner.
+ */
+export function evaluateProtectionCoordination(
+  circuits: CircuitResult[],
+  mainBreakerA: number | null,
+): ProtectionCoordinationResult {
+  const active = circuits.filter(c => c.ibA > 0 || c.powerW > 0);
+  if (active.length === 0) {
+    return { defined: false, passed: false, selectivityVerified: false, issues: [], summary: 'Aktif devre yok' };
+  }
+  const allDefined = active.every(r => {
+    const c = r.circuit;
+    const hasIcu = typeof c.breakerIcuKa === 'number' && c.breakerIcuKa > 0 && typeof c.prospectiveFaultKa === 'number' && c.prospectiveFaultKa > 0;
+    const hasCurve = c.tripCurve === 'B' || c.tripCurve === 'C' || c.tripCurve === 'D';
+    const hasInrush = (typeof c.inrushA === 'number' && c.inrushA > 0) || (typeof c.inrushMultiplier === 'number' && c.inrushMultiplier > 0);
+    return hasIcu && hasCurve && hasInrush;
+  });
+  if (!allDefined) {
+    return {
+      defined: false,
+      passed: false,
+      selectivityVerified: false,
+      issues: [],
+      summary: 'Yalnızca Ib ve ΔU hesaplandı',
+    };
+  }
+
+  const issues: string[] = [];
+  let selectivityUnknown = false;
+  for (const r of active) {
+    const c = r.circuit;
+    const icu = c.breakerIcuKa!;
+    const ik = c.prospectiveFaultKa!;
+    if (icu < ik) {
+      issues.push(`${c.name}: Kesici Icu (${icu} kA) < Beklenen Ik (${ik} kA)`);
+    }
+    const curve = c.tripCurve!;
+    const inrushA = typeof c.inrushA === 'number' && c.inrushA > 0 ? c.inrushA : r.ibA * (c.inrushMultiplier ?? 1);
+    if (r.breakerA !== null) {
+      const magLimit = r.breakerA * CURVE_MAGNETIC_MULT[curve];
+      if (inrushA > magLimit) {
+        issues.push(`${c.name}: İnruş (${inrushA.toFixed(1)} A) > ${curve}${r.breakerA} manyetik eşiği (${magLimit.toFixed(1)} A)`);
+      }
+      if (active.length > 1) {
+        if (c.selectivityVerified === false) {
+          issues.push(`${c.name}: Üretici selektivite koordinasyonu sağlanmıyor (Ana ${mainBreakerA ?? '—'} A / Linye ${r.breakerA} A)`);
+        } else if (c.selectivityVerified !== true) {
+          selectivityUnknown = true;
+        }
+      }
+    }
+  }
+  const passed = issues.length === 0 && !selectivityUnknown;
+  return {
+    defined: true,
+    passed,
+    selectivityVerified: !selectivityUnknown,
+    issues,
+    summary: issues.length > 0
+      ? issues.join('; ')
+      : selectivityUnknown
+        ? `Icu ≥ Ik ve inrush doğrulandı; ancak ${active.length} linye için üretici zaman-akım koordinasyon tablosu girilmedi (UNKNOWN – Selektivite doğrulanamadı).`
+        : `${active.length} linyede Icu ≥ Ik, açma eğrisi & selektivite doğrulandı`,
   };
 }

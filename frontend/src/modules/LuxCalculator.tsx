@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LengthUnit, toMeters, round } from '../engine/units';
+import { computeViewingQualityAnalysis } from '../engine/lux';
+import {
+  computeEffectiveMultiProjectorPixelArea,
+  computeSurfacePointLuxDistribution,
+  evaluateSystemFeasibility,
+  recommendProjectorAndLenses,
+} from '../engine/feasibility';
 import {
   simulatePhotometricLux,
   parseIES,
@@ -145,12 +152,25 @@ function Photometric3DScene({
           </DreiText>
         </group>
 
-        {/* Projektörler ve Renkli Işık Piramitleri (Frustum Beams) */}
+        {/* Projektörler ve Renkli Işık Piramitleri (Frustum Beams + Gerçekçi Açı & Alan Telemetrisi) */}
         {projectors.filter(p => p.enabled).map((pj, idx) => {
           const tr = pj.throwRatio || 0.8;
-          const dist = Math.abs(pj.pos[2]) || 4.5;
+          const dx = pj.target[0] - pj.pos[0];
+          const dy = pj.target[1] - pj.pos[1];
+          const dz = pj.target[2] - pj.pos[2];
+          const dist = Math.max(0.2, Math.hypot(dx, dy, dz) || Math.abs(pj.pos[2]) || 4.5);
           const beamW = dist / tr;
           const beamH = beamW / 1.7778; // 16:9
+          const fovH = +(2 * Math.atan((beamW / 2) / dist) * (180 / Math.PI)).toFixed(1);
+          const fovV = +(2 * Math.atan((beamH / 2) / dist) * (180 / Math.PI)).toFixed(1);
+          const surfNormal: [number, number, number] =
+            surface.geometry === 'floor' ? [0, 1, 0] : surface.geometry === 'ceiling' ? [0, -1, 0] : [0, 0, 1];
+          const cosInc = Math.min(1, Math.max(0.05, Math.abs((dx * surfNormal[0] + dy * surfNormal[1] + dz * surfNormal[2]) / dist)));
+          const incDeg = +(Math.acos(cosInc) * (180 / Math.PI)).toFixed(1);
+          const litAreaM2 = +((beamW * beamH) / Math.max(0.3, cosInc)).toFixed(2);
+          const surfAreaM2 = Math.max(0.1, surface.widthM * surface.heightM);
+          const surfSharePct = Math.min(100, Math.round((litAreaM2 / surfAreaM2) * 100));
+
           const beamPts: [number, number, number][] = [
             [pj.target[0] - beamW / 2, pj.target[1] + beamH / 2, pj.target[2] + 0.02],
             [pj.target[0] + beamW / 2, pj.target[1] + beamH / 2, pj.target[2] + 0.02],
@@ -170,18 +190,28 @@ function Photometric3DScene({
                 <cylinderGeometry args={[0.08, 0.09, 0.1, 16]} />
                 <meshBasicMaterial color="#ffffff" />
               </mesh>
-              {/* Cihaz Etiketi */}
+              {/* Cihaz Etiketi + Gerçekçi Açı & Yansıtılan Alan */}
               <DreiText
                 position={[pj.pos[0], pj.pos[1] + 0.35, pj.pos[2]]}
-                fontSize={0.28}
+                fontSize={0.26}
                 color={pj.color || '#ffffff'}
                 anchorX="center"
                 anchorY="bottom"
                 outlineWidth={0.03}
                 outlineColor="#020617"
               >
-                {`PJ ${idx + 1}: ${pj.name.split('(')[0].trim()} (TR: ${pj.throwRatio}:1)`}
+                {`PJ ${idx + 1}: ${pj.name.split('(')[0].trim()} (TR ${pj.throwRatio}:1 · ∠${incDeg}° · ${litAreaM2}m² / %${surfSharePct})`}
               </DreiText>
+
+              {/* Merkez Optik Eksen Işını */}
+              <DreiLine
+                points={[pj.pos, [pj.target[0], pj.target[1], pj.target[2] + 0.02]]}
+                color={pj.color || '#ffffff'}
+                lineWidth={1.3}
+                dashed
+                dashSize={0.22}
+                gapSize={0.14}
+              />
 
               {/* Duvardaki Işık Ayak İzi (Footprint Quad) */}
               <DreiLine
@@ -189,6 +219,17 @@ function Photometric3DScene({
                 color={pj.color || '#ffffff'}
                 lineWidth={3}
               />
+              <DreiText
+                position={[pj.target[0], pj.target[1] - beamH / 2 + 0.18, pj.target[2] + 0.04]}
+                fontSize={0.2}
+                color={pj.color || '#e2e8f0'}
+                anchorX="center"
+                anchorY="bottom"
+                outlineWidth={0.025}
+                outlineColor="#020617"
+              >
+                {`${beamW.toFixed(2)}m×${beamH.toFixed(2)}m (${litAreaM2}m²) · FOV ${fovH}°×${fovV}°`}
+              </DreiText>
 
               {/* 4 Köşe Işın Çizgisi */}
               {beamPts.map((corner, cIdx) => (
@@ -209,7 +250,7 @@ function Photometric3DScene({
       {/* 3D Bilgi Notu & Renk Skalası */}
       <div className="absolute bottom-3 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 px-3 py-2 rounded-lg text-xs text-slate-300 pointer-events-none shadow-lg flex flex-wrap items-center gap-4">
         <div>
-          <span className="font-bold text-sky-400">💡 3B Mekansal Lux Haritası:</span> Duvar üzerinde hesaplanan gerçek lüks ısı haritası renklendirilmiştir.
+          <span className="font-bold text-sky-400">💡 3B Mekansal Lux &amp; Işın Simülasyonu:</span> Gerçekçi projektör konisi, geliş açısı ve aydınlatılan m² alanı canlı hesaplanır.
         </div>
         {simResult && (
           <div className="flex items-center gap-2 pl-3 border-l border-slate-700 font-mono text-[11px]">
@@ -463,9 +504,188 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
   const effMaxLux = isManualLux ? manualMaxLux : simResult.maxLux;
   const effU0 = isManualLux ? (effMinLux / Math.max(1, effAvgLux)) : simResult.uniformityU0;
   const effU1 = isManualLux ? (effMinLux / Math.max(1, effMaxLux)) : simResult.uniformityU1;
-  const effNits = isManualLux ? ((effAvgLux * screenGain) / Math.PI) : simResult.avgLuminanceNits;
-  const effFL = isManualLux ? (effNits * 0.2919) : simResult.avgLuminanceFL;
+  const effNits = isManualLux ? ((effAvgLux * screenGain * surfaceReflectance) / Math.PI) : +(simResult.avgLuminanceNits * surfaceReflectance).toFixed(1);
+  const effFL = +(effNits * 0.2919).toFixed(1);
   const effACR = isManualLux ? ((effAvgLux + ambientLux) / Math.max(1, ambientLux)) : simResult.ambientContrastRatio;
+
+  // 9 Kalemli Işık, Kayıp ve Gerçekçi Parlaklık Özet Zinciri
+  const chainSummary = useMemo(() => {
+    const areaM2 = Math.max(0.01, surfaceConfig.widthM * surfaceConfig.heightM);
+    const totalNominalLumens = activeProjectors.reduce((s, p) => s + (p.ansiLumens || 0), 0);
+    const effectiveTotalLumens = Math.round(activeProjectors.reduce((s, p) => s + (p.ansiLumens || 0) * Math.max(0.1, p.efficiency ?? 0.9), 0));
+    const lostLumens = Math.max(0, totalNominalLumens - effectiveTotalLumens);
+    const isoEquivalentLumens = Math.round(totalNominalLumens * 0.95);
+    const netEfficiencyPct = totalNominalLumens > 0 ? +((effectiveTotalLumens / totalNominalLumens) * 100).toFixed(1) : 100;
+    const theoreticalAvgLux = Math.round(totalNominalLumens / areaM2);
+    const singleProjectorLux = activeProjectors.length > 0 ? Math.round(effAvgLux / activeProjectors.length) : 0;
+    const idealNits = Math.round((effAvgLux * screenGain) / Math.PI);
+    const theoreticalNits = Math.round((theoreticalAvgLux * screenGain) / Math.PI);
+    const realisticNits = Math.round((effAvgLux * screenGain * surfaceReflectance) / Math.PI);
+    const ambientNits = +((ambientLux * screenGain * surfaceReflectance) / Math.PI).toFixed(1);
+    return {
+      areaM2: +areaM2.toFixed(2),
+      totalNominalLumens,
+      isoEquivalentLumens,
+      effectiveTotalLumens,
+      lostLumens,
+      netEfficiencyPct,
+      theoreticalAvgLux,
+      singleProjectorLux,
+      idealNits,
+      theoreticalNits,
+      realisticNits,
+      ambientNits,
+    };
+  }, [surfaceConfig.widthM, surfaceConfig.heightM, activeProjectors, effAvgLux, screenGain, surfaceReflectance, ambientLux]);
+
+  // İzleme & Görüntü Kalitesi Analizi Girişleri (Senkron & Düzenlenebilir)
+  const calculatedPlannerSurfaces = usePlannerStore(state => state.calculatedSurfaces);
+  const matchedPlannerSurf = plannerSurfaces.find(s => s.id === selectedSurfaceId);
+  const matchedCalcSurf = calculatedPlannerSurfaces.find(s => s.id === selectedSurfaceId);
+
+  const [vqViewDistM, setVqViewDistM] = useState<number>(4.5);
+  const [vqOffAxisDeg, setVqOffAxisDeg] = useState<number>(0);
+  const [vqPerProjW, setVqPerProjW] = useState<number>(1920);
+  const [vqPerProjH, setVqPerProjH] = useState<number>(1200);
+
+  useEffect(() => {
+    if (matchedPlannerSurf?.viewDistM) {
+      setVqViewDistM(matchedPlannerSurf.viewDistM);
+    }
+  }, [matchedPlannerSurf?.id, matchedPlannerSurf?.viewDistM]);
+
+  const viewingQuality = useMemo(() => {
+    const pjCount = Math.max(1, activeProjectors.length);
+    const resW = matchedCalcSurf?.netW
+      ?? (pjCount > 1 ? Math.round(vqPerProjW * (pjCount - (pjCount - 1) * (blendOverlap ? 0.18 : 0))) : vqPerProjW);
+    const resH = matchedCalcSurf?.netH ?? vqPerProjH;
+    return computeViewingQualityAnalysis({
+      widthM: surfaceConfig.widthM,
+      heightM: surfaceConfig.heightM,
+      resW,
+      resH,
+      viewingDistanceM: vqViewDistM,
+      offAxisAngleDeg: vqOffAxisDeg,
+      screenGain,
+      reflectance: surfaceReflectance,
+      avgLux: effAvgLux,
+      ambientLux,
+      nativeContrast: 2000,
+      uniformityU0: effU0,
+      uniformityU1: effU1,
+      projectorCount: pjCount,
+      overlapPct: blendOverlap ? (matchedPlannerSurf?.overlapX ?? 18) : 0,
+      colorCalibrated: pjCount > 1 ? blendOverlap : true,
+    });
+  }, [
+    surfaceConfig.widthM,
+    surfaceConfig.heightM,
+    matchedCalcSurf,
+    matchedPlannerSurf,
+    activeProjectors.length,
+    vqPerProjW,
+    vqPerProjH,
+    vqViewDistM,
+    vqOffAxisDeg,
+    blendOverlap,
+    screenGain,
+    surfaceReflectance,
+    effAvgLux,
+    ambientLux,
+    effU0,
+    effU1,
+  ]);
+
+  const engineeringAnalysis = useMemo(() => {
+    const pjCount = Math.max(1, activeProjectors.length);
+    const colsCount = matchedPlannerSurf?.cols ?? pjCount;
+    const rowsCount = matchedPlannerSurf?.rows ?? 1;
+    const overlapX = matchedPlannerSurf?.overlapMode === 'percent' ? (matchedPlannerSurf.overlapX ?? 15) : (blendOverlap ? 18 : 0);
+    const avgThrowD = activeProjectors.length > 0
+      ? +(activeProjectors.reduce((s, p) => s + Math.hypot(p.pos[0] - p.target[0], p.pos[1] - p.target[1], p.pos[2] - p.target[2]), 0) / activeProjectors.length).toFixed(2)
+      : 4.5;
+    const avgTR = activeProjectors.length > 0
+      ? +(activeProjectors.reduce((s, p) => s + (p.throwRatio || 0.8), 0) / activeProjectors.length).toFixed(2)
+      : 0.8;
+    const mountH = activeProjectors.length > 0
+      ? +(activeProjectors.reduce((s, p) => s + p.pos[1], 0) / activeProjectors.length).toFixed(2)
+      : Math.max(2.2, surfaceConfig.heightM - 0.15);
+
+    const pointLuxDist = computeSurfacePointLuxDistribution({
+      widthM: surfaceConfig.widthM,
+      heightM: surfaceConfig.heightM,
+      cols: colsCount,
+      rows: rowsCount,
+      avgLux: effAvgLux,
+      uniformityU0: effU0,
+      overlapPct: overlapX,
+      screenGain,
+      reflectance: surfaceReflectance,
+      ambientLux,
+    });
+
+    const effectivePixelArea = computeEffectiveMultiProjectorPixelArea({
+      widthM: surfaceConfig.widthM,
+      heightM: surfaceConfig.heightM,
+      projW: vqPerProjW,
+      projH: vqPerProjH,
+      cols: colsCount,
+      rows: rowsCount,
+      overlapPctX: overlapX,
+      isCurved: geometry !== 'flat' && geometry !== 'floor' && geometry !== 'ceiling',
+    });
+
+    const feasibility = evaluateSystemFeasibility({
+      widthM: surfaceConfig.widthM,
+      heightM: surfaceConfig.heightM,
+      throwDistM: avgThrowD,
+      throwRatio: avgTR,
+      roomHeightM: Math.max(surfaceConfig.heightM + 0.5, mountH + 0.25),
+      projMountHeightM: mountH,
+      viewDistM: vqViewDistM,
+      cols: colsCount,
+      rows: rowsCount,
+      projW: vqPerProjW,
+      projH: vqPerProjH,
+      overlapPct: overlapX,
+      avgLux: effAvgLux,
+      minLux: effMinLux,
+      ambientLux,
+      uniformityU0: effU0,
+      isCurved: geometry !== 'flat' && geometry !== 'floor' && geometry !== 'ceiling',
+    });
+
+    const recommendations = recommendProjectorAndLenses({
+      widthM: surfaceConfig.widthM,
+      heightM: surfaceConfig.heightM,
+      throwDistM: avgThrowD,
+      cols: colsCount,
+      rows: rowsCount,
+      overlapPct: overlapX,
+      targetLux: Math.max(300, Math.round(effAvgLux || 350)),
+      ambientLux,
+      screenGain,
+      reflectance: surfaceReflectance,
+    });
+
+    return { pointLuxDist, effectivePixelArea, feasibility, recommendations, avgThrowD, avgTR };
+  }, [
+    surfaceConfig.widthM,
+    surfaceConfig.heightM,
+    activeProjectors,
+    matchedPlannerSurf,
+    blendOverlap,
+    effAvgLux,
+    effMinLux,
+    effU0,
+    screenGain,
+    surfaceReflectance,
+    ambientLux,
+    vqPerProjW,
+    vqPerProjH,
+    geometry,
+    vqViewDistM,
+  ]);
 
   // Rapora Kaydet Fonksiyonu
   const handleSaveToReport = useCallback(() => {
@@ -514,12 +734,24 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       ambientContrastRatio: effACR,
       isManualLux: isManualLux,
       heatmapSnapshotUrl: snapshotUrl,
+      lumenStandard: 'ansi',
+      totalNominalLumens: chainSummary.totalNominalLumens,
+      isoEquivalentLumens: chainSummary.isoEquivalentLumens,
+      netEfficiencyPct: chainSummary.netEfficiencyPct,
+      effectiveTotalLumens: chainSummary.effectiveTotalLumens,
+      lostLumens: chainSummary.lostLumens,
+      theoreticalAvgLux: chainSummary.theoreticalAvgLux,
+      singleProjectorLux: chainSummary.singleProjectorLux,
+      surfaceReflectance: surfaceReflectance,
+      theoreticalNits: chainSummary.theoreticalNits,
+      idealNits: chainSummary.idealNits,
+      ambientNits: chainSummary.ambientNits,
       distributionRows: distRowsForReport,
     });
 
     setSaveToast(`✓ "${surfName}" 2B Isı Haritası ve Lux Analizi Raporlama Modülüne Eklendi!`);
     setTimeout(() => setSaveToast(null), 4000);
-  }, [selectedSurfaceId, plannerSurfaces, surfaceConfig, geometry, activeProjectors.length, effAvgLux, effMinLux, effMaxLux, effU0, effU1, effNits, effFL, screenGain, ambientLux, effACR, isManualLux, distributionData.rows, saveSurfacePhotometric]);
+  }, [selectedSurfaceId, plannerSurfaces, surfaceConfig, geometry, activeProjectors.length, effAvgLux, effMinLux, effMaxLux, effU0, effU1, effNits, effFL, screenGain, surfaceReflectance, ambientLux, effACR, isManualLux, chainSummary, distributionData.rows, saveSurfacePhotometric]);
 
 
 
@@ -934,9 +1166,9 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
   const simpleACR = ((simpleAvgLux + ambientLux) / Math.max(1, ambientLux)).toFixed(1);
 
   return (
-    <div className="flex flex-col gap-4 h-full text-slate-100 p-2 sm:p-4 overflow-y-auto">
+    <div className="flex flex-col gap-4 h-full text-slate-100 p-2 sm:p-4 overflow-y-auto print:block print:h-auto print:p-0 print:overflow-visible print:bg-white print:text-slate-900">
       {/* 🌟 EN ÜST BÖLÜM SEÇİM ÇUBUĞU (Bağımsız Parlaklık & Lens Raporu vs Detaylı Simülasyon) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 sm:p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 sm:p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg print:hidden">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-sky-950 border border-sky-800 text-sky-400 font-bold text-lg">
             💡
@@ -1930,6 +2162,376 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
               </div>
 
+            </div>
+
+            {/* 9 KALEMLİ TOPLAM IŞIK, KAYIP VE GERÇEKÇİ PARLAKLIK ÖZETİ */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-2 shadow-lg">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-xs font-bold text-sky-400 uppercase tracking-wider">
+                  📊 Toplam Işık, Kayıp ve Gerçekçi Parlaklık Hesap Zinciri (9 Kalem Sonuç Özeti)
+                </span>
+                <span className="text-[11px] font-mono text-emerald-400">
+                  Net Verim: %{chainSummary.netEfficiencyPct}
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse">
+                  <tbody className="divide-y divide-slate-800/80 text-slate-300">
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">1. ANSI / ISO Lümen</td>
+                      <td className="py-1.5 font-mono text-sky-300">{activeProjectors.length} PJ Toplam: <b>{chainSummary.totalNominalLumens.toLocaleString('tr-TR')} ANSI lm</b></td>
+                      <td className="py-1.5 text-right font-mono text-slate-400">ISO 21118: {chainSummary.isoEquivalentLumens.toLocaleString('tr-TR')} lm</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">2. Görüntü Alanı (m²)</td>
+                      <td className="py-1.5 font-mono text-emerald-300">{surfaceConfig.widthM.toFixed(2)}m × {surfaceConfig.heightM.toFixed(2)}m</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-emerald-400">{chainSummary.areaM2} m²</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">3. Teorik Ortalama Lux</td>
+                      <td className="py-1.5 font-mono text-slate-300">{chainSummary.totalNominalLumens.toLocaleString('tr-TR')} lm ÷ {chainSummary.areaM2} m² (Kayıpsız)</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-slate-200">{chainSummary.theoreticalAvgLux} Lux</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">4. Lens &amp; Optik Kayıplar</td>
+                      <td className="py-1.5 font-mono text-amber-300">Optik Verim %{chainSummary.netEfficiencyPct} → Net {chainSummary.effectiveTotalLumens.toLocaleString('tr-TR')} lm</td>
+                      <td className="py-1.5 text-right font-mono text-amber-400">-{chainSummary.lostLumens.toLocaleString('tr-TR')} lm kayıp</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">5. Çoklu Projektör Katkısı</td>
+                      <td className="py-1.5 font-mono text-sky-300">Tek Cihaz Ort: {chainSummary.singleProjectorLux} lx → {activeProjectors.length} PJ Toplam</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-sky-400">{Math.round(effAvgLux)} Lux</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">6. Ekran Kazancı (Gain)</td>
+                      <td className="py-1.5 font-mono text-slate-300">{screenGain}× Gain (Kayıpsız Teorik: {chainSummary.theoreticalNits} Nit)</td>
+                      <td className="py-1.5 text-right font-mono text-slate-200">{chainSummary.idealNits} Nit (ρ=1.0)</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">7. Yüzey Yansıtma (ρ)</td>
+                      <td className="py-1.5 font-mono text-amber-300">ρ = {surfaceReflectance} (%{Math.round(surfaceReflectance * 100)} yansıtma)</td>
+                      <td className="py-1.5 text-right font-mono text-slate-400">L = E · Gain · ρ / π</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">8. Ortam Işığı Etkisi</td>
+                      <td className="py-1.5 font-mono text-purple-300">{ambientLux} Lux Ortam → Siyah Seviyesi +{chainSummary.ambientNits} Nit</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-purple-400">ACR {round(effACR, 1)} : 1</td>
+                    </tr>
+                    <tr className="bg-emerald-950/40 border-t-2 border-emerald-700/70">
+                      <td className="py-2 pr-3 font-bold text-emerald-300">9. TOPLAM GERÇEKÇİ SONUÇ</td>
+                      <td className="py-2 font-mono text-emerald-200">Min {Math.round(effMinLux)} / Ort {Math.round(effAvgLux)} / Max {Math.round(effMaxLux)} lx · U0 %{round(effU0 * 100, 1)}</td>
+                      <td className="py-2 text-right font-mono font-extrabold text-emerald-300">{Math.round(effAvgLux)} Lux · {chainSummary.realisticNits} Nit ({effFL} fL)</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 👁️ 7 ADIMLI İZLEME VE GÖRÜNTÜ KALİTESİ ANALİZİ + TOPLAM KALİTE ÖZETİ */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h4 className="text-xs font-bold text-cyan-300 uppercase tracking-wider">
+                  👁️ 7 Adımlı İzleme ve Görüntü Kalitesi Analizi (Toplam Kalite Skoru Özeti)
+                </h4>
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <label className="flex items-center gap-1 text-slate-400">
+                    İzleme (m):
+                    <input
+                      type="number"
+                      min={0.5}
+                      step={0.5}
+                      value={vqViewDistM}
+                      onChange={e => setVqViewDistM(Math.max(0.5, parseFloat(e.target.value) || 4.5))}
+                      className="w-16 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-cyan-300 font-mono"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1 text-slate-400">
+                    Açı (°):
+                    <input
+                      type="number"
+                      min={0}
+                      max={70}
+                      step={5}
+                      value={vqOffAxisDeg}
+                      onChange={e => setVqOffAxisDeg(Math.max(0, Math.min(70, parseFloat(e.target.value) || 0)))}
+                      className="w-14 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-slate-200 font-mono"
+                    />
+                  </label>
+                  {!matchedCalcSurf && (
+                    <select
+                      value={`${vqPerProjW}x${vqPerProjH}`}
+                      onChange={e => {
+                        const [rw, rh] = e.target.value.split('x').map(Number);
+                        if (rw > 0 && rh > 0) {
+                          setVqPerProjW(rw);
+                          setVqPerProjH(rh);
+                        }
+                      }}
+                      className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-emerald-300 font-mono"
+                    >
+                      <option value="1280x800">1280×800 / PJ</option>
+                      <option value="1920x1080">1920×1080 / PJ</option>
+                      <option value="1920x1200">1920×1200 / PJ</option>
+                      <option value="2560x1600">2560×1600 / PJ</option>
+                      <option value="3840x2160">3840×2160 / PJ</option>
+                    </select>
+                  )}
+                  <span className="px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-700/60 text-cyan-300 font-mono font-bold">
+                    Skor %{viewingQuality.overallQualityScorePct}
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <tbody className="divide-y divide-slate-800/80">
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">1. İzleme Mesafesi</td>
+                      <td className="py-1.5 font-mono text-cyan-300">{viewingQuality.viewingDistanceM} m (Oran {viewingQuality.distanceRatioToHeight}×H · İdeal {viewingQuality.optimalViewingDistMinM}–{viewingQuality.optimalViewingDistMaxM} m)</td>
+                      <td className="py-1.5 text-right font-mono text-slate-200">{viewingQuality.viewingDistanceStatus}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">2. Görüş Açısı (FOV)</td>
+                      <td className="py-1.5 font-mono text-sky-300">Yatay {viewingQuality.horizontalFovDeg}° · Dikey {viewingQuality.verticalFovDeg}° · Çapraz {viewingQuality.diagonalFovDeg}°</td>
+                      <td className="py-1.5 text-right font-mono text-amber-300">Eksen dışı {viewingQuality.offAxisAngleDeg}° (-%{viewingQuality.offAxisLuminanceDropPct}) · {viewingQuality.fovCategory}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">3. Görüntü Keskinliği</td>
+                      <td className="py-1.5 font-mono text-emerald-300">{viewingQuality.ppd} PPD · {viewingQuality.arcminPerPixel} arcmin/px ({viewingQuality.resW}×{viewingQuality.resH} px)</td>
+                      <td className="py-1.5 text-right font-mono text-emerald-400 font-bold">%{viewingQuality.sharpnessScorePct} · {viewingQuality.sharpnessLabel}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">4. Piksel Görünürlüğü</td>
+                      <td className="py-1.5 font-mono text-indigo-300">{viewingQuality.mmPerPx} mm/px ({viewingQuality.ppi} PPI) · Retina ≥ {viewingQuality.minRetinaDistM} m</td>
+                      <td className="py-1.5 text-right font-mono text-indigo-200">İndeks {viewingQuality.pixelVisibilityIndex} · {viewingQuality.pixelVisibilityLabel}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">5. Kontrast Oranı (ACR)</td>
+                      <td className="py-1.5 font-mono text-purple-300">ACR {viewingQuality.ambientContrastRatio}:1 · Efektif {viewingQuality.effectiveSystemContrast}:1 (Beyaz {viewingQuality.whiteLevelNits} / Siyah {viewingQuality.blackLevelNits} Nit)</td>
+                      <td className="py-1.5 text-right font-mono text-purple-200">{viewingQuality.contrastStandardGrade}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">6. Renk Uniformitesi</td>
+                      <td className="py-1.5 font-mono text-amber-300">ΔE2000: {viewingQuality.deltaE2000} · ΔCCT ±{viewingQuality.deltaCCTKelvin}K · Açı kayması +{viewingQuality.offAxisColorShiftDeltaE} ΔE</td>
+                      <td className="py-1.5 text-right font-mono text-amber-200">%{viewingQuality.colorUniformityPct} · {viewingQuality.colorUniformityLabel}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-1.5 pr-3 text-slate-300 font-medium">7. Parlaklık Uniformitesi</td>
+                      <td className="py-1.5 font-mono text-emerald-300">U0 %{viewingQuality.luminanceUniformityU0Pct} · U1 %{viewingQuality.luminanceUniformityU1Pct} · Köşe Düşüşü -%{viewingQuality.centerToCornerDropPct}</td>
+                      <td className="py-1.5 text-right font-mono text-emerald-200">Blend Dalga ±%{viewingQuality.blendZoneRipplePct} · {viewingQuality.brightnessUniformityLabel}</td>
+                    </tr>
+                    <tr className="bg-cyan-950/40 border-t-2 border-cyan-700/70">
+                      <td className="py-2 pr-3 font-bold text-cyan-300">8. TOPLAM KALİTE ÖZETİ</td>
+                      <td className="py-2 font-mono text-cyan-200">{viewingQuality.overallRecommendation}</td>
+                      <td className="py-2 text-right font-mono font-extrabold text-cyan-300">
+                        %{viewingQuality.overallQualityScorePct} · {viewingQuality.overallQualityGrade}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ☀️ 9-BÖLGE NOKTASAL LUX DAĞILIM HARİTASI */}
+            <div className="bg-slate-900 border border-amber-800/50 rounded-xl p-4 shadow-lg space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs font-bold text-amber-300 uppercase tracking-wider">
+                  ☀️ 9-Bölge Noktasal Lux &amp; Nit Dağılım Haritası (Merkez / Kenar / Köşe / Blend Dikiş)
+                </h4>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                  <span className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-emerald-300">
+                    Tepe Merkez: <b>{engineeringAnalysis.pointLuxDist.peakCenterLux} lx</b>
+                  </span>
+                  <span className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-sky-300">
+                    Köşe Ort.: <b>{engineeringAnalysis.pointLuxDist.cornerAvgLux} lx</b>
+                  </span>
+                  <span className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-amber-300">
+                    Blend Dikiş: <b>{engineeringAnalysis.pointLuxDist.blendSeamLux} lx</b> ({engineeringAnalysis.pointLuxDist.blendSeamNits} nit)
+                  </span>
+                  <span className="bg-slate-950 border border-slate-800 px-2 py-0.5 rounded text-rose-300">
+                    Düşüş: <b>-%{engineeringAnalysis.pointLuxDist.centerToCornerDropPct}</b>
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {engineeringAnalysis.pointLuxDist.zones9.map(pt => (
+                  <div
+                    key={pt.id}
+                    className={`rounded-lg border p-2.5 text-[11px] ${
+                      pt.zoneKind === 'center'
+                        ? 'bg-emerald-950/35 border-emerald-700/70'
+                        : pt.zoneKind === 'corner'
+                        ? 'bg-amber-950/30 border-amber-800/60'
+                        : 'bg-slate-950/80 border-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-200">{pt.label}</span>
+                      <span className="font-mono text-[10px] text-slate-400">
+                        ({pt.xM}m, {pt.yM}m)
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-baseline justify-between font-mono">
+                      <span className="text-sm font-extrabold text-amber-300">{pt.lux} lx</span>
+                      <span className="text-slate-300">
+                        {pt.nits} nit · {pt.fl} fL · %{pt.pctOfAvg}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{pt.statusLabel}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 📐 ÇOKLU PROJEKTÖR OVERLAP & EFEKTİF PİKSEL ALANI + ⚠️ 5 KRİTERLİ UYGULANABİLİRLİK */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="bg-slate-900 border border-indigo-800/50 rounded-xl p-4 shadow-lg space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">
+                    📐 Çoklu Projektör Overlap &amp; Efektif Piksel Alanı
+                  </h4>
+                  <span className="text-[11px] font-mono bg-indigo-950/70 border border-indigo-700/60 text-indigo-200 px-2 py-0.5 rounded">
+                    <b>{engineeringAnalysis.effectivePixelArea.usableContentW} × {engineeringAnalysis.effectivePixelArea.usableContentH} px</b> ({engineeringAnalysis.effectivePixelArea.usableEffectiveMP} MP)
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2">
+                    <div className="text-[10px] text-slate-400">Ham Projektör Toplamı</div>
+                    <div className="font-mono font-bold text-slate-100">
+                      {engineeringAnalysis.effectivePixelArea.rawW} × {engineeringAnalysis.effectivePixelArea.rawH} px
+                    </div>
+                    <div className="text-[10px] text-slate-400">{engineeringAnalysis.effectivePixelArea.rawMP} MP ({engineeringAnalysis.effectivePixelArea.totalProjectors} Cihaz)</div>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2">
+                    <div className="text-[10px] text-slate-400">Overlap Bindirme Kaybı</div>
+                    <div className="font-mono font-bold text-amber-300">
+                      -{engineeringAnalysis.effectivePixelArea.overlapLostMP} MP (-%{engineeringAnalysis.effectivePixelArea.overlapLostPct})
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {engineeringAnalysis.effectivePixelArea.overlapCountX} Bölge · {engineeringAnalysis.effectivePixelArea.overlapPhysicalWidthM}m ({engineeringAnalysis.effectivePixelArea.overlapPhysicalAreaM2} m²)
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2">
+                    <div className="text-[10px] text-slate-400">Net Verim &amp; Geometrik Kayıp</div>
+                    <div className="font-mono font-bold text-emerald-300">
+                      Verim %{engineeringAnalysis.effectivePixelArea.totalRetentionPct}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Keystone/Kavis Kaybı -%{engineeringAnalysis.effectivePixelArea.geometricLossPct}
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2">
+                    <div className="text-[10px] text-slate-400">Fiziksel Piksel Yoğunluğu</div>
+                    <div className="font-mono font-bold text-cyan-300">
+                      {engineeringAnalysis.effectivePixelArea.mmPerPx} mm/px · {engineeringAnalysis.effectivePixelArea.ppi} PPI
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {engineeringAnalysis.effectivePixelArea.pxPerMeterW} px/m
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-rose-800/50 rounded-xl p-4 shadow-lg space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold text-rose-300 uppercase tracking-wider">
+                    ⚠️ 5 Kriterli Hata &amp; Uygulanabilirlik Analizi
+                  </h4>
+                  <span
+                    className={`text-[11px] font-mono font-bold px-2.5 py-0.5 rounded border ${
+                      engineeringAnalysis.feasibility.overallSeverity === 'critical'
+                        ? 'bg-red-950/80 border-red-700 text-red-200'
+                        : engineeringAnalysis.feasibility.overallSeverity === 'warning'
+                        ? 'bg-amber-950/80 border-amber-700 text-amber-200'
+                        : 'bg-emerald-950/80 border-emerald-700 text-emerald-200'
+                    }`}
+                  >
+                    Skor %{engineeringAnalysis.feasibility.overallScorePct} · {engineeringAnalysis.feasibility.overallVerdict}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {engineeringAnalysis.feasibility.categories.map(cat => (
+                    <div
+                      key={cat.id}
+                      className={`rounded-lg border p-2 text-[11px] space-y-0.5 ${
+                        cat.severity === 'critical'
+                          ? 'bg-red-950/35 border-red-800/70'
+                          : cat.severity === 'warning'
+                          ? 'bg-amber-950/35 border-amber-800/70'
+                          : 'bg-emerald-950/25 border-emerald-800/60'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-bold text-slate-100">
+                          {cat.badgeText} · {cat.title}
+                        </span>
+                        <span className="font-mono text-[10px] text-slate-300">{cat.metricsText}</span>
+                      </div>
+                      <div className="text-[10.5px] text-slate-300">{cat.issues[0]}</div>
+                      <div className="text-[10px] text-sky-300">💡 {cat.actionText}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 🤖 OTOMATİK PROJEKTÖR & LENS ÖNERİLERİ */}
+            <div className="bg-slate-900 border border-emerald-800/50 rounded-xl p-4 shadow-lg space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
+                  🤖 Mekân &amp; Atım Mesafesine (Ort. {engineeringAnalysis.avgThrowD}m · TR {engineeringAnalysis.avgTR}:1) Göre Otomatik Projektör &amp; Lens Önerileri
+                </h4>
+                <span className="text-[10.5px] font-mono text-slate-300">
+                  Hedef TR: <b>{engineeringAnalysis.recommendations.requiredTR}:1</b> · İdeal Bant: [{engineeringAnalysis.recommendations.idealMuseumTRRange[0]}–{engineeringAnalysis.recommendations.idealMuseumTRRange[1]}:1]
+                </span>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-2.5">
+                {engineeringAnalysis.recommendations.alternatives.map(opt => (
+                  <div
+                    key={opt.id}
+                    className="bg-slate-950/80 border border-slate-800 hover:border-emerald-700/70 rounded-lg p-3 flex flex-col justify-between gap-2.5"
+                  >
+                    <div className="space-y-1 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-950 border border-emerald-700 text-emerald-300">
+                          {opt.tierLabel}
+                        </span>
+                        <span className="font-mono text-[10px] text-amber-300">Uyum %{opt.matchScore}</span>
+                      </div>
+                      <div className="font-bold text-slate-100 text-xs">
+                        {opt.manufacturer} {opt.projectorModel}
+                      </div>
+                      <div className="text-[10.5px] text-sky-300 font-mono">
+                        {opt.lensModel} (TR {opt.throwMin}–{opt.throwMax}:1 → <b>{opt.appliedTR}:1</b>)
+                      </div>
+                      <div className="text-[10.5px] text-slate-300 font-mono">
+                        {opt.totalProjectors} Adet × {opt.ansiLumens.toLocaleString('tr-TR')} lm · {opt.estimatedAvgLux} lx ({opt.estimatedNits} nit)
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        ACR {opt.estimatedACR}:1 · {opt.effectiveCanvasW}×{opt.effectiveCanvasH}px ({opt.mmPerPx} mm/px) · {opt.reasonText}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectors(prev =>
+                          prev.map(p => ({
+                            ...p,
+                            ansiLumens: opt.ansiLumens,
+                            throwRatio: opt.appliedTR,
+                            model: `${opt.manufacturer} ${opt.projectorModel}`,
+                            lensModel: opt.lensModel,
+                          }))
+                        );
+                        setVqPerProjW(opt.nativeW);
+                        setVqPerProjH(opt.nativeH);
+                      }}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold py-1.5 px-3 rounded-lg transition cursor-pointer"
+                    >
+                      ✓ Tüm Projektörlere Uygula
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
 </div>
         )}

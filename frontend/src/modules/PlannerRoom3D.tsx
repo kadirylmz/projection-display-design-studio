@@ -6,6 +6,7 @@ import { download } from '../util';
 import { useProjectStore } from '../projectStore';
 import { usePlannerStore } from '../plannerStore';
 import { resolveSurfaceCrossSlot } from './ContentPlanner';
+import { evaluateSystemFeasibility } from '../engine/feasibility';
 import type { CalculatedSurface, PhysicalRoomConfig, SurfaceItem } from './ContentPlanner';
 
 interface PlannerRoom3DProps {
@@ -492,11 +493,13 @@ function ProjectorFrustum3D({
   rotYaw = 0,
   rotPitch = 0,
   rotRoll = 0,
+  isPortrait = false,
   onSelectProjector,
 }: {
   rotYaw?: number;
   rotPitch?: number;
   rotRoll?: number;
+  isPortrait?: boolean;
   pos: [number, number, number];
   targetCenter: [number, number, number];
   upVec: [number, number, number];
@@ -520,6 +523,7 @@ function ProjectorFrustum3D({
 }) {
   const {
     beamGeo,
+    litQuadGeo,
     corners,
     lookQuat,
     litPos,
@@ -527,19 +531,26 @@ function ProjectorFrustum3D({
     wallShadows,
     floorShadows,
     deviceShadows,
+    incidenceAngleDeg,
+    fovHDeg,
+    fovVDeg,
+    projectedAreaM2,
   } = useMemo(() => {
     const p = new THREE.Vector3(...pos);
-    const c = new THREE.Vector3(...targetCenter);
+    const planePoint = new THREE.Vector3(...targetCenter);
+    const c = planePoint.clone();
     const u = new THREE.Vector3(...upVec).normalize();
     const r = new THREE.Vector3(...rightVec).normalize();
 
-    // Duvarın projektöre bakan gerçek normalini garantile
+    // Duvarın/yüzeyin projektöre bakan gerçek normalini garantile
     const normal = new THREE.Vector3().crossVectors(r, u).normalize();
-    if (normal.dot(p.clone().sub(c)) < 0) {
+    if (normal.dot(p.clone().sub(planePoint)) < 0) {
       normal.negate();
     }
+    const surfaceNormal = normal.clone();
+    const forwardDir = planePoint.clone().sub(p).normalize();
 
-    // Projektör Açı Rotasyonu (Yaw, Pitch, Roll) — Hem Duvar Hem Zemin Projektörlerini Eğip Bükme
+    // Projektör Açı Rotasyonu (Yaw, Pitch, Roll) — Optik Ekseni Döndür ve Gerçek Yüzey Düzlemiyle Kesiştir
     if (rotYaw || rotPitch || rotRoll) {
       const euler = new THREE.Euler(
         (rotPitch * Math.PI) / 180,
@@ -549,23 +560,73 @@ function ProjectorFrustum3D({
       );
       r.applyEuler(euler).normalize();
       u.applyEuler(euler).normalize();
-      normal.applyEuler(euler).normalize();
-
-      // Projektör eğilip büküldüğünde ışık hedef merkezi ve ayak izi de açı doğrultusunda kayar
-      const rotatedTarget = p.clone().addScaledVector(normal, throwDist);
-      c.copy(rotatedTarget);
+      forwardDir.applyEuler(euler).normalize();
+      normal.copy(forwardDir).negate();
     }
 
+    // Ray-Plane Intersection: Eğik yerleştirmede ışık konisinin yüzey düzlemindeki gerçek izdüşümü
+    const intersectRayWithPlane = (rayDir: THREE.Vector3): THREE.Vector3 => {
+      const denom = surfaceNormal.dot(rayDir);
+      if (denom < -1e-4) {
+        const t = Math.min(throwDist * 4, Math.max(0.2, surfaceNormal.dot(planePoint.clone().sub(p)) / denom));
+        return p.clone().addScaledVector(rayDir, t);
+      }
+      return p.clone().addScaledVector(rayDir, throwDist);
+    };
+
+    if (rotYaw || rotPitch || rotRoll) {
+      c.copy(intersectRayWithPlane(forwardDir));
+    }
+
+    const actualDist = Math.max(0.1, p.distanceTo(c));
+    const cosInc = Math.min(1, Math.max(0.05, Math.abs(surfaceNormal.dot(forwardDir))));
+    const calcIncidenceDeg = +(Math.acos(cosInc) * (180 / Math.PI)).toFixed(1);
     const halfW = imgW / 2;
     const halfH = imgH / 2;
+    const calcFovHDeg = +(2 * Math.atan(halfW / Math.max(0.1, throwDist)) * (180 / Math.PI)).toFixed(1);
+    const calcFovVDeg = +(2 * Math.atan(halfH / Math.max(0.1, throwDist)) * (180 / Math.PI)).toFixed(1);
 
-    // 4 Köşe (Sol-Üst, Sağ-Üst, Sağ-Alt, Sol-Alt)
-    const c0 = c.clone().addScaledVector(r, -halfW).addScaledVector(u, halfH);
-    const c1 = c.clone().addScaledVector(r, halfW).addScaledVector(u, halfH);
-    const c2 = c.clone().addScaledVector(r, halfW).addScaledVector(u, -halfH);
-    const c3 = c.clone().addScaledVector(r, -halfW).addScaledVector(u, -halfH);
+    // 4 Köşe Işınını (Sol-Üst, Sağ-Üst, Sağ-Alt, Sol-Alt) Yüzey Düzlemiyle Kesiştir
+    const localCorners: [number, number][] = [
+      [-halfW, halfH],
+      [halfW, halfH],
+      [halfW, -halfH],
+      [-halfW, -halfH],
+    ];
+    const pts = localCorners.map(([lx, ly]) => {
+      const cornerRay = forwardDir
+        .clone()
+        .multiplyScalar(Math.max(0.1, throwDist))
+        .addScaledVector(r, lx)
+        .addScaledVector(u, ly)
+        .normalize();
+      return intersectRayWithPlane(cornerRay);
+    });
+    const [c0, c1, c2, c3] = pts;
 
-    const pts = [c0, c1, c2, c3];
+    // Gerçek 3B Yamuk / Dörtgen İzdüşüm Alanı (m²)
+    const tri1 = new THREE.Vector3().crossVectors(c1.clone().sub(c0), c2.clone().sub(c0)).length() * 0.5;
+    const tri2 = new THREE.Vector3().crossVectors(c2.clone().sub(c0), c3.clone().sub(c0)).length() * 0.5;
+    const calcProjAreaM2 = +(tri1 + tri2).toFixed(2);
+
+    // Yüzey üzerinde gerçek yamuk dolgu geometrisi (litQuadGeo)
+    const litPts = pts.map(pt => pt.clone().addScaledVector(surfaceNormal, 0.018));
+    const litQuadGeo = new THREE.BufferGeometry();
+    litQuadGeo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(
+        [
+          litPts[0].x, litPts[0].y, litPts[0].z,
+          litPts[1].x, litPts[1].y, litPts[1].z,
+          litPts[2].x, litPts[2].y, litPts[2].z,
+          litPts[0].x, litPts[0].y, litPts[0].z,
+          litPts[2].x, litPts[2].y, litPts[2].z,
+          litPts[3].x, litPts[3].y, litPts[3].z,
+        ],
+        3
+      )
+    );
+    litQuadGeo.computeVertexNormals();
 
     // Piramit (Frustum) yan yüzey üçgenleri
     const verts: number[] = [];
@@ -581,6 +642,9 @@ function ProjectorFrustum3D({
     // Projektör gövdesi yönelimi
     const mLook = new THREE.Matrix4().lookAt(p, c, u);
     const qLook = new THREE.Quaternion().setFromRotationMatrix(mLook);
+    if (isPortrait) {
+      qLook.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2));
+    }
 
     // Duvardaki aydınlanan yüzey (Quad) konumu ve yönelimi (Reaktif position & quaternion)
     const litCenterVec = c.clone().addScaledVector(normal, 0.02);
@@ -802,6 +866,7 @@ function ProjectorFrustum3D({
 
     return {
       beamGeo: g,
+      litQuadGeo,
       corners: pts.map(v => [v.x, v.y, v.z] as [number, number, number]),
       lookQuat: qLook,
       litPos: [litCenterVec.x, litCenterVec.y, litCenterVec.z] as [number, number, number],
@@ -809,8 +874,12 @@ function ProjectorFrustum3D({
       wallShadows: wShadows,
       floorShadows: fShadows,
       deviceShadows: dShadows,
+      incidenceAngleDeg: calcIncidenceDeg,
+      fovHDeg: calcFovHDeg,
+      fovVDeg: calcFovVDeg,
+      projectedAreaM2: calcProjAreaM2,
     };
-  }, [pos, targetCenter, upVec, rightVec, imgW, imgH, humans, otherDevices, ceilingH]);
+  }, [pos, targetCenter, upVec, rightVec, imgW, imgH, humans, otherDevices, ceilingH, throwDist, rotYaw, rotPitch, rotRoll, isPortrait]);
 
   const midBeamPos: [number, number, number] = [
     (pos[0] + targetCenter[0]) / 2,
@@ -916,11 +985,20 @@ function ProjectorFrustum3D({
         />
       </mesh>
 
-      {/* DUVARDA / YÜZEYDE PROJEKTÖRÜN AYDINLATTIĞI GERÇEK GÖRÜNTÜ DOLGUSU */}
+      {/* Merkez Optik Eksen Işını (Lens → Yüzey) */}
+      <Line
+        points={[pos, litPos]}
+        color={color}
+        lineWidth={1.3}
+        dashed
+        dashSize={0.2}
+        gapSize={0.14}
+      />
+
+      {/* DUVARDA / YÜZEYDE PROJEKTÖRÜN AYDINLATTIĞI GERÇEK İZDÜŞÜM DOLGUSU (EĞİK YAMUK DAHİL) */}
       {showSurfaceFill && !isCurvedSurface && (
-        <group position={litPos} quaternion={litQuat}>
-          <mesh>
-            <planeGeometry args={[imgW, imgH]} />
+        <>
+          <mesh geometry={litQuadGeo}>
             <meshBasicMaterial
               color={color}
               transparent
@@ -929,27 +1007,42 @@ function ProjectorFrustum3D({
               depthWrite={false}
             />
           </mesh>
-          <Line
-            points={[
-              [-imgW / 2, 0, 0.002],
-              [imgW / 2, 0, 0.002],
-            ]}
-            color="#ffffff"
-            lineWidth={1}
-            transparent
-            opacity={0.35}
-          />
-          <Line
-            points={[
-              [0, -imgH / 2, 0.002],
-              [0, imgH / 2, 0.002],
-            ]}
-            color="#ffffff"
-            lineWidth={1}
-            transparent
-            opacity={0.35}
-          />
-        </group>
+          <group position={litPos} quaternion={litQuat}>
+            <Line
+              points={[
+                [-imgW / 2, 0, 0.002],
+                [imgW / 2, 0, 0.002],
+              ]}
+              color="#ffffff"
+              lineWidth={1}
+              transparent
+              opacity={0.35}
+            />
+            <Line
+              points={[
+                [0, -imgH / 2, 0.002],
+                [0, imgH / 2, 0.002],
+              ]}
+              color="#ffffff"
+              lineWidth={1}
+              transparent
+              opacity={0.35}
+            />
+            {showLabels && (
+              <Text
+                position={[0, -imgH / 2 + 0.14, 0.012]}
+                fontSize={Math.max(0.14, Math.min(0.22, imgW * 0.045))}
+                color="#f8fafc"
+                anchorX="center"
+                anchorY="bottom"
+                outlineWidth={0.022}
+                outlineColor="#020617"
+              >
+                {`∠${incidenceAngleDeg}° · ${projectedAreaM2}m² (FOV ${fovHDeg}°×${fovVDeg}°)`}
+              </Text>
+            )}
+          </group>
+        </>
       )}
 
       {/* TAVAN ASKI BORUSU (CEILING MOUNT POLE) */}
@@ -1178,6 +1271,7 @@ export default function PlannerRoom3D({
   const meta = useProjectStore(s => s.meta);
   const snapshotCount = meta.room3dSnapshots?.length ?? (meta.room3dSnapshotUrl ? 1 : 0);
   const [selectedPjId, setSelectedPjId] = useState<string | null>(null);
+  const [show3DTelemetry, setShow3DTelemetry] = useState(true);
 
   // İlk İzleyiciyi Başlangıçta Sol Duvarın Önüne (Gölge/Bakış Mesafesine) Yerleştir!
   const [humans, setHumans] = useState<HumanActor[]>(() => {
@@ -1478,6 +1572,48 @@ export default function PlannerRoom3D({
     ctrl.update();
   };
 
+  const compute3DProjTelemetry = (
+    pArr: [number, number, number],
+    tArr: [number, number, number],
+    nArr: [number, number, number],
+    rArr: [number, number, number],
+    uArr: [number, number, number],
+    singleW: number,
+    singleH: number,
+    throwDist: number,
+    surfAreaM2: number,
+    rotYaw = 0,
+    rotPitch = 0,
+    rotRoll = 0
+  ) => {
+    const pV = new THREE.Vector3(...pArr);
+    const cV = new THREE.Vector3(...tArr);
+    const nSurf = new THREE.Vector3(...nArr).normalize();
+    if (rotYaw || rotPitch || rotRoll) {
+      const rV = new THREE.Vector3(...rArr).normalize();
+      const uV = new THREE.Vector3(...uArr).normalize();
+      const nRot = new THREE.Vector3().crossVectors(rV, uV).normalize();
+      if (nRot.dot(pV.clone().sub(cV)) < 0) nRot.negate();
+      const euler = new THREE.Euler(
+        (rotPitch * Math.PI) / 180,
+        (rotYaw * Math.PI) / 180,
+        (rotRoll * Math.PI) / 180,
+        'YXZ'
+      );
+      nRot.applyEuler(euler).normalize();
+      cV.copy(pV.clone().addScaledVector(nRot, throwDist));
+    }
+    const actualDist = Math.max(0.1, +pV.distanceTo(cV).toFixed(2));
+    const rayDir = pV.clone().sub(cV).normalize();
+    const cosInc = Math.min(1, Math.max(0.05, Math.abs(nSurf.dot(rayDir))));
+    const incidenceDeg = +(Math.acos(cosInc) * (180 / Math.PI)).toFixed(1);
+    const fovHDeg = +(2 * Math.atan((singleW / 2) / actualDist) * (180 / Math.PI)).toFixed(1);
+    const fovVDeg = +(2 * Math.atan((singleH / 2) / actualDist) * (180 / Math.PI)).toFixed(1);
+    const projectedAreaM2 = +((singleW * singleH) / Math.max(0.25, cosInc)).toFixed(2);
+    const surfaceSharePct = Math.min(100, Math.round((projectedAreaM2 / Math.max(0.1, surfAreaM2)) * 100));
+    return { actualDist, incidenceDeg, fovHDeg, fovVDeg, projectedAreaM2, surfaceSharePct };
+  };
+
   // Sahnedeki TÜM Projektörlerin 3B Koordinatları, Bağlı Olduğu Yüzey ve Bağımsız Kaydırma Ofsetleri
   const allProjectorList = useMemo(() => {
     const list: {
@@ -1503,6 +1639,12 @@ export default function PlannerRoom3D({
       rotYaw?: number;
       rotPitch?: number;
       rotRoll?: number;
+      actualDist: number;
+      incidenceDeg: number;
+      fovHDeg: number;
+      fovVDeg: number;
+      projectedAreaM2: number;
+      surfaceSharePct: number;
     }[] = [];
 
     const walls = surfaces.filter(s => s.type === 'wall');
@@ -1513,6 +1655,7 @@ export default function PlannerRoom3D({
 
     walls.forEach((surf, idx) => {
       const h = surf.effectiveHeightM;
+      const surfAreaM2 = Math.max(0.1, surf.effectiveWidthM * surf.effectiveHeightM);
       let center: [number, number, number] = [0, h / 2, 0];
       let normal: [number, number, number] = [0, 0, 1];
       let rightDir: [number, number, number] = [1, 0, 0];
@@ -1568,6 +1711,21 @@ export default function PlannerRoom3D({
           const py = Math.max(0.2, mountHeight + (surf.rows > 1 ? offsetUp * 0.3 : 0) + (indOffset.shiftY || 0));
           const pz = tz + normal[2] * curThrow;
 
+          const tele = compute3DProjTelemetry(
+            [px, py, pz],
+            [tx, ty, tz],
+            normal,
+            rightDir,
+            upDir,
+            singleW,
+            singleH,
+            curThrow,
+            surfAreaM2,
+            indOffset.rotYaw || 0,
+            indOffset.rotPitch || 0,
+            indOffset.rotRoll || 0
+          );
+
           list.push({
             id: pjId,
             surfId: surf.id,
@@ -1591,6 +1749,7 @@ export default function PlannerRoom3D({
             rotYaw: indOffset.rotYaw || 0,
             rotPitch: indOffset.rotPitch || 0,
             rotRoll: indOffset.rotRoll || 0,
+            ...tele,
           });
         }
       }
@@ -1599,6 +1758,7 @@ export default function PlannerRoom3D({
     if (floor) {
       const singleW = floor.singleProjWidthM;
       const singleH = floor.singleProjHeightM;
+      const floorAreaM2 = Math.max(0.1, floor.effectiveWidthM * floor.effectiveHeightM);
       const stepZ = floor.cols > 1 ? (floor.effectiveWidthM - singleW) / (floor.cols - 1) : 0;
       const stepX = floor.rows > 1 ? (floor.effectiveHeightM - singleH) / (floor.rows - 1) : 0;
       const shiftX = floor.projShiftXM || 0;
@@ -1613,6 +1773,21 @@ export default function PlannerRoom3D({
           const tz = (floor.cols === 1 ? 0 : -floor.effectiveWidthM / 2 + singleW / 2 + c * stepZ) + shiftX + (indOffset.shiftX || 0);
           const tx = (floor.rows === 1 ? 0 : -floor.effectiveHeightM / 2 + singleH / 2 + r * stepX) + shiftY + (indOffset.shiftY || 0);
           const curThrow = floor.throwDistM + (indOffset.shiftZ || 0);
+
+          const tele = compute3DProjTelemetry(
+            [tx, curThrow, tz],
+            [tx, 0.02, tz],
+            [0, -1, 0],
+            [0, 0, 1],
+            [1, 0, 0],
+            singleW,
+            singleH,
+            curThrow,
+            floorAreaM2,
+            indOffset.rotYaw || 0,
+            indOffset.rotPitch || 0,
+            indOffset.rotRoll || 0
+          );
 
           list.push({
             id: floorPjId,
@@ -1637,6 +1812,7 @@ export default function PlannerRoom3D({
             rotYaw: indOffset.rotYaw || 0,
             rotPitch: indOffset.rotPitch || 0,
             rotRoll: indOffset.rotRoll || 0,
+            ...tele,
           });
         }
       }
@@ -1644,6 +1820,33 @@ export default function PlannerRoom3D({
 
     return list;
   }, [surfaces, sceneData, physicalRoom]);
+
+  const roomFeasibility = useMemo(() => {
+    if (!activeSurf) return null;
+    const overlapPct = activeSurf.overlapMode === 'percent'
+      ? activeSurf.overlapX
+      : Math.round((activeSurf.ovPxX / Math.max(1, activeSurf.projW)) * 100);
+    return evaluateSystemFeasibility({
+      widthM: activeSurf.effectiveWidthM,
+      heightM: activeSurf.effectiveHeightM,
+      throwDistM: activeSurf.throwDistM,
+      throwRatio: activeSurf.throwRatio,
+      maxRoomThrowM: activeSurf.type === 'floor' ? sceneData.roomHeightY : Math.max(sceneData.roomWidthX, sceneData.roomLengthZ),
+      roomHeightM: sceneData.roomHeightY,
+      projMountHeightM: coverageStats?.projHeight ?? Math.max(2.2, activeSurf.effectiveHeightM - 0.15),
+      viewDistM: coverageStats?.currentDistToWall ?? activeSurf.viewDistM,
+      humanHeightM: selectedHuman ? HUMAN_VARIANT_CATALOG[selectedHuman.variant].heightM : 1.75,
+      cols: activeSurf.cols,
+      rows: activeSurf.rows,
+      projW: activeSurf.projW,
+      projH: activeSurf.projH,
+      overlapPct,
+      avgLux: 350,
+      ambientLux: 50,
+      uniformityU0: activeSurf.cols > 1 && overlapPct >= 12 ? 80 : 72,
+      isCurved: activeSurf.geometry === 'concave_arc' || activeSurf.geometry === 'cylinder_360' || activeSurf.geometry === 'dome' || activeSurf.geometry === 'sphere',
+    });
+  }, [activeSurf, sceneData, coverageStats, selectedHuman]);
 
   const allObstacleDevices = useMemo<ProjectorObstacleDevice[]>(() => {
     return allProjectorList.map(p => ({
@@ -2471,6 +2674,115 @@ export default function PlannerRoom3D({
           <span>🚶 <b>İnsanlar:</b> Mouse ile Projektör Önüne Sürükleyin</span>
         </div>
       </div>
+
+      {/* 5. 3B PROJEKTÖR YANSIMA TELEMETRİSİ & 5 KRİTERLİ HATA / UYGULANABİLİRLİK PANELİ */}
+      <div className="bg-slate-900 border border-slate-800 rounded p-2.5 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShow3DTelemetry(v => !v)}
+              className="text-[11px] font-bold text-cyan-300 hover:text-cyan-200 flex items-center gap-1"
+            >
+              <span>{show3DTelemetry ? '▾' : '▸'}</span>
+              <span>📐 3B Projektör Yansıma (Hedef Yüzey, Açı ∠θ°/FOV, Alan m²) &amp; 5 Kriterli Hata/Uygulanabilirlik Telemetrisi</span>
+            </button>
+            {roomFeasibility && (
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded border font-mono font-bold ${
+                  roomFeasibility.overallSeverity === 'critical'
+                    ? 'bg-red-950/70 text-red-300 border-red-700/70'
+                    : roomFeasibility.overallSeverity === 'warning'
+                    ? 'bg-amber-950/70 text-amber-300 border-amber-700/70'
+                    : 'bg-emerald-950/70 text-emerald-300 border-emerald-700/70'
+                }`}
+              >
+                Skor %{roomFeasibility.overallScorePct} · {roomFeasibility.overallVerdict}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] text-slate-400">
+            {allProjectorList.length} Aktif Projektör (3B Işın Seçmek İçin Tıklayın)
+          </span>
+        </div>
+
+        {show3DTelemetry && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2.5 pt-1">
+            {/* Sol: Gerçekçi 3B Projektör Yansıma Satırları */}
+            <div className="bg-slate-950/70 border border-slate-800 rounded p-2 space-y-1.5 max-h-48 overflow-y-auto">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Gerçekçi 3B Işın &amp; Yüzey Vuruş Telemetrisi
+              </div>
+              {allProjectorList.map(p => {
+                const isSel = (selectedPj?.id || selectedPjId) === p.id;
+                const highInc = p.incidenceDeg > 25;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedPjId(p.id)}
+                    className={`w-full text-left px-2 py-1 rounded border text-[10.5px] transition flex flex-wrap items-center justify-between gap-2 ${
+                      isSel
+                        ? 'bg-cyan-950/60 border-cyan-500 text-cyan-100'
+                        : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 font-semibold">
+                      <span
+                        className="inline-block w-2 h-2 rounded-full"
+                        style={{ backgroundColor: p.color }}
+                      />
+                      <span>{p.label}</span>
+                      <span className="text-slate-400 font-normal">→ {p.surfName}</span>
+                    </span>
+                    <span className="font-mono text-[10px] flex flex-wrap items-center gap-2">
+                      <span className={highInc ? 'text-amber-300 font-bold' : 'text-emerald-300'}>
+                        ∠{p.incidenceDeg}°
+                      </span>
+                      <span className="text-slate-400">
+                        FOV {p.fovHDeg}°×{p.fovVDeg}°
+                      </span>
+                      <span className="text-sky-300">d={p.actualDist}m</span>
+                      <span className="text-indigo-300 font-semibold">
+                        {p.projectedAreaM2} m² (%{p.surfaceSharePct})
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Sağ: 5 Kriterli Hata & Uygulanabilirlik Rozetleri */}
+            {roomFeasibility && (
+              <div className="bg-slate-950/70 border border-slate-800 rounded p-2 space-y-1 max-h-48 overflow-y-auto">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Aktif Yüzey — 5 Kategorili Mühendislik Uygulanabilirlik Denetimi
+                </div>
+                {roomFeasibility.categories.map(cat => (
+                  <div
+                    key={cat.id}
+                    className={`px-2 py-1 rounded border text-[10px] space-y-0.5 ${
+                      cat.severity === 'critical'
+                        ? 'bg-red-950/40 border-red-800/70 text-red-200'
+                        : cat.severity === 'warning'
+                        ? 'bg-amber-950/40 border-amber-800/70 text-amber-200'
+                        : 'bg-emerald-950/30 border-emerald-800/60 text-emerald-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold">
+                        {cat.badgeText} · {cat.title}
+                      </span>
+                      <span className="font-mono text-[9.5px] opacity-90">{cat.metricsText}</span>
+                    </div>
+                    <div className="opacity-85">{cat.issues[0]}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2600,6 +2912,9 @@ function RoomBoxScene({
           pos: [number, number, number];
           target: [number, number, number];
           label: string;
+          imgW: number;
+          imgH: number;
+          throwDist: number;
           rotYaw?: number;
           rotPitch?: number;
           rotRoll?: number;
@@ -2610,7 +2925,15 @@ function RoomBoxScene({
             for (let c = 0; c < surf.cols; c++) {
               const pjKey = `${r}-${c}`;
               const pjId = `pj-${surf.id}-${r}-${c}`;
-              const indOffset = surf.customProjectorOffsets?.[pjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 };
+              const indOffset = (surf.customProjectorOffsets?.[pjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 }) as {
+                shiftX: number;
+                shiftY: number;
+                shiftZ?: number;
+                throwRatio?: number;
+                rotYaw?: number;
+                rotPitch?: number;
+                rotRoll?: number;
+              };
 
               const offsetRight =
                 (surf.cols === 1 ? 0 : -totalOptW / 2 + singleW / 2 + c * stepW) + shiftX + (indOffset.shiftX || 0);
@@ -2622,6 +2945,10 @@ function RoomBoxScene({
               const tz = center[2] + rightDir[2] * offsetRight + upDir[2] * offsetUp;
 
               const curThrow = surf.throwDistM + (indOffset.shiftZ || 0);
+              const curTr = indOffset.throwRatio && indOffset.throwRatio > 0 ? indOffset.throwRatio : surf.throwRatio;
+              const hasCustomOptics = Math.abs(indOffset.shiftZ || 0) > 0.001 || (indOffset.throwRatio !== undefined && indOffset.throwRatio > 0);
+              const pjImgW = hasCustomOptics && curTr > 0 ? +(curThrow / curTr).toFixed(3) : singleW;
+              const pjImgH = hasCustomOptics && curTr > 0 ? +(pjImgW * (surf.projH / Math.max(1, surf.projW))).toFixed(3) : singleH;
               const px = tx + normal[0] * curThrow;
               const py = Math.max(0.2, mountHeight + (surf.rows > 1 ? offsetUp * 0.3 : 0) + (indOffset.shiftY || 0));
               const pz = tz + normal[2] * curThrow;
@@ -2631,6 +2958,9 @@ function RoomBoxScene({
                 pos: [px, py, pz],
                 target: [tx, ty, tz],
                 label: `PJ ${c + 1}${surf.rows > 1 ? `.${r + 1}` : ''}`,
+                imgW: pjImgW,
+                imgH: pjImgH,
+                throwDist: curThrow,
                 rotYaw: indOffset.rotYaw || 0,
                 rotPitch: indOffset.rotPitch || 0,
                 rotRoll: indOffset.rotRoll || 0,
@@ -2754,15 +3084,15 @@ function RoomBoxScene({
                 targetCenter={item.target}
                 upVec={upDir}
                 rightVec={rightDir}
-                imgW={surf.singleProjWidthM}
-                imgH={surf.singleProjHeightM}
+                imgW={item.imgW}
+                imgH={item.imgH}
                 humans={humans}
                 otherDevices={allObstacleDevices.filter(d => d.id !== item.id)}
                 ceilingH={ceilingHeight || 5.0}
-                throwDist={surf.throwDistM}
+                throwDist={item.throwDist}
                 color={col}
                 label={item.label}
-                detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
+                detailText={`${item.imgW}m×${item.imgH}m (${surf.distMmPerPx}mm/px)`}
                 showLabels={showProjLabels}
                 showShadowLabels={showHumanLabels}
                 showShadows={showShadows}
@@ -2771,6 +3101,7 @@ function RoomBoxScene({
                 rotYaw={item.rotYaw}
                 rotPitch={item.rotPitch}
                 rotRoll={item.rotRoll}
+                isPortrait={surf.orient === 'portrait'}
                 onSelectProjector={() => {
                   onSelect(surf.id);
                   onSelectProjector?.(item.id);
@@ -2830,11 +3161,23 @@ function RoomBoxScene({
               for (let c = 0; c < floor.cols; c++) {
                 const floorPjKey = `${r}-${c}`;
                 const floorPjId = `pj-${floor.id}-${r}-${c}`;
-                const indOffset = floor.customProjectorOffsets?.[floorPjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 };
+                const indOffset = (floor.customProjectorOffsets?.[floorPjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 }) as {
+                  shiftX: number;
+                  shiftY: number;
+                  shiftZ?: number;
+                  throwRatio?: number;
+                  rotYaw?: number;
+                  rotPitch?: number;
+                  rotRoll?: number;
+                };
 
                 const tz = (floor.cols === 1 ? 0 : -floor.effectiveWidthM / 2 + singleW / 2 + c * stepZ) + shiftX + (indOffset.shiftX || 0);
                 const tx = (floor.rows === 1 ? 0 : -floor.effectiveHeightM / 2 + singleH / 2 + r * stepX) + shiftY + (indOffset.shiftY || 0);
                 const curThrow = floor.throwDistM + (indOffset.shiftZ || 0);
+                const curTr = indOffset.throwRatio && indOffset.throwRatio > 0 ? indOffset.throwRatio : floor.throwRatio;
+                const hasCustomOptics = Math.abs(indOffset.shiftZ || 0) > 0.001 || (indOffset.throwRatio !== undefined && indOffset.throwRatio > 0);
+                const pjImgW = hasCustomOptics && curTr > 0 ? +(curThrow / curTr).toFixed(3) : singleW;
+                const pjImgH = hasCustomOptics && curTr > 0 ? +(pjImgW * (floor.projH / Math.max(1, floor.projW))).toFixed(3) : singleH;
 
                 items.push(
                   <ProjectorFrustum3D
@@ -2843,15 +3186,15 @@ function RoomBoxScene({
                     targetCenter={[tx, 0.02, tz]}
                     upVec={[1, 0, 0]}
                     rightVec={[0, 0, 1]}
-                    imgW={singleW}
-                    imgH={singleH}
+                    imgW={pjImgW}
+                    imgH={pjImgH}
                     humans={humans}
                     otherDevices={allObstacleDevices.filter(d => d.id !== floorPjId)}
                     ceilingH={ceilingHeight || 5.0}
                     throwDist={curThrow}
                     color="#facc15"
                     label={`Zemin PJ ${c + 1}.${r + 1}`}
-                    detailText={`${singleW}m×${singleH}m`}
+                    detailText={`${pjImgW}m×${pjImgH}m`}
                     showLabels={showLabels}
                     showShadows={showShadows}
                     showSurfaceFill={true}
@@ -2859,6 +3202,7 @@ function RoomBoxScene({
                     rotYaw={indOffset.rotYaw || 0}
                     rotPitch={indOffset.rotPitch || 0}
                     rotRoll={indOffset.rotRoll || 0}
+                    isPortrait={floor.orient === 'portrait'}
                     onSelectProjector={() => {
                       onSelect(floor.id);
                       onSelectProjector?.(floorPjId);
@@ -2996,19 +3340,35 @@ function SpecialGeometryScene({
                 (surf.projShiftYM || 0);
 
               for (let idx = 0; idx < surf.cols; idx++) {
-                const theta = startAng + (idx + 0.5) * step + (surf.projShiftXM || 0) / Math.max(1, r);
+                const pjKey = `${row}-${idx}`;
+                const indOffset = (surf.customProjectorOffsets?.[pjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 }) as {
+                  shiftX: number;
+                  shiftY: number;
+                  shiftZ?: number;
+                  throwRatio?: number;
+                  rotYaw?: number;
+                  rotPitch?: number;
+                  rotRoll?: number;
+                };
+                const theta = startAng + (idx + 0.5) * step + ((surf.projShiftXM || 0) + (indOffset.shiftX || 0)) / Math.max(1, r);
                 const pIdx = row * surf.cols + idx;
 
                 const tx = Math.sin(theta) * r;
-                const ty = h / 2 + offsetUp;
+                const ty = h / 2 + offsetUp + (indOffset.shiftY || 0);
                 const tz = Math.cos(theta) * r;
 
                 const nx = -Math.sin(theta);
                 const nz = -Math.cos(theta);
 
-                const px = tx + nx * surf.throwDistM;
-                const py = Math.max(0.5, mountHeight + (surf.rows > 1 ? offsetUp * 0.4 : 0));
-                const pz = tz + nz * surf.throwDistM;
+                const curThrow = surf.throwDistM + (indOffset.shiftZ || 0);
+                const curTr = indOffset.throwRatio && indOffset.throwRatio > 0 ? indOffset.throwRatio : surf.throwRatio;
+                const hasCustomOptics = Math.abs(indOffset.shiftZ || 0) > 0.001 || (indOffset.throwRatio !== undefined && indOffset.throwRatio > 0);
+                const pjImgW = hasCustomOptics && curTr > 0 ? +(curThrow / curTr).toFixed(3) : surf.singleProjWidthM;
+                const pjImgH = hasCustomOptics && curTr > 0 ? +(pjImgW * (surf.projH / Math.max(1, surf.projW))).toFixed(3) : surf.singleProjHeightM;
+
+                const px = tx + nx * curThrow;
+                const py = Math.max(0.5, mountHeight + (surf.rows > 1 ? offsetUp * 0.4 : 0) + (indOffset.shiftY || 0));
+                const pz = tz + nz * curThrow;
 
                 const rx = Math.cos(theta);
                 const rz = -Math.sin(theta);
@@ -3020,16 +3380,19 @@ function SpecialGeometryScene({
                     targetCenter={[tx, ty, tz]}
                     upVec={[0, 1, 0]}
                     rightVec={[rx, 0, rz]}
-                    imgW={surf.singleProjWidthM}
-                    imgH={surf.singleProjHeightM}
+                    imgW={pjImgW}
+                    imgH={pjImgH}
                     humans={humans}
-                    throwDist={surf.throwDistM}
+                    throwDist={curThrow}
                     color={PROJ_COLORS[pIdx % PROJ_COLORS.length]}
                     label={`PJ #${idx + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
-                    detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
+                    detailText={`${pjImgW}m×${pjImgH}m (${surf.distMmPerPx}mm/px)`}
                     showLabels={showLabels}
                     showShadows={showShadows}
                     showSurfaceFill={true}
+                    rotYaw={indOffset.rotYaw || 0}
+                    rotPitch={indOffset.rotPitch || 0}
+                    rotRoll={indOffset.rotRoll || 0}
                   />
                 );
               }
@@ -3113,27 +3476,43 @@ function SpecialGeometryScene({
               for (let col = 0; col < surf.cols; col++) {
                 const azimRad = (col / Math.max(1, surf.cols)) * Math.PI * 2;
                 const pIdx = row * surf.cols + col;
+                const pjKey = `${row}-${col}`;
+                const indOffset = (surf.customProjectorOffsets?.[pjKey] || { shiftX: 0, shiftY: 0, shiftZ: 0 }) as {
+                  shiftX: number;
+                  shiftY: number;
+                  shiftZ?: number;
+                  throwRatio?: number;
+                  rotYaw?: number;
+                  rotPitch?: number;
+                  rotRoll?: number;
+                };
 
                 const dirX = Math.cos(elevRad) * Math.sin(azimRad);
                 const dirY = Math.sin(elevRad);
                 const dirZ = Math.cos(elevRad) * Math.cos(azimRad);
-
-                const tx = dirX * r;
-                const ty = centerY + dirY * r + (surf.projShiftYM || 0);
-                const tz = dirZ * r;
-
-                const px = tx - dirX * surf.throwDistM;
-                const py =
-                  surf.projMountHeightM && surf.projMountHeightM > 0
-                    ? surf.projMountHeightM
-                    : Math.max(0.6, ty - dirY * surf.throwDistM);
-                const pz = tz - dirZ * surf.throwDistM;
 
                 const rx = Math.cos(azimRad);
                 const rz = -Math.sin(azimRad);
                 const ux = -Math.sin(elevRad) * Math.sin(azimRad);
                 const uy = Math.cos(elevRad);
                 const uz = -Math.sin(elevRad) * Math.cos(azimRad);
+
+                const tx = dirX * r + rx * (indOffset.shiftX || 0);
+                const ty = centerY + dirY * r + (surf.projShiftYM || 0) + (indOffset.shiftY || 0);
+                const tz = dirZ * r + rz * (indOffset.shiftX || 0);
+
+                const curThrow = surf.throwDistM + (indOffset.shiftZ || 0);
+                const curTr = indOffset.throwRatio && indOffset.throwRatio > 0 ? indOffset.throwRatio : surf.throwRatio;
+                const hasCustomOptics = Math.abs(indOffset.shiftZ || 0) > 0.001 || (indOffset.throwRatio !== undefined && indOffset.throwRatio > 0);
+                const pjImgW = hasCustomOptics && curTr > 0 ? +(curThrow / curTr).toFixed(3) : surf.singleProjWidthM;
+                const pjImgH = hasCustomOptics && curTr > 0 ? +(pjImgW * (surf.projH / Math.max(1, surf.projW))).toFixed(3) : surf.singleProjHeightM;
+
+                const px = tx - dirX * curThrow;
+                const py =
+                  surf.projMountHeightM && surf.projMountHeightM > 0
+                    ? Math.max(0.5, surf.projMountHeightM + (indOffset.shiftY || 0))
+                    : Math.max(0.6, ty - dirY * curThrow);
+                const pz = tz - dirZ * curThrow;
 
                 items.push(
                   <ProjectorFrustum3D
@@ -3142,15 +3521,18 @@ function SpecialGeometryScene({
                     targetCenter={[tx, ty, tz]}
                     upVec={[ux, uy, uz]}
                     rightVec={[rx, 0, rz]}
-                    imgW={surf.singleProjWidthM}
-                    imgH={surf.singleProjHeightM}
+                    imgW={pjImgW}
+                    imgH={pjImgH}
                     humans={humans}
-                    throwDist={surf.throwDistM}
+                    throwDist={curThrow}
                     color={PROJ_COLORS[pIdx % PROJ_COLORS.length]}
                     label={`PJ ${col + 1}${surf.rows > 1 ? `.${row + 1}` : ''}`}
-                    detailText={`${surf.singleProjWidthM}m×${surf.singleProjHeightM}m (${surf.distMmPerPx}mm/px)`}
+                    detailText={`${pjImgW}m×${pjImgH}m (${surf.distMmPerPx}mm/px)`}
                     showLabels={showLabels}
                     showSurfaceFill={true}
+                    rotYaw={indOffset.rotYaw || 0}
+                    rotPitch={indOffset.rotPitch || 0}
+                    rotRoll={indOffset.rotRoll || 0}
                   />
                 );
               }

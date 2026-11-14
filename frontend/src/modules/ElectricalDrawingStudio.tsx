@@ -41,24 +41,8 @@ export default function ElectricalDrawingStudio() {
   const [elShowPhaseCurrent, setElShowPhaseCurrent] = useState<boolean>(true);
   const [elShowLoadDetails, setElShowLoadDetails] = useState<boolean>(true);
 
-  // 3) Metin ve Etiket Konumlarını Kaydırma (Üst Üste Binmeyi Önleme):
-  type ShiftTarget = 'proj' | 'dim' | 'roomDim' | 'titleBlock';
-  const [activeShiftTarget, setActiveShiftTarget] = useState<ShiftTarget>('proj');
-
-  const [shifts, setShifts] = useState<{
-    proj: { x: number; y: number };
-    dim: { x: number; y: number };
-    roomDim: { x: number; y: number };
-    titleBlock: { x: number; y: number };
-  }>({
-    proj: { x: 0, y: 0 },
-    dim: { x: 0, y: 0 },
-    roomDim: { x: 0, y: 0 },
-    titleBlock: { x: 0, y: 0 },
-  });
-
+  // 3) Elektrik Paftası Linye Sütun Aralığı ve CAD Rapor Bildirimi:
   const [elColumnSpacing, setElColumnSpacing] = useState<number>(145);
-  const [elTextShiftY, setElTextShiftY] = useState<number>(0);
   const [reportCadToast, setReportCadToast] = useState<boolean>(false);
 
   // 4) Her yazıyı bağımsız olarak mouse ile sürükleme ve yön (açı) değiştirme
@@ -173,6 +157,10 @@ export default function ElectricalDrawingStudio() {
           cableMm2: cfg.cableMm2,
           lengthM: 25,
           ampacityA: cfg.ampacityA,
+          breakerIcuKa: 6,
+          prospectiveFaultKa: 4.5,
+          tripCurve: 'C',
+          inrushA: Math.max(15, Math.round(((countOnThisCircuit * watt) / Math.max(110, supply.voltage || 230)) * 4)),
         });
       }
 
@@ -261,14 +249,6 @@ export default function ElectricalDrawingStudio() {
           showElectricalLabels: roomShowElLabels,
           showFrustums: roomShowFrustums,
           showTitleBlock: roomShowTitleBlock,
-          labelShiftX: shifts.proj.x,
-          labelShiftY: shifts.proj.y,
-          dimShiftX: shifts.dim.x,
-          dimShiftY: shifts.dim.y,
-          roomDimShiftX: shifts.roomDim.x,
-          roomDimShiftY: shifts.roomDim.y,
-          titleBlockShiftX: shifts.titleBlock.x,
-          titleBlockShiftY: shifts.titleBlock.y,
         });
       }
       if (sheet === 'electrical' && elRes.r) {
@@ -279,7 +259,6 @@ export default function ElectricalDrawingStudio() {
           showPhaseAndCurrent: elShowPhaseCurrent,
           showLoadDetails: elShowLoadDetails,
           columnSpacing: elColumnSpacing,
-          textShiftY: elTextShiftY,
         });
       }
       return null;
@@ -303,14 +282,12 @@ export default function ElectricalDrawingStudio() {
     roomShowElLabels,
     roomShowFrustums,
     roomShowTitleBlock,
-    shifts,
     elShowBusSpecs,
     elShowBreakerSpecs,
     elShowCableSpecs,
     elShowPhaseCurrent,
     elShowLoadDetails,
     elColumnSpacing,
-    elTextShiftY,
   ]);
 
   // Kullanıcının sürüklediği / döndürdüğü yazıları uygula (SVG, DXF ve PNG çıktılarının tamamına yansır)
@@ -455,6 +432,10 @@ export default function ElectricalDrawingStudio() {
           cableMm2: 2.5,
           lengthM: 20,
           ampacityA: 25,
+          breakerIcuKa: 6,
+          prospectiveFaultKa: 4.5,
+          tripCurve: 'C',
+          inrushA: 25,
         },
       ],
     });
@@ -715,11 +696,33 @@ export default function ElectricalDrawingStudio() {
         </div>
 
         <div className="space-y-2 border-t border-slate-700 pt-2">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-1">
             <b className="text-slate-200">Linyeler / Devreler ({circuits.length})</b>
-            <button className="px-2 py-0.5 bg-sky-700 rounded text-white text-[10px]" onClick={addCircuit}>
-              + Linye
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-600 rounded text-white text-[10px]"
+                title="Eksik koruma koordinasyonu alanlarını IEC 60898-1 tali pano standartlarıyla doldur (Icu=6 kA, Ik=4.5 kA, C Eğrisi, İnruş=4×Ib)"
+                onClick={() =>
+                  setElectrical({
+                    circuits: circuits.map(c => ({
+                      ...c,
+                      breakerIcuKa: c.breakerIcuKa ?? 6,
+                      prospectiveFaultKa: c.prospectiveFaultKa ?? 4.5,
+                      tripCurve: c.tripCurve ?? 'C',
+                      inrushA: c.inrushA ?? 25,
+                    })),
+                  })
+                }
+              >
+                IEC Doldur
+              </button>
+              <button className="px-2 py-0.5 bg-sky-700 rounded text-white text-[10px]" onClick={addCircuit}>
+                + Linye
+              </button>
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-400 bg-slate-950/70 border border-slate-800 rounded px-2 py-1 leading-snug">
+            <b>Standartlar (IEC 60898-1 / TS HD 60364):</b> Tali pano için <b>Icu/Icn ≥ 6 kA</b>, beklenen <b>Ik ≤ 4.5 kA</b>, projektör SMPS yükleri için <b>C Eğrisi (5–10×In)</b> ve <b>İnruş ≈ 4×Ib</b> önerilir.
           </div>
           {circuits.map(c => (
             <div key={c.id} className="p-2 rounded border border-slate-800 bg-slate-950 space-y-1">
@@ -733,6 +736,25 @@ export default function ElectricalDrawingStudio() {
               <div className="grid grid-cols-2 gap-1 text-[10px]">
                 <label>Kablo (mm²)<input className="inp !mt-0" type="number" step="0.5" value={c.cableMm2 ?? 2.5} onChange={e => updCircuit(c.id, { cableMm2: +e.target.value || 2.5 })} /></label>
                 <label>Mesafe (m)<input className="inp !mt-0" type="number" value={c.lengthM ?? 25} onChange={e => updCircuit(c.id, { lengthM: +e.target.value || 25 })} /></label>
+                <label>Icu/Icn (kA)<input className="inp !mt-0" type="number" step="0.5" placeholder="ör. 6" value={c.breakerIcuKa ?? ''} onChange={e => updCircuit(c.id, { breakerIcuKa: e.target.value ? +e.target.value : undefined })} /></label>
+                <label>Beklenen Ik (kA)<input className="inp !mt-0" type="number" step="0.5" placeholder="ör. 4.5" value={c.prospectiveFaultKa ?? ''} onChange={e => updCircuit(c.id, { prospectiveFaultKa: e.target.value ? +e.target.value : undefined })} /></label>
+                <label>Açma Eğrisi
+                  <select className="inp !mt-0" value={c.tripCurve ?? ''} onChange={e => updCircuit(c.id, { tripCurve: (e.target.value || undefined) as Circuit['tripCurve'] })}>
+                    <option value="">Seçiniz</option>
+                    <option value="B">B (3–5×In)</option>
+                    <option value="C">C (5–10×In)</option>
+                    <option value="D">D (10–20×In)</option>
+                  </select>
+                </label>
+                <label>İnruş (A)<input className="inp !mt-0" type="number" step="1" placeholder="ör. 25" value={c.inrushA ?? ''} onChange={e => updCircuit(c.id, { inrushA: e.target.value ? +e.target.value : undefined })} /></label>
+                <label className="col-span-2 flex items-center gap-1.5 pt-1 text-[10px] text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(c.selectivityVerified)}
+                    onChange={e => updCircuit(c.id, { selectivityVerified: e.target.checked })}
+                  />
+                  <span>Üretici Selektivite Koordinasyon Tablosu Doğrulandı (IEC 60898-1 / 60947-2)</span>
+                </label>
               </div>
             </div>
           ))}
@@ -963,196 +985,6 @@ export default function ElectricalDrawingStudio() {
           </div>
         </div>
 
-        {/* YAZILARI VE ETİKETLERİ KAYDIRMA / ARALIK AYARLAMA KONTROL BARI */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-900/95 px-3 py-1.5 rounded border border-sky-900/60 text-[11px] shadow">
-          <div className="flex items-center gap-1.5 font-bold text-sky-400">
-            <span>↔️ Seçtiğin Yazıyı Kaydır:</span>
-          </div>
-
-          {sheet === 'room' ? (
-            <div className="flex flex-wrap items-center gap-2.5">
-              {/* Kaydırılacak Yazıyı Seç */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-slate-400 text-[10px]">Yazı Seçimi:</span>
-                <select
-                  value={activeShiftTarget}
-                  onChange={e => setActiveShiftTarget(e.target.value as ShiftTarget)}
-                  className="bg-slate-950 border border-sky-700 text-sky-300 font-semibold text-[10.5px] rounded px-2 py-0.5"
-                >
-                  <option value="proj">📌 Projektör & Montaj Etiketleri (PJ / H / Watt)</option>
-                  <option value="dim">📏 Atım Mesafesi (D) Ölçü Yazısı</option>
-                  <option value="roomDim">📐 Dış Oda Ölçüleri (Genişlik / Boy)</option>
-                  <option value="titleBlock">📋 Teknik Çizim Anteti & Lejant</option>
-                </select>
-              </div>
-
-              {/* Yatay X Kaydırma */}
-              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">Yatay (X):</span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() =>
-                    setShifts(prev => ({
-                      ...prev,
-                      [activeShiftTarget]: {
-                        ...prev[activeShiftTarget],
-                        x: prev[activeShiftTarget].x - 50,
-                      },
-                    }))
-                  }
-                  title="Seçili metni 50mm sola kaydır"
-                >
-                  ◀
-                </button>
-                <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
-                  {shifts[activeShiftTarget].x > 0 ? `+${shifts[activeShiftTarget].x}` : shifts[activeShiftTarget].x} mm
-                </span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() =>
-                    setShifts(prev => ({
-                      ...prev,
-                      [activeShiftTarget]: {
-                        ...prev[activeShiftTarget],
-                        x: prev[activeShiftTarget].x + 50,
-                      },
-                    }))
-                  }
-                  title="Seçili metni 50mm sağa kaydır"
-                >
-                  ▶
-                </button>
-              </div>
-
-              {/* Dikey Y Kaydırma */}
-              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">Dikey (Y):</span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() =>
-                    setShifts(prev => ({
-                      ...prev,
-                      [activeShiftTarget]: {
-                        ...prev[activeShiftTarget],
-                        y: prev[activeShiftTarget].y - 50,
-                      },
-                    }))
-                  }
-                  title="Seçili metni 50mm yukarı kaydır"
-                >
-                  ▲
-                </button>
-                <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
-                  {shifts[activeShiftTarget].y > 0 ? `+${shifts[activeShiftTarget].y}` : shifts[activeShiftTarget].y} mm
-                </span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() =>
-                    setShifts(prev => ({
-                      ...prev,
-                      [activeShiftTarget]: {
-                        ...prev[activeShiftTarget],
-                        y: prev[activeShiftTarget].y + 50,
-                      },
-                    }))
-                  }
-                  title="Seçili metni 50mm aşağı kaydır"
-                >
-                  ▼
-                </button>
-              </div>
-
-              {/* Seçileni Sıfırla */}
-              {(shifts[activeShiftTarget].x !== 0 || shifts[activeShiftTarget].y !== 0) && (
-                <button
-                  className="px-2 py-0.5 rounded bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 text-[10px] font-semibold"
-                  onClick={() =>
-                    setShifts(prev => ({
-                      ...prev,
-                      [activeShiftTarget]: { x: 0, y: 0 },
-                    }))
-                  }
-                  title="Seçili yazının konumunu sıfırla"
-                >
-                  ⟲ Seçileni Sıfırla
-                </button>
-              )}
-
-              {/* Tümünü Sıfırla */}
-              {(shifts.proj.x !== 0 || shifts.proj.y !== 0 || shifts.dim.x !== 0 || shifts.dim.y !== 0 || shifts.roomDim.x !== 0 || shifts.roomDim.y !== 0 || shifts.titleBlock.x !== 0 || shifts.titleBlock.y !== 0) && (
-                <button
-                  className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
-                  onClick={() => {
-                    setShifts({
-                      proj: { x: 0, y: 0 },
-                      dim: { x: 0, y: 0 },
-                      roomDim: { x: 0, y: 0 },
-                      titleBlock: { x: 0, y: 0 },
-                    });
-                  }}
-                  title="Tüm yazıların kaydırmasını sıfırla"
-                >
-                  ⟲ Tümünü Sıfırla
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">Linye Sütun Genişliği (Aralık):</span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setElColumnSpacing(v => Math.max(90, v - 15))}
-                  title="Linyeleri birbirine yaklaştır"
-                >
-                  ◀ Daralt
-                </button>
-                <span className="font-mono text-amber-300 w-14 text-center text-[10.5px]">
-                  {elColumnSpacing} mm
-                </span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setElColumnSpacing(v => Math.min(260, v + 15))}
-                  title="Linyeleri birbirinden uzaklaştırarak yazıları ferahlat"
-                >
-                  Genişlet ▶
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
-                <span className="text-slate-400 text-[10px]">Metin Dikey Boşluğu:</span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setElTextShiftY(v => v - 5)}
-                >
-                  ▲
-                </button>
-                <span className="font-mono text-sky-300 w-10 text-center text-[10.5px]">
-                  {elTextShiftY}
-                </span>
-                <button
-                  className="px-1.5 py-0.2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs"
-                  onClick={() => setElTextShiftY(v => v + 5)}
-                >
-                  ▼
-                </button>
-              </div>
-
-              {(elColumnSpacing !== 145 || elTextShiftY !== 0) && (
-                <button
-                  className="px-2 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10px] font-semibold"
-                  onClick={() => {
-                    setElColumnSpacing(145);
-                    setElTextShiftY(0);
-                  }}
-                >
-                  ⟲ Standart Aralığa Dön
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
         {/* YAZI SÜRÜKLEME & YÖN KONTROL ÇUBUĞU */}
         <div className="bg-slate-900/90 border border-slate-800 rounded px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
           {selectedTextPrim && selectedOverride ? (
@@ -1227,24 +1059,61 @@ export default function ElectricalDrawingStudio() {
             </span>
           )}
 
-          {sheetHasOverrides && (
-            <button
-              type="button"
-              onClick={() => {
-                setTextOverrides(prev => {
-                  const next: Record<string, TextOverride> = {};
-                  for (const [k, v] of Object.entries(prev)) {
-                    if (!k.startsWith(`${sheet}::`)) next[k] = v;
-                  }
-                  return next;
-                });
-                setSelectedTextIdx(null);
-              }}
-              className="px-2.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10.5px] font-semibold"
-            >
-              ⟲ Tüm Yazı Konum/Yönlerini Sıfırla
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {sheet === 'electrical' && (
+              <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span className="text-slate-400 text-[10px]">Linye Sütun Genişliği:</span>
+                <button
+                  type="button"
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10.5px]"
+                  onClick={() => setElColumnSpacing(v => Math.max(90, v - 15))}
+                  title="Linyeleri birbirine yaklaştır"
+                >
+                  ◀ Daralt
+                </button>
+                <span className="font-mono text-amber-300 w-12 text-center text-[10.5px]">
+                  {elColumnSpacing} mm
+                </span>
+                <button
+                  type="button"
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10.5px]"
+                  onClick={() => setElColumnSpacing(v => Math.min(260, v + 15))}
+                  title="Linyeleri birbirinden uzaklaştır"
+                >
+                  Genişlet ▶
+                </button>
+                {elColumnSpacing !== 145 && (
+                  <button
+                    type="button"
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px]"
+                    onClick={() => setElColumnSpacing(145)}
+                    title="Varsayılan 145 mm sütun genişliğine dön"
+                  >
+                    ⟲
+                  </button>
+                )}
+              </div>
+            )}
+
+            {sheetHasOverrides && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTextOverrides(prev => {
+                    const next: Record<string, TextOverride> = {};
+                    for (const [k, v] of Object.entries(prev)) {
+                      if (!k.startsWith(`${sheet}::`)) next[k] = v;
+                    }
+                    return next;
+                  });
+                  setSelectedTextIdx(null);
+                }}
+                className="px-2.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[10.5px] font-semibold"
+              >
+                ⟲ Tüm Yazı Konum/Yönlerini Sıfırla
+              </button>
+            )}
+          </div>
         </div>
 
         {/* CAD ÇİZİM GÖRSELLEŞTİRME PENCERESİ */}
