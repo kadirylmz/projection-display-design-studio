@@ -6,8 +6,25 @@ import { computePixelMapSummary } from './multiproj';
 import { analyze as analyzeElectrical, ElectricalResult } from './electrical';
 import { DEFAULT_SECTIONS } from './report';
 import { validateReportConsistency, ReportValidationResult } from './reportValidation';
+import {
+  analyzeFootprintOverlaps,
+  buildGridFootprints,
+  buildMeasuredIlluminance,
+  buildSimulatedIlluminance,
+  buildTheoreticalIlluminance,
+  computeContentCanvas,
+  computeContrastAnalysis,
+  computeLuminanceFromSource,
+  normalizedBlendWeights,
+  ContentCanvasResult,
+  ContrastAnalysis,
+  FootprintOverlapAnalysis,
+  IlluminanceRecord,
+  LuminanceRecord,
+  ProjectorFootprint,
+} from './projectionGeometry';
 
-export const CALCULATION_ENGINE_VERSION = '2.4.0';
+export const CALCULATION_ENGINE_VERSION = '2.5.0';
 
 export interface CentralDesignInput {
   scenarioId?: string;
@@ -48,6 +65,8 @@ export interface CentralDesignInput {
     reflectance?: number;
     ambientLux?: number;
     uniformityU0Pct?: number;
+    /** Saha lüksmetre ölçümleri (lx) — Teorik/Simüle değerlerin yerine KULLANILMAZ */
+    measuredLuxSamples?: number[];
   };
   blending: {
     overlapPctX: number;
@@ -64,6 +83,25 @@ export interface CentralDesignInput {
     shortCircuitVerified?: boolean;
     selectivityVerified?: boolean;
   };
+}
+
+export interface ProjectorDistributionRecord {
+  projectorId: string;
+  surfaceId: string;
+  scenarioId: string;
+  positionX_M: number;
+  positionY_M: number;
+  positionZ_M: number;
+  throwDistM: number;
+  imageWidthM: number;
+  imageHeightM: number;
+  throwRatio: number;
+  coverageStartX_M: number;
+  coverageEndX_M: number;
+  coverageStartY_M: number;
+  coverageEndY_M: number;
+  overlapLeftM: number;
+  overlapRightM: number;
 }
 
 export interface CentralDesignResult {
@@ -154,17 +192,50 @@ export interface CentralDesignResult {
     };
     cropFromBlendedPxW: number;
     cropFromBlendedPxH: number;
+    targetSurface: {
+      widthM: number;
+      heightM: number;
+      areaM2: number;
+      pxPerMeterW: number;
+      pxPerMeterH: number;
+      mmPerPxW: number;
+      mmPerPxH: number;
+      pxPerSqMeter: number;
+      anisotropyDiffPct: number;
+    };
+    activeProjectionArea: {
+      widthM: number;
+      heightM: number;
+      areaM2: number;
+      pxPerMeterW: number;
+      pxPerMeterH: number;
+      mmPerPxW: number;
+      mmPerPxH: number;
+      pxPerSqMeter: number;
+      anisotropyDiffPct: number;
+    };
   };
+  projectorDistribution: ProjectorDistributionRecord[];
   edgeBlending: {
     adjacentZoneCount: number;
     overlapPctX: number;
+    overlapPctOfSingleProjectorW: number;
+    overlapPctOfTotalRawRaster: number;
+    overlapPctOfPhysicalImageW: number;
     overlapPixelsX: number;
     overlapMetersPerSeam: number;
     totalOverlapMeters: number;
+    netRasterW: number;
+    overlapRegions: Array<{ pair: string; overlapPx: number; overlapM: number }>;
     gamma: number;
     midpointDrivePct: number;
   };
-  viewingQuality: ViewingQualityResult & { ppdH: number; ppdV: number; minAxisPpd: number };
+  viewingQuality: ViewingQualityResult & {
+    ppdH: number;
+    ppdV: number;
+    minAxisPpd: number;
+    targetSurfacePpd?: { ppdH: number; ppdV: number; fovH: number; fovV: number };
+  };
   electricalLoad: {
     phases: 1 | 3;
     voltageV: number;
@@ -175,6 +246,24 @@ export interface CentralDesignResult {
     analysis: ElectricalResult;
   };
   crossValidation: ReportValidationResult;
+  /** Tek kanvas geometrisi (içerik kanvası, H/V px/m, mm/px, px/m², MP) */
+  contentCanvas: ContentCanvasResult;
+  /** Tüm projektör ayak izi poligonları ve çoklu (üçlü dahil) kesişimler */
+  overlapGeometry: FootprintOverlapAnalysis;
+  /** Teorik / Simüle LuxField / Ölçülen aydınlık — birbirinin yerine kullanılmaz */
+  illuminance: {
+    theoretical: IlluminanceRecord;
+    simulated: IlluminanceRecord;
+    measured: IlluminanceRecord;
+    ninePoint: { luxFieldId: string; equalMeanLux: number; weightedMeanLux: number; minLux: number; maxLux: number; sampleCount: number };
+  };
+  /** Kaynak etiketli parlaklık (nit) */
+  luminance: {
+    theoretical: LuminanceRecord;
+    simulated: LuminanceRecord;
+    measured: LuminanceRecord;
+  };
+  contrast: ContrastAnalysis;
   calculationTrace: CalculationTraceEntry[];
 }
 
@@ -263,14 +352,17 @@ export function evaluateCentralProjectionDesign(inp: CentralDesignInput): Centra
   const blendedH = Math.max(1, rows * pH - Math.max(0, rows - 1) * ovPxY);
 
   const surfaceAspect = wM / hM;
-  const optContentW = Math.round(wM * optPxmH);
-  const optContentH = Math.round(hM * optPxmV);
-  const contentW = optContentH <= blendedH
-    ? Math.min(blendedW, optContentW)
-    : Math.min(blendedW, Math.round(blendedH * surfaceAspect));
-  const contentH = optContentH <= blendedH
-    ? Math.min(blendedH, optContentH)
-    : Math.min(blendedH, Math.round(contentW / surfaceAspect));
+  // Tek kanvas geometrisi: içerik kanvası ve tüm H/V yoğunlukları aynı fonksiyondan türetilir
+  const contentCanvasRes = computeContentCanvas({
+    rasterW: blendedW,
+    rasterH: blendedH,
+    opticalPxPerMeterH: optPxmH,
+    opticalPxPerMeterV: optPxmV,
+    surfaceWidthM: wM,
+    surfaceHeightM: hM,
+  });
+  const contentW = contentCanvasRes.contentCanvas.w;
+  const contentH = contentCanvasRes.contentCanvas.h;
 
   const pmSlots = Array.from({ length: pjCount }, (_, idx) => {
     const c = idx % cols;
@@ -342,9 +434,43 @@ export function evaluateCentralProjectionDesign(inp: CentralDesignInput): Centra
   const adjacentZones = Math.max(0, (cols - 1) * rows + (rows - 1) * cols);
   const gamma = inp.blending.gamma ?? 2.2;
   const midpointDrivePct = r1(Math.pow(0.5, 1 / gamma) * 100);
-  const overlapMetersPerSeam = cols > 1 ? r2(physCov.singleImageWidthM * (ovXPct / 100)) : 0;
+  const overlapMetersPerSeam = cols > 1 ? r3(imgWExact * (ovXPct / 100)) : 0;
 
   const luxGrid = computeLuxSimulationGrid(inp, 24, 12);
+  const luxNine = sampleNinePointsFromLuxGrid(luxGrid, wM, hM, gain, refl);
+
+  // Kaynak ayrımı: Teorik ≠ Simüle LuxField ≠ Ölçüm
+  const theoreticalRec = buildTheoreticalIlluminance(totalAnsiLumens, optEffPct * (transPct / 100), areaM2);
+  const simulatedRec = buildSimulatedIlluminance(luxGrid);
+  const measuredRec = buildMeasuredIlluminance(inp.photometrics.measuredLuxSamples, areaM2);
+  const lumTheoretical = computeLuminanceFromSource(theoreticalRec, gain, refl);
+  const lumSimulated = computeLuminanceFromSource(simulatedRec, gain, refl);
+  const lumMeasured = computeLuminanceFromSource(measuredRec, gain, refl);
+  // ACR beyaz seviyesi: ölçüm varsa ölçüm, yoksa simüle LuxField (teorik değil)
+  const contrastAnalysis = computeContrastAnalysis({
+    white: lumMeasured.nits !== null ? lumMeasured : lumSimulated,
+    ambientLux: inp.photometrics.ambientLux,
+    gain,
+    reflectance: refl,
+    nativeContrast: inp.projector.nativeContrast ?? null,
+  });
+
+  // Çoklu overlap geometrisi (aynı ayak izi modeli LuxField ile paylaşılır)
+  const overlapGeometry = analyzeFootprintOverlaps(
+    buildGridFootprints({
+      cols,
+      rows,
+      imageWidthM: imgWExact,
+      imageHeightM: imgHExact,
+      overlapFracX: ovXPct / 100,
+      overlapFracY: ovYPct / 100,
+      surfaceHeightM: hM,
+      positionsX: inp.projector.projectorPositionsX,
+    }),
+    wM,
+    hM,
+    cols
+  );
   const gridU0Pct = luxGrid.u0Pct;
   const gridU1Pct = r1((luxGrid.minLux / Math.max(1, luxGrid.maxLux)) * 100);
 
@@ -519,10 +645,71 @@ export function evaluateCentralProjectionDesign(inp: CentralDesignInput): Centra
     },
   });
 
+  const activeProjW_M = r3(Math.max(0.1, cols * imgWExact - Math.max(0, cols - 1) * overlapMetersPerSeam));
+  const activeProjH_M = r3(Math.max(0.1, imgHExact));
+  const activeAreaM2 = r3(activeProjW_M * activeProjH_M);
+  const tgtPxmW = r2(blendedW / wM);
+  const tgtPxmH = r2(blendedH / hM);
+  const tgtAniso = r1((Math.abs(tgtPxmW - tgtPxmH) / Math.max(0.01, tgtPxmW, tgtPxmH)) * 100);
+  const actPxmW = r2(blendedW / activeProjW_M);
+  const actPxmH = r2(blendedH / activeProjH_M);
+  const actAniso = r1((Math.abs(actPxmW - actPxmH) / Math.max(0.01, actPxmW, actPxmH)) * 100);
+
+  const scenarioIdVal = inp.scenarioId || `SCN-${cols}x${rows}-TR${inp.lens.throwRatio}`;
+  const surfaceIdVal = inp.surface.id || 'main-surface';
+  const mountY_M = r2(Math.min(inp.room.heightM - 0.3, hM + 0.35));
+  const stepX_M = Math.max(0.05, imgWExact - overlapMetersPerSeam);
+  const totalSpanX_M = cols * imgWExact - Math.max(0, cols - 1) * overlapMetersPerSeam;
+  const startOffsetX_M = (wM - totalSpanX_M) / 2;
+  const projectorDistribution: ProjectorDistributionRecord[] = Array.from({ length: pjCount }, (_, idx) => {
+    const colIdx = idx % cols;
+    const rowIdx = Math.floor(idx / cols);
+    const covStartX = r3(startOffsetX_M + colIdx * stepX_M);
+    const covEndX = r3(covStartX + imgWExact);
+    const covStartY = r3((hM - imgHExact) / 2);
+    const covEndY = r3(covStartY + imgHExact);
+    return {
+      projectorId: `PJ-${String(idx + 1).padStart(2, '0')}`,
+      surfaceId: surfaceIdVal,
+      scenarioId: scenarioIdVal,
+      positionX_M: r3(covStartX + imgWExact / 2),
+      positionY_M: r3(inp.lens.throwDistM),
+      positionZ_M: r3(mountY_M - rowIdx * 0.4),
+      throwDistM: r3(inp.lens.throwDistM),
+      imageWidthM: r3(imgWExact),
+      imageHeightM: r3(imgHExact),
+      throwRatio: r3(inp.lens.throwRatio),
+      coverageStartX_M: covStartX,
+      coverageEndX_M: covEndX,
+      coverageStartY_M: covStartY,
+      coverageEndY_M: covEndY,
+      overlapLeftM: colIdx > 0 ? r3(overlapMetersPerSeam) : 0,
+      overlapRightM: colIdx < cols - 1 ? r3(overlapMetersPerSeam) : 0,
+    };
+  });
+
+  const overlapRegions = Array.from({ length: Math.max(0, cols - 1) }, (_, idx) => ({
+    pair: `PJ-${String(idx + 1).padStart(2, '0')}↔PJ-${String(idx + 2).padStart(2, '0')}`,
+    overlapPx: Math.round(ovPxXExact),
+    overlapM: r3(overlapMetersPerSeam),
+  }));
+  const totalOverlapPxSum = overlapRegions.reduce((a, r) => a + r.overlapPx, 0);
+  const overlapPctOfTotalRawRaster = rawW > 0 ? r2((totalOverlapPxSum / rawW) * 100) : 0;
+  const overlapPctOfPhysicalImageW = imgWExact > 0 ? r2((overlapMetersPerSeam / imgWExact) * 100) : 0;
+
+  const targetSurfacePpd = Math.abs(hM - activeProjH_M) > 0.02 || Math.abs(wM - activeProjW_M) > 0.02
+    ? {
+        ppdH: r1(blendedW / Math.max(1, 2 * Math.atan(wM / (2 * Math.max(0.5, inp.surface.viewingDistanceM))) * (180 / Math.PI))),
+        ppdV: r1(blendedH / Math.max(1, 2 * Math.atan(hM / (2 * Math.max(0.5, inp.surface.viewingDistanceM))) * (180 / Math.PI))),
+        fovH: r1(2 * Math.atan(wM / (2 * Math.max(0.5, inp.surface.viewingDistanceM))) * (180 / Math.PI)),
+        fovV: r1(2 * Math.atan(hM / (2 * Math.max(0.5, inp.surface.viewingDistanceM))) * (180 / Math.PI)),
+      }
+    : undefined;
+
   return {
     traceability: {
-      scenarioId: inp.scenarioId || `SCN-${cols}x${rows}-TR${inp.lens.throwRatio}`,
-      surfaceId: inp.surface.id || 'main-surface',
+      scenarioId: scenarioIdVal,
+      surfaceId: surfaceIdVal,
       engineVersion: CALCULATION_ENGINE_VERSION,
     },
     roomGeometry: inp.room,
@@ -601,17 +788,45 @@ export function evaluateCentralProjectionDesign(inp: CentralDesignInput): Centra
       },
       cropFromBlendedPxW: Math.max(0, blendedW - contentW),
       cropFromBlendedPxH: Math.max(0, blendedH - contentH),
+      targetSurface: {
+        widthM: wM,
+        heightM: hM,
+        areaM2,
+        pxPerMeterW: tgtPxmW,
+        pxPerMeterH: tgtPxmH,
+        mmPerPxW: r3(1000 / Math.max(0.01, tgtPxmW)),
+        mmPerPxH: r3(1000 / Math.max(0.01, tgtPxmH)),
+        pxPerSqMeter: Math.round((blendedW * blendedH) / Math.max(0.01, areaM2)),
+        anisotropyDiffPct: tgtAniso,
+      },
+      activeProjectionArea: {
+        widthM: activeProjW_M,
+        heightM: activeProjH_M,
+        areaM2: activeAreaM2,
+        pxPerMeterW: actPxmW,
+        pxPerMeterH: actPxmH,
+        mmPerPxW: r3(1000 / Math.max(0.01, actPxmW)),
+        mmPerPxH: r3(1000 / Math.max(0.01, actPxmH)),
+        pxPerSqMeter: Math.round((blendedW * blendedH) / Math.max(0.01, activeAreaM2)),
+        anisotropyDiffPct: actAniso,
+      },
     },
+    projectorDistribution,
     edgeBlending: {
       adjacentZoneCount: adjacentZones,
       overlapPctX: ovXPct,
+      overlapPctOfSingleProjectorW: ovXPct,
+      overlapPctOfTotalRawRaster,
+      overlapPctOfPhysicalImageW,
       overlapPixelsX: ovPxX,
       overlapMetersPerSeam,
       totalOverlapMeters: r2(overlapMetersPerSeam * Math.max(0, cols - 1)),
+      netRasterW: Math.max(1, rawW - totalOverlapPxSum),
+      overlapRegions,
       gamma,
       midpointDrivePct,
     },
-    viewingQuality: { ...vq, ppdH, ppdV, minAxisPpd },
+    viewingQuality: { ...vq, ppdH, ppdV, minAxisPpd, targetSurfacePpd },
     electricalLoad: {
       phases,
       voltageV,
@@ -622,6 +837,23 @@ export function evaluateCentralProjectionDesign(inp: CentralDesignInput): Centra
       analysis: elAnalysis,
     },
     crossValidation,
+    contentCanvas: contentCanvasRes,
+    overlapGeometry,
+    illuminance: {
+      theoretical: theoreticalRec,
+      simulated: simulatedRec,
+      measured: measuredRec,
+      ninePoint: {
+        luxFieldId: luxNine.luxFieldId,
+        equalMeanLux: luxNine.equalMeanLux,
+        weightedMeanLux: luxNine.weightedMeanLux,
+        minLux: luxNine.minLux,
+        maxLux: luxNine.maxLux,
+        sampleCount: luxNine.sampleCount,
+      },
+    },
+    luminance: { theoretical: lumTheoretical, simulated: lumSimulated, measured: lumMeasured },
+    contrast: contrastAnalysis,
     calculationTrace: [
       {
         step: 'Optik Görüntü & Yoğunluk',
@@ -794,9 +1026,16 @@ export interface LuxSimulationGridCell {
   yM: number;
   contributionsLux: number[];
   totalLux: number;
+  /** Hücre merkezini aydınlatan projektör sayısı (1 = tek, 2 = ikili, 3+ = çoklu overlap) */
+  coverageCount?: number;
 }
 
 export interface LuxSimulationGridResult {
+  surfaceId: string;
+  luxFieldId: string;
+  samplingMethod: '288-point-grid';
+  sampleCount: number;
+  areaM2: number;
   gridCols: number;
   gridRows: number;
   projectorCount: number;
@@ -813,6 +1052,10 @@ export interface LuxSimulationGridResult {
   zeroCellCount: number;
   totalCellCount: number;
   activeAreaRatioPct: number;
+  /** Herhangi bir noktada aynı anda ışık veren maksimum projektör sayısı */
+  maxCoverageCount: number;
+  /** 3+ projektörün kesiştiği hücre sayısı (üçlü/çoklu overlap) */
+  multiOverlapCellCount: number;
   cells: LuxSimulationGridCell[];
 }
 
@@ -850,9 +1093,19 @@ export function computeLuxSimulationGrid(
   let sumLux = 0;
   let minLux = Infinity;
   let maxLux = 0;
+  let maxCoverageCount = 0;
+  let multiOverlapCellCount = 0;
 
   const cellW = wM / gC;
   const cellH = hM / gR;
+  // Tüm projektör ayak izleri tek koordinat sisteminde (komşu olmayan PJ1∩PJ3 kesişimi dahil)
+  const beamYStartAll = (hM - beamH) / 2;
+  const gridFootprints: ProjectorFootprint[] = Array.from({ length: cols }, (_, p) => {
+    const sx = hasPosX ? posX![p] : p * stepM;
+    return { projectorId: `PJ-${String(p + 1).padStart(2, '0')}`, x0: sx, x1: sx + beamW, y0: beamYStartAll, y1: beamYStartAll + beamH };
+  });
+  // %85+ overlap = bilinçli istifleme (stacking): blend yok, katkılar toplanır
+  const isStacking = ovRatio > 0.85;
 
   for (let r = 0; r < gR; r++) {
     const cellY0 = r * cellH;
@@ -874,10 +1127,15 @@ export function computeLuxSimulationGrid(
       const contributionsLux: number[] = [];
       let totalLux = 0;
       let maxCellOverlapFrac = 0;
+      // Normalize blend maskeleri: her koordinatta kapsayan projektör ağırlıkları toplamı = 1
+      const blendW = isStacking ? null : normalizedBlendWeights(gridFootprints, Math.max(0, Math.min(wM, xM)), clampedYM);
+      const coverageCount = gridFootprints.filter(f => xM > f.x0 && xM < f.x1 && yM > f.y0 && yM < f.y1).length;
+      maxCoverageCount = Math.max(maxCoverageCount, coverageCount);
+      if (coverageCount >= 3) multiOverlapCellCount++;
 
       for (let p = 0; p < cols; p++) {
-        const startXM = hasPosX ? posX![p] : p * stepM;
-        const endXM = startXM + beamW;
+        const startXM = gridFootprints[p].x0;
+        const endXM = gridFootprints[p].x1;
         const xOverlap = Math.max(0, Math.min(cellX1, endXM) - Math.max(cellX0, startXM)) / Math.max(1e-6, cellW);
         const areaOverlapFrac = xOverlap * yOverlap;
         maxCellOverlapFrac = Math.max(maxCellOverlapFrac, areaOverlapFrac);
@@ -888,15 +1146,10 @@ export function computeLuxSimulationGrid(
           const dx = Math.abs(localU - 0.5) * 2;
           const falloff = Math.max(0.72, 1 - 0.14 * dx * dx - 0.10 * dy * dy);
           let blendGain = 1;
-          const ovWidthM = beamW * ovRatio;
-          // Edge blend bölgesi yalnızca yüksek üst-üste binme (%85+) dışı normal blendde zayıflatma uygular
-          if (ovRatio <= 0.85 && ovWidthM > 0.05) {
-            if (p > 0 && clampedXM < startXM + ovWidthM) {
-              blendGain *= Math.max(0, Math.min(1, (clampedXM - startXM) / ovWidthM));
-            }
-            if (p < cols - 1 && clampedXM > endXM - ovWidthM) {
-              blendGain *= Math.max(0, Math.min(1, (endXM - clampedXM) / ovWidthM));
-            }
+          if (blendW) {
+            // Hücre merkezi ayak izi dışında (kısmi kenar hücresi) ise tek katkı olarak kabul edilir
+            const wP = blendW[p];
+            blendGain = wP > 0 ? wP : (blendW.every(v => v === 0) ? 1 : 0);
           }
           contrib = Math.round(baseUnitLux * falloff * blendGain * areaOverlapFrac);
         }
@@ -914,6 +1167,7 @@ export function computeLuxSimulationGrid(
         yM: r2(ny * hM),
         contributionsLux,
         totalLux,
+        coverageCount,
         ...(maxCellOverlapFrac < 0.95 && maxCellOverlapFrac > 0 ? { partialEdge: true } : {}),
       });
     }
@@ -932,7 +1186,13 @@ export function computeLuxSimulationGrid(
   const zeroCellCount = cells.filter(c => c.totalLux === 0).length;
   const totalCellCount = cells.length;
   const activeAreaRatioPct = totalCellCount > 0 ? r1(((totalCellCount - zeroCellCount) / totalCellCount) * 100) : 0;
+  const surfaceIdVal = inp.surface.id || 'main-surface';
   return {
+    surfaceId: surfaceIdVal,
+    luxFieldId: `LF-${surfaceIdVal}-${gC}x${gR}`,
+    samplingMethod: '288-point-grid',
+    sampleCount: cells.length,
+    areaM2: r2(wM * hM),
     gridCols: gC,
     gridRows: gR,
     projectorCount: cols,
@@ -949,11 +1209,18 @@ export function computeLuxSimulationGrid(
     zeroCellCount,
     totalCellCount,
     activeAreaRatioPct,
+    maxCoverageCount,
+    multiOverlapCellCount,
     cells,
   };
 }
 
 export interface NinePointSampleFromGridResult {
+  surfaceId: string;
+  luxFieldId: string;
+  samplingMethod: '9-point-sampling';
+  sampleCount: number;
+  areaM2: number;
   zones9: Array<{
     id: string;
     label: string;
@@ -1052,6 +1319,11 @@ export function sampleNinePointsFromLuxGrid(
   const centerToCornerDropPct = peakCenterLux > 0 ? r1(Math.max(0, ((peakCenterLux - cornerAvgLux) / peakCenterLux) * 100)) : 0;
 
   return {
+    surfaceId: grid.surfaceId,
+    luxFieldId: grid.luxFieldId,
+    samplingMethod: '9-point-sampling',
+    sampleCount: zones9.length,
+    areaM2: r2(widthM * heightM),
     zones9,
     avgLux: grid.avgLux,
     equalMeanLux,

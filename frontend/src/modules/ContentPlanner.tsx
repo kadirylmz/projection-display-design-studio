@@ -17,6 +17,8 @@ import { LengthUnit, round } from '../engine/units';
 import { download } from '../util';
 import { usePlannerStore } from '../plannerStore';
 import { useProjectStore } from '../projectStore';
+import { usePhotometricStore } from '../photometricStore';
+import { simulatePhotometricLux, Projector3DConfig, Surface3DConfig } from '../engine/photometrics';
 
 const PlannerRoom3D = lazy(() => import('./PlannerRoom3D'));
 
@@ -638,6 +640,261 @@ function GeometricMappingChainSummary({
 }
 
 /**
+ * Yüzey için Tek Kaynak (Single Source of Truth) Fotometrik Hesap ve Senkronizasyon Hook'u
+ * - Sade Menü, Detaylı Ayarlar, 7 Adımlı İzleme Kalitesi, 9-Bölge Noktasal Lux ve Lux & Parlaklık modülü aynı veriyi paylaşır.
+ */
+function useUnifiedSurfacePhotometrics(surface: CalculatedSurface) {
+  const {
+    surfacePhotometrics,
+    selectedSurfaceId,
+    projectors: storeProjectors,
+    defaultProjectorLumens,
+    screenGain: storeGain,
+    surfaceReflectance: storeReflectance,
+    ambientLux: storeAmbientLux,
+    blendOverlap,
+    setAmbientLux: setStoreAmbientLux,
+    saveSurfacePhotometric,
+  } = usePhotometricStore();
+
+  const savedEntry = surfacePhotometrics[surface.id];
+  const screenGain = savedEntry?.screenGain ?? (storeGain > 0 ? storeGain : 1.0);
+  const reflectance = savedEntry?.surfaceReflectance ?? (storeReflectance > 0 ? storeReflectance : 0.85);
+  const ambientLux = savedEntry?.ambientLux ?? (storeAmbientLux >= 0 ? storeAmbientLux : 20);
+
+  const simData = useMemo(() => {
+    const wM = Math.max(0.5, surface.effectiveWidthM || surface.widthM || 8.0);
+    const hM = Math.max(0.5, surface.effectiveHeightM || surface.heightM || 3.0);
+    const cols = Math.max(1, surface.cols || 1);
+    const rows = Math.max(1, surface.rows || 1);
+    const pjCount = cols * rows;
+    const throwDist = Math.max(0.5, surface.throwDistM || 4.5);
+    const throwRatio = Math.max(0.15, surface.throwRatio || 0.8);
+
+    const activeStore = storeProjectors.filter(p => p.enabled);
+    const useStoreProjs = selectedSurfaceId === surface.id && activeStore.length === pjCount;
+    const lmPerPj = savedEntry?.nominalLumensPerProj
+      ?? (useStoreProjs ? activeStore[0]?.ansiLumens : undefined)
+      ?? (defaultProjectorLumens > 0 ? defaultProjectorLumens : 10000);
+    const effRatio = savedEntry?.opticalEfficiencyPct
+      ? savedEntry.opticalEfficiencyPct / 100
+      : (useStoreProjs ? (activeStore[0]?.efficiency ?? 0.9) : 0.9);
+
+    const areaM2 = Math.max(0.1, wM * hM);
+    const totalNominalLumens = pjCount * lmPerPj;
+    const effectiveTotalLumens = Math.round(totalNominalLumens * effRatio);
+    const theoreticalAvgLux = Math.round(totalNominalLumens / areaM2);
+    const theoreticalEffAvgLux = Math.round(effectiveTotalLumens / areaM2);
+
+    const geom =
+      surface.type === 'floor'
+        ? 'floor'
+        : surface.type === 'ceiling'
+        ? 'ceiling'
+        : surface.geometry === 'flat' || surface.geometry === 'circle_floor'
+        ? 'flat'
+        : 'curved';
+
+    const surface3D: Surface3DConfig = {
+      widthM: wM,
+      heightM: hM,
+      geometry: geom,
+      radiusM: surface.radiusM || 6.0,
+      curveAngleDeg: surface.angleDeg || 90,
+      screenGain: screenGain * reflectance,
+      reflectance,
+      ambientLux,
+    };
+
+    const ovRatioX = surface.overlapMode === 'percent' ? (surface.overlapX || 15) / 100 : 0.15;
+    const ovRatioY = surface.overlapMode === 'percent' ? (surface.overlapY || 10) / 100 : 0.10;
+    const halfW = wM / 2;
+    const halfH = hM / 2;
+    const singleW = cols > 1
+      ? Math.max(throwDist / Math.max(0.2, throwRatio), wM / Math.max(1, cols - (cols - 1) * ovRatioX))
+      : Math.max(wM, throwDist / Math.max(0.2, throwRatio));
+    const stepW = cols > 1 ? (wM - singleW) / (cols - 1) : 0;
+    const singleH = rows > 1
+      ? Math.max(singleW / 1.6, hM / Math.max(1, rows - (rows - 1) * ovRatioY))
+      : Math.max(hM, singleW / 1.6);
+    const stepH = rows > 1 ? (hM - singleH) / (rows - 1) : 0;
+
+    const projectors3D: Projector3DConfig[] = useStoreProjs
+      ? activeStore
+      : (() => {
+          const list: Projector3DConfig[] = [];
+          let idx = 1;
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const posX = +(-halfW + c * stepW + singleW / 2).toFixed(2);
+              let posY = +(r * stepH + singleH / 2).toFixed(2);
+              let posZ = +throwDist.toFixed(2);
+              let targetY = posY;
+              let targetZ = 0;
+              if (geom === 'floor') {
+                const localZ = +(-halfH + r * stepH + singleH / 2).toFixed(2);
+                posY = +throwDist.toFixed(2);
+                posZ = localZ;
+                targetY = 0;
+                targetZ = localZ;
+              } else if (geom === 'ceiling') {
+                const localZ = +(-halfH + r * stepH + singleH / 2).toFixed(2);
+                posY = 0;
+                posZ = localZ;
+                targetY = hM;
+                targetZ = localZ;
+              }
+              list.push({
+                id: `surf-pj-${surface.id}-${idx}`,
+                name: `${surface.name} - PJ ${idx}`,
+                model: 'Proje Projektörü',
+                ansiLumens: lmPerPj,
+                efficiency: effRatio,
+                pos: [posX, posY, posZ],
+                target: [posX, targetY, targetZ],
+                yawDeg: 0,
+                pitchDeg: 0,
+                rollDeg: 0,
+                throwRatio,
+                zoom: 1.0,
+                cornerUniformity: 0.85,
+                photometricSource: 'ansi_cosine',
+                enabled: true,
+              });
+              idx++;
+            }
+          }
+          return list;
+        })();
+
+    const simResult = simulatePhotometricLux(surface3D, projectors3D, 30, 20, blendOverlap);
+    const simAvgLux = Math.max(1, Math.round(simResult.avgLux));
+    const simMinLux = Math.round(simResult.minLux);
+    const simMaxLux = Math.round(simResult.maxLux);
+    const simU0Pct = Math.round(simResult.uniformityU0 * 100);
+    const simU1Pct = Math.round(simResult.uniformityU1 * 100);
+
+    return {
+      simResult,
+      simAvgLux,
+      simMinLux,
+      simMaxLux,
+      simU0Pct,
+      simU1Pct,
+      theoreticalAvgLux,
+      theoreticalEffAvgLux,
+      lmPerPj,
+      effRatio,
+      totalNominalLumens,
+      effectiveTotalLumens,
+    };
+  }, [
+    surface.id,
+    surface.name,
+    surface.type,
+    surface.geometry,
+    surface.effectiveWidthM,
+    surface.effectiveHeightM,
+    surface.widthM,
+    surface.heightM,
+    surface.cols,
+    surface.rows,
+    surface.throwDistM,
+    surface.throwRatio,
+    surface.radiusM,
+    surface.angleDeg,
+    surface.overlapMode,
+    surface.overlapX,
+    surface.overlapY,
+    selectedSurfaceId,
+    storeProjectors,
+    defaultProjectorLumens,
+    savedEntry?.nominalLumensPerProj,
+    savedEntry?.opticalEfficiencyPct,
+    screenGain,
+    reflectance,
+    ambientLux,
+    blendOverlap,
+  ]);
+
+  const avgLux = savedEntry?.isManualLux && savedEntry.avgLux > 0 ? Math.round(savedEntry.avgLux) : simData.simAvgLux;
+  const scaleRatio = simData.simAvgLux > 0 ? avgLux / simData.simAvgLux : 1;
+  const minLux = savedEntry?.isManualLux && savedEntry.minLux > 0 ? Math.round(savedEntry.minLux) : Math.round(simData.simMinLux * scaleRatio);
+  const maxLux = savedEntry?.isManualLux && savedEntry.maxLux > 0 ? Math.round(savedEntry.maxLux) : Math.round(simData.simMaxLux * scaleRatio);
+  const uniformityU0 = avgLux > 0 ? Math.round((minLux / avgLux) * 100) : simData.simU0Pct;
+  const uniformityU1 = maxLux > 0 ? Math.round((minLux / maxLux) * 100) : simData.simU1Pct;
+
+  const updateAvgLux = (nextLux: number) => {
+    const cleanLux = Math.max(10, Math.round(nextLux));
+    const ratio = simData.simAvgLux > 0 ? cleanLux / simData.simAvgLux : 1;
+    const nextMin = Math.round(simData.simMinLux * ratio);
+    const nextMax = Math.round(simData.simMaxLux * ratio);
+    const nextNits = +((cleanLux * screenGain * reflectance) / Math.PI).toFixed(1);
+    const nextFL = +(nextNits / 3.426259).toFixed(1);
+    const nextAcr = ambientLux > 0 ? +((cleanLux + ambientLux) / ambientLux).toFixed(1) : 999;
+
+    saveSurfacePhotometric({
+      surfaceId: surface.id,
+      surfaceName: surface.name,
+      surfaceType: surface.type,
+      widthM: surface.effectiveWidthM,
+      heightM: surface.effectiveHeightM,
+      projectorCount: Math.max(1, surface.cols * surface.rows),
+      avgLux: cleanLux,
+      minLux: nextMin,
+      maxLux: nextMax,
+      uniformityU0: cleanLux > 0 ? +(nextMin / cleanLux).toFixed(3) : 0.8,
+      uniformityU1: nextMax > 0 ? +(nextMin / nextMax).toFixed(3) : 0.75,
+      luminanceNits: nextNits,
+      luminanceFL: nextFL,
+      screenGain,
+      ambientLux,
+      ambientContrastRatio: nextAcr,
+      isManualLux: cleanLux !== simData.simAvgLux,
+      nominalLumensPerProj: simData.lmPerPj,
+      totalNominalLumens: simData.totalNominalLumens,
+      effectiveTotalLumens: simData.effectiveTotalLumens,
+      opticalEfficiencyPct: Math.round(simData.effRatio * 100),
+      calibrationFactorPct: 100,
+      netEfficiencyPct: Math.round(simData.effRatio * 100),
+      theoreticalAvgLux: simData.theoreticalAvgLux,
+      surfaceReflectance: reflectance,
+      distributionRows: savedEntry?.distributionRows ?? [],
+    });
+  };
+
+  const updateAmbientLux = (nextAmb: number) => {
+    const cleanAmb = Math.max(0, Math.round(nextAmb));
+    setStoreAmbientLux(cleanAmb);
+    if (savedEntry) {
+      saveSurfacePhotometric({
+        ...savedEntry,
+        ambientLux: cleanAmb,
+        ambientContrastRatio: cleanAmb > 0 ? +((avgLux + cleanAmb) / cleanAmb).toFixed(1) : 999,
+      });
+    }
+  };
+
+  return {
+    avgLux,
+    minLux,
+    maxLux,
+    uniformityU0,
+    uniformityU1,
+    screenGain,
+    reflectance,
+    ambientLux,
+    simAvgLux: simData.simAvgLux,
+    theoreticalAvgLux: simData.theoreticalAvgLux,
+    theoreticalEffAvgLux: simData.theoreticalEffAvgLux,
+    ansi9Points: simData.simResult.ansi9Points,
+    scaleRatio,
+    updateAvgLux,
+    updateAmbientLux,
+  };
+}
+
+/**
  * 7 Adımlı İzleme ve Görüntü Kalitesi Analizi + Toplam Kalite Özeti Tablosu
  */
 function ViewingQualityChainSummary({
@@ -645,8 +902,17 @@ function ViewingQualityChainSummary({
 }: {
   surface: CalculatedSurface;
 }) {
-  const [assumedAvgLux, setAssumedAvgLux] = useState<number>(350);
-  const [assumedAmbientLux, setAssumedAmbientLux] = useState<number>(50);
+  const {
+    avgLux,
+    ambientLux,
+    screenGain,
+    reflectance,
+    uniformityU0,
+    uniformityU1,
+    theoreticalEffAvgLux,
+    updateAvgLux,
+    updateAmbientLux,
+  } = useUnifiedSurfacePhotometrics(surface);
   const [offAxisDeg, setOffAxisDeg] = useState<number>(0);
 
   const vq = useMemo(() => computeViewingQualityAnalysis({
@@ -656,17 +922,17 @@ function ViewingQualityChainSummary({
     resH: surface.netH,
     viewingDistanceM: surface.viewDistM,
     offAxisAngleDeg: offAxisDeg,
-    screenGain: 1.0,
-    reflectance: 0.85,
-    avgLux: assumedAvgLux,
-    ambientLux: assumedAmbientLux,
+    screenGain,
+    reflectance,
+    avgLux,
+    ambientLux,
     nativeContrast: 2000,
-    uniformityU0: 78,
-    uniformityU1: 85,
+    uniformityU0,
+    uniformityU1,
     projectorCount: Math.max(1, surface.cols * surface.rows),
     overlapPct: surface.overlapMode === 'percent' ? surface.overlapX : 15,
     colorCalibrated: true,
-  }), [surface, assumedAvgLux, assumedAmbientLux, offAxisDeg]);
+  }), [surface, avgLux, ambientLux, screenGain, reflectance, uniformityU0, uniformityU1, offAxisDeg]);
 
   return (
     <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
@@ -675,14 +941,17 @@ function ViewingQualityChainSummary({
           👁️ 7 Adımlı İzleme &amp; Görüntü Kalitesi Analizi — {surface.name}
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[10px]">
-          <label className="flex items-center gap-1 text-slate-400">
-            Lux:
+          <span className="text-amber-300/90 font-mono" title="Teorik Efektif Aydınlık (Φ_eff / Alan)">
+            Teorik Φ/A: <b>{theoreticalEffAvgLux} lx</b>
+          </span>
+          <label className="flex items-center gap-1 text-slate-400" title="3B Simüle LuxField Ortalaması (Sade & Detaylı Görünüm Senkron)">
+            Simüle Lux:
             <input
               type="number"
               min={50}
-              step={50}
-              value={assumedAvgLux}
-              onChange={e => setAssumedAvgLux(Math.max(50, parseFloat(e.target.value) || 350))}
+              step={25}
+              value={avgLux}
+              onChange={e => updateAvgLux(Math.max(50, parseFloat(e.target.value) || 350))}
               className="w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-emerald-300 font-mono"
             />
           </label>
@@ -690,10 +959,10 @@ function ViewingQualityChainSummary({
             Ortam:
             <input
               type="number"
-              min={5}
+              min={0}
               step={10}
-              value={assumedAmbientLux}
-              onChange={e => setAssumedAmbientLux(Math.max(1, parseFloat(e.target.value) || 50))}
+              value={ambientLux}
+              onChange={e => updateAmbientLux(Math.max(0, parseFloat(e.target.value) || 0))}
               className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-amber-300 font-mono"
             />
           </label>
@@ -779,9 +1048,21 @@ function SurfaceEngineeringFeasibilityPanel({
   physicalRoom: PhysicalRoomConfig;
   onApplyRecommendation?: (patch: Partial<SurfaceItem>) => void;
 }) {
+  const {
+    avgLux: assumedAvgLux,
+    minLux,
+    maxLux,
+    uniformityU0,
+    screenGain,
+    reflectance,
+    ambientLux,
+    theoreticalEffAvgLux,
+    ansi9Points,
+    scaleRatio,
+    updateAvgLux: setAssumedAvgLux,
+    updateAmbientLux: setAmbientLux,
+  } = useUnifiedSurfacePhotometrics(surface);
   const [targetLux, setTargetLux] = useState<number>(350);
-  const [ambientLux, setAmbientLux] = useState<number>(50);
-  const [assumedAvgLux, setAssumedAvgLux] = useState<number>(380);
 
   const overlapX = surface.overlapMode === 'percent' ? surface.overlapX : Math.round((surface.ovPxX / Math.max(1, surface.projW)) * 100);
   const overlapY = surface.overlapMode === 'percent' ? surface.overlapY : Math.round((surface.ovPxY / Math.max(1, surface.projH)) * 100);
@@ -812,22 +1093,66 @@ function SurfaceEngineeringFeasibilityPanel({
     [surface, overlapX, overlapY, isCurvedSurf]
   );
 
-  const pointLux = useMemo(
-    () =>
-      computeSurfacePointLuxDistribution({
-        widthM: surface.effectiveWidthM,
-        heightM: surface.effectiveHeightM,
-        cols: surface.cols,
-        rows: surface.rows,
-        avgLux: assumedAvgLux,
-        uniformityU0: surface.cols > 1 && overlapX >= 12 && overlapX <= 28 ? 82 : 72,
-        overlapPct: overlapX,
-        screenGain: 1.0,
-        reflectance: 0.85,
-        ambientLux,
-      }),
-    [surface, overlapX, assumedAvgLux, ambientLux]
-  );
+  const pointLux = useMemo(() => {
+    const base = computeSurfacePointLuxDistribution({
+      widthM: surface.effectiveWidthM,
+      heightM: surface.effectiveHeightM,
+      cols: surface.cols,
+      rows: surface.rows,
+      avgLux: assumedAvgLux,
+      uniformityU0,
+      overlapPct: overlapX,
+      screenGain,
+      reflectance,
+      ambientLux,
+    });
+    const zoneLabels = [
+      'Sol-Üst Köşe', 'Üst-Orta Kenar', 'Sağ-Üst Köşe',
+      'Sol-Orta Kenar', 'Tam Merkez (Optik Eksen)', 'Sağ-Orta Kenar',
+      'Sol-Alt Köşe', 'Alt-Orta Kenar', 'Sağ-Alt Köşe',
+    ];
+    if (ansi9Points.length === 9) {
+      const syncedZones9 = ansi9Points.map((pt, idx) => {
+        const zKind: 'corner' | 'edge' | 'center' =
+          idx === 4 ? 'center' : (idx === 0 || idx === 2 || idx === 6 || idx === 8) ? 'corner' : 'edge';
+        const ptLux = Math.round(pt.lux * scaleRatio);
+        const ptNits = round((ptLux * screenGain * reflectance) / Math.PI, 1);
+        const ptFl = round(ptNits / 3.426259, 1);
+        const pctOfAvg = assumedAvgLux > 0 ? Math.round((ptLux / assumedAvgLux) * 100) : 100;
+        const pctOfPeak = maxLux > 0 ? Math.round((ptLux / maxLux) * 100) : 100;
+        return {
+          id: `p${idx + 1}`,
+          label: `P${idx + 1} · ${zoneLabels[idx] || `Nokta ${idx + 1}`}`,
+          zoneKind: zKind,
+          normX: +(pt.xM / Math.max(0.1, surface.effectiveWidthM)).toFixed(2),
+          normY: +(pt.yM / Math.max(0.1, surface.effectiveHeightM)).toFixed(2),
+          xM: pt.xM,
+          yM: pt.yM,
+          lux: ptLux,
+          nits: ptNits,
+          fl: ptFl,
+          pctOfAvg,
+          pctOfPeak,
+          statusLabel: pctOfAvg >= 90 ? 'İdeal Homojen' : pctOfAvg >= 75 ? 'Normal Kenar Düşüşü' : 'Köşe Vinyet Bölgesi',
+        };
+      });
+      const cornerPts = syncedZones9.filter(z => z.zoneKind === 'corner');
+      const edgePts = syncedZones9.filter(z => z.zoneKind === 'edge');
+      const centerPt = syncedZones9.find(z => z.zoneKind === 'center') || syncedZones9[4];
+      const cornerAvgLux = cornerPts.length > 0 ? Math.round(cornerPts.reduce((s, p) => s + p.lux, 0) / cornerPts.length) : minLux;
+      const edgeAvgLux = edgePts.length > 0 ? Math.round(edgePts.reduce((s, p) => s + p.lux, 0) / edgePts.length) : assumedAvgLux;
+      const peakCenterLux = centerPt ? centerPt.lux : maxLux;
+      return {
+        ...base,
+        zones9: syncedZones9,
+        peakCenterLux,
+        cornerAvgLux,
+        edgeAvgLux,
+        centerToCornerDropPct: peakCenterLux > 0 ? round(Math.max(0, (1 - cornerAvgLux / peakCenterLux) * 100), 1) : 0,
+      };
+    }
+    return base;
+  }, [surface, overlapX, assumedAvgLux, minLux, maxLux, uniformityU0, screenGain, reflectance, ambientLux, ansi9Points, scaleRatio]);
 
   const feasibility = useMemo(
     () =>
@@ -846,11 +1171,12 @@ function SurfaceEngineeringFeasibilityPanel({
         projH: surface.projH,
         overlapPct: overlapX,
         avgLux: assumedAvgLux,
+        minLux,
         ambientLux,
-        uniformityU0: surface.cols > 1 && overlapX >= 12 ? 80 : 72,
+        uniformityU0,
         isCurved: isCurvedSurf,
       }),
-    [surface, maxRoomThrowM, roomHeightM, overlapX, assumedAvgLux, ambientLux, isCurvedSurf]
+    [surface, maxRoomThrowM, roomHeightM, overlapX, assumedAvgLux, minLux, uniformityU0, ambientLux, isCurvedSurf]
   );
 
   const recommendations = useMemo(
@@ -917,13 +1243,16 @@ function SurfaceEngineeringFeasibilityPanel({
             <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider">
               📍 Noktasal Lux &amp; Nit Dağılım Haritası (9 Bölge)
             </span>
-            <div className="flex items-center gap-1.5 text-[10px]">
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+              <span className="text-amber-300/90 font-mono" title="Teorik Efektif Aydınlık (Φ_eff / Alan)">
+                Teorik Φ/A: <b>{theoreticalEffAvgLux} lx</b>
+              </span>
               <label className="text-slate-400">
-                Ort Lux:
+                Simüle Lux:
                 <input
                   type="number"
                   min={50}
-                  step={50}
+                  step={25}
                   value={assumedAvgLux}
                   onChange={e => setAssumedAvgLux(Math.max(50, parseFloat(e.target.value) || 350))}
                   className="ml-1 w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-amber-300 font-mono"
@@ -933,10 +1262,10 @@ function SurfaceEngineeringFeasibilityPanel({
                 Ortam:
                 <input
                   type="number"
-                  min={5}
+                  min={0}
                   step={10}
                   value={ambientLux}
-                  onChange={e => setAmbientLux(Math.max(0, parseFloat(e.target.value) || 50))}
+                  onChange={e => setAmbientLux(Math.max(0, parseFloat(e.target.value) || 0))}
                   className="ml-1 w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200 font-mono"
                 />
               </label>

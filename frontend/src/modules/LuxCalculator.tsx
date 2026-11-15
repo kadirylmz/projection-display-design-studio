@@ -517,7 +517,13 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
     const isoEquivalentLumens = Math.round(totalNominalLumens * 0.95);
     const netEfficiencyPct = totalNominalLumens > 0 ? +((effectiveTotalLumens / totalNominalLumens) * 100).toFixed(1) : 100;
     const theoreticalAvgLux = Math.round(totalNominalLumens / areaM2);
+    const theoreticalEffAvgLux = Math.round(effectiveTotalLumens / areaM2);
     const singleProjectorLux = activeProjectors.length > 0 ? Math.round(effAvgLux / activeProjectors.length) : 0;
+    const ansi9EqualAvgLux = Math.round(simResult.ansiAvgLux);
+    const ansi9Weights = [1, 2, 1, 2, 4, 2, 1, 2, 1];
+    const ansi9WeightedSum = simResult.ansi9Points.reduce((s, p, idx) => s + p.lux * (ansi9Weights[idx] || 1), 0);
+    const ansi9WeightTotal = simResult.ansi9Points.reduce((s, _, idx) => s + (ansi9Weights[idx] || 1), 0);
+    const ansi9WeightedAvgLux = ansi9WeightTotal > 0 ? Math.round(ansi9WeightedSum / ansi9WeightTotal) : ansi9EqualAvgLux;
     const idealNits = Math.round((effAvgLux * screenGain) / Math.PI);
     const theoreticalNits = Math.round((theoreticalAvgLux * screenGain) / Math.PI);
     const realisticNits = Math.round((effAvgLux * screenGain * surfaceReflectance) / Math.PI);
@@ -530,13 +536,16 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       lostLumens,
       netEfficiencyPct,
       theoreticalAvgLux,
+      theoreticalEffAvgLux,
       singleProjectorLux,
+      ansi9EqualAvgLux,
+      ansi9WeightedAvgLux,
       idealNits,
       theoreticalNits,
       realisticNits,
       ambientNits,
     };
-  }, [surfaceConfig.widthM, surfaceConfig.heightM, activeProjectors, effAvgLux, screenGain, surfaceReflectance, ambientLux]);
+  }, [surfaceConfig.widthM, surfaceConfig.heightM, activeProjectors, effAvgLux, simResult.ansiAvgLux, simResult.ansi9Points, screenGain, surfaceReflectance, ambientLux]);
 
   // İzleme & Görüntü Kalitesi Analizi Girişleri (Senkron & Düzenlenebilir)
   const calculatedPlannerSurfaces = usePlannerStore(state => state.calculatedSurfaces);
@@ -568,11 +577,11 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       offAxisAngleDeg: vqOffAxisDeg,
       screenGain,
       reflectance: surfaceReflectance,
-      avgLux: effAvgLux,
+      avgLux: Math.round(effAvgLux),
       ambientLux,
       nativeContrast: 2000,
-      uniformityU0: effU0,
-      uniformityU1: effU1,
+      uniformityU0: Math.round(effU0 * 100),
+      uniformityU1: Math.round(effU1 * 100),
       projectorCount: pjCount,
       overlapPct: blendOverlap ? (matchedPlannerSurf?.overlapX ?? 18) : 0,
       colorCalibrated: pjCount > 1 ? blendOverlap : true,
@@ -611,18 +620,64 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       ? +(activeProjectors.reduce((s, p) => s + p.pos[1], 0) / activeProjectors.length).toFixed(2)
       : Math.max(2.2, surfaceConfig.heightM - 0.15);
 
-    const pointLuxDist = computeSurfacePointLuxDistribution({
+    const basePointLuxDist = computeSurfacePointLuxDistribution({
       widthM: surfaceConfig.widthM,
       heightM: surfaceConfig.heightM,
       cols: colsCount,
       rows: rowsCount,
-      avgLux: effAvgLux,
-      uniformityU0: effU0,
+      avgLux: Math.round(effAvgLux),
+      uniformityU0: Math.round(effU0 * 100),
       overlapPct: overlapX,
       screenGain,
       reflectance: surfaceReflectance,
       ambientLux,
     });
+
+    const zoneLabels = [
+      'Sol-Üst Köşe', 'Üst-Orta Kenar', 'Sağ-Üst Köşe',
+      'Sol-Orta Kenar', 'Tam Merkez (Optik Eksen)', 'Sağ-Orta Kenar',
+      'Sol-Alt Köşe', 'Alt-Orta Kenar', 'Sağ-Alt Köşe',
+    ];
+    const syncedZones9 = simResult.ansi9Points.length === 9
+      ? simResult.ansi9Points.map((pt, idx) => {
+          const zKind: 'corner' | 'edge' | 'center' =
+            idx === 4 ? 'center' : (idx === 0 || idx === 2 || idx === 6 || idx === 8) ? 'corner' : 'edge';
+          const ptLux = Math.round(pt.lux);
+          const ptNits = round((ptLux * screenGain * surfaceReflectance) / Math.PI, 1);
+          const ptFl = round(ptNits / 3.426259, 1);
+          const pctOfAvg = effAvgLux > 0 ? Math.round((ptLux / effAvgLux) * 100) : 100;
+          const pctOfPeak = effMaxLux > 0 ? Math.round((ptLux / effMaxLux) * 100) : 100;
+          return {
+            id: `p${idx + 1}`,
+            label: `P${idx + 1} · ${zoneLabels[idx] || `Nokta ${idx + 1}`}`,
+            zoneKind: zKind,
+            normX: +(pt.xM / Math.max(0.1, surfaceConfig.widthM)).toFixed(2),
+            normY: +(pt.yM / Math.max(0.1, surfaceConfig.heightM)).toFixed(2),
+            xM: pt.xM,
+            yM: pt.yM,
+            lux: ptLux,
+            nits: ptNits,
+            fl: ptFl,
+            pctOfAvg,
+            pctOfPeak,
+            statusLabel: pctOfAvg >= 90 ? 'İdeal Homojen' : pctOfAvg >= 75 ? 'Normal Kenar Düşüşü' : 'Köşe Vinyet Bölgesi',
+          };
+        })
+      : basePointLuxDist.zones9;
+    const cornerPts = syncedZones9.filter(z => z.zoneKind === 'corner');
+    const edgePts = syncedZones9.filter(z => z.zoneKind === 'edge');
+    const centerPt = syncedZones9.find(z => z.zoneKind === 'center') || syncedZones9[4];
+    const cornerAvgLux = cornerPts.length > 0 ? Math.round(cornerPts.reduce((s, p) => s + p.lux, 0) / cornerPts.length) : Math.round(effMinLux);
+    const edgeAvgLux = edgePts.length > 0 ? Math.round(edgePts.reduce((s, p) => s + p.lux, 0) / edgePts.length) : Math.round(effAvgLux);
+    const peakCenterLux = centerPt ? centerPt.lux : Math.round(effMaxLux);
+    const pointLuxDist = {
+      ...basePointLuxDist,
+      zones9: syncedZones9,
+      peakCenterLux,
+      cornerAvgLux,
+      edgeAvgLux,
+      centerToCornerDropPct: peakCenterLux > 0 ? round(Math.max(0, (1 - cornerAvgLux / peakCenterLux) * 100), 1) : 0,
+    };
 
     const effectivePixelArea = computeEffectiveMultiProjectorPixelArea({
       widthM: surfaceConfig.widthM,
@@ -648,10 +703,10 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
       projW: vqPerProjW,
       projH: vqPerProjH,
       overlapPct: overlapX,
-      avgLux: effAvgLux,
-      minLux: effMinLux,
+      avgLux: Math.round(effAvgLux),
+      minLux: Math.round(effMinLux),
       ambientLux,
-      uniformityU0: effU0,
+      uniformityU0: Math.round(effU0 * 100),
       isCurved: geometry !== 'flat' && geometry !== 'floor' && geometry !== 'ceiling',
     });
 
@@ -2084,8 +2139,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
               <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-slate-400 font-medium">Ortalama Aydınlık (Lux)</span>
-                    <span className="text-[10px] text-slate-500 font-mono">E_avg</span>
+                    <span className="text-[11px] text-slate-400 font-medium">Ortalama Aydınlık (Simüle LuxField)</span>
+                    <span className="text-[10px] text-slate-500 font-mono">E_sim (288-Nokta)</span>
                   </div>
                   <div className="text-2xl font-bold font-mono text-sky-400 mt-1 flex items-baseline gap-1.5">
                     <span>{Math.round(effAvgLux)}</span>
@@ -2093,6 +2148,12 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                   </div>
                   <div className="text-[11px] text-slate-400 mt-1">
                     Min: <b className="text-sky-300">{Math.round(effMinLux)}</b> / Max: <b className="text-amber-300">{Math.round(effMaxLux)}</b> lx
+                  </div>
+                  <div className="text-[10px] font-mono text-amber-300/90 mt-1">
+                    Teorik Efektif (Φ_eff/A): <b>{chainSummary.theoreticalEffAvgLux} lx</b> · Nominal: <b>{chainSummary.theoreticalAvgLux} lx</b>
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                    9-Nokta Eşit: <b>{chainSummary.ansi9EqualAvgLux} lx</b> · Ağırlıklı: <b>{chainSummary.ansi9WeightedAvgLux} lx</b>
                   </div>
                 </div>
                 <div className={`mt-2 p-1.5 rounded text-[10.5px] border font-medium ${isManualLux ? 'bg-amber-950/60 border-amber-500/40 text-amber-300' : luxEval.color}`}>
@@ -2188,9 +2249,9 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                       <td className="py-1.5 text-right font-mono font-bold text-emerald-400">{chainSummary.areaM2} m²</td>
                     </tr>
                     <tr>
-                      <td className="py-1.5 pr-3 font-semibold text-slate-200">3. Teorik Ortalama Lux</td>
-                      <td className="py-1.5 font-mono text-slate-300">{chainSummary.totalNominalLumens.toLocaleString('tr-TR')} lm ÷ {chainSummary.areaM2} m² (Kayıpsız)</td>
-                      <td className="py-1.5 text-right font-mono font-bold text-slate-200">{chainSummary.theoreticalAvgLux} Lux</td>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">3. Teorik Ortalama Lux (Φ/A)</td>
+                      <td className="py-1.5 font-mono text-slate-300">Nominal: <b>{chainSummary.theoreticalAvgLux} lx</b> · Efektif: <b>{chainSummary.theoreticalEffAvgLux} lx</b></td>
+                      <td className="py-1.5 text-right font-mono font-bold text-slate-200">{chainSummary.effectiveTotalLumens.toLocaleString('tr-TR')} lm ÷ {chainSummary.areaM2} m²</td>
                     </tr>
                     <tr>
                       <td className="py-1.5 pr-3 font-semibold text-slate-200">4. Lens &amp; Optik Kayıplar</td>
@@ -2198,8 +2259,8 @@ export default function LuxCalculator({ unit }: { unit: LengthUnit }) {
                       <td className="py-1.5 text-right font-mono text-amber-400">-{chainSummary.lostLumens.toLocaleString('tr-TR')} lm kayıp</td>
                     </tr>
                     <tr>
-                      <td className="py-1.5 pr-3 font-semibold text-slate-200">5. Çoklu Projektör Katkısı</td>
-                      <td className="py-1.5 font-mono text-sky-300">Tek Cihaz Ort: {chainSummary.singleProjectorLux} lx → {activeProjectors.length} PJ Toplam</td>
+                      <td className="py-1.5 pr-3 font-semibold text-slate-200">5. 3B Simüle LuxField Ortalaması</td>
+                      <td className="py-1.5 font-mono text-sky-300">288-Nokta: <b>{Math.round(effAvgLux)} lx</b> · 9-Nokta Eşit/Ağ.: <b>{chainSummary.ansi9EqualAvgLux}/{chainSummary.ansi9WeightedAvgLux} lx</b></td>
                       <td className="py-1.5 text-right font-mono font-bold text-sky-400">{Math.round(effAvgLux)} Lux</td>
                     </tr>
                     <tr>

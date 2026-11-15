@@ -3,10 +3,20 @@ import { computeSurfacePointLuxDistribution } from './feasibility';
 import { evaluatePhysicalCoverage } from './physicalCoverage';
 import { analyze, evaluateProtectionCoordination } from './electrical';
 import { computeLuxSimulationGrid, sampleNinePointsFromLuxGrid } from './centralDesignModel';
+import {
+  analyzeFootprintOverlaps,
+  buildGridFootprints,
+  computeContentCanvas,
+  computeContrastAnalysis,
+  identifyMmPerPxSource,
+  validateLuxOrder,
+} from './projectionGeometry';
 
-export type ValidationStatus = 'pass' | 'warning' | 'error' | 'unknown';
-export type ValidationLevel = 'Bilgi' | 'Uyarı' | 'Hata' | 'Veri Eksik';
-export type ValidationVerdict = 'PASS' | 'WARNING' | 'FAIL' | 'UNKNOWN';
+export type ValidationStatus = 'pass' | 'warning' | 'error' | 'unknown' | 'not_applicable';
+export type ValidationLevel = 'Bilgi' | 'Uyarı' | 'Hata' | 'Veri Eksik' | 'Kapsam Dışı';
+export type ValidationVerdict = 'PASS' | 'WARNING' | 'FAIL' | 'UNKNOWN' | 'NOT_APPLICABLE';
+export type PdfApprovalStatus = 'APPROVED' | 'CONDITIONAL' | 'DRAFT' | 'BLOCKED';
+export type PdfGateStatus = 'READY' | 'CONDITIONAL' | 'BLOCKED';
 
 export interface ReportValidationCheck {
   id: string;
@@ -24,6 +34,7 @@ export interface ReportValidationCheck {
   differenceText: string;
   message: string;
   category?: 'mathematical' | 'engineering';
+  isMandatory?: boolean;
 }
 
 export interface ReportValidationResult {
@@ -31,6 +42,9 @@ export interface ReportValidationResult {
   hasCriticalErrors: boolean;
   draftRequired: boolean;
   canExportFinalPdf: boolean;
+  pdfApprovalStatus: PdfApprovalStatus;
+  pdfGateStatus: PdfGateStatus;
+  approvalBlockReasons: string[];
   consistencyScorePct: number;
   mathScorePct: number;
   engineeringScorePct: number;
@@ -39,12 +53,14 @@ export interface ReportValidationResult {
   warningCount: number;
   errorCount: number;
   unknownCount: number;
+  notApplicableCount: number;
   checks: ReportValidationCheck[];
   warnings: string[];
 }
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 function esc(s: string): string {
   return String(s ?? '')
@@ -58,6 +74,7 @@ function levelFromStatus(status: ValidationStatus): ValidationLevel {
   if (status === 'error') return 'Hata';
   if (status === 'warning') return 'Uyarı';
   if (status === 'unknown') return 'Veri Eksik';
+  if (status === 'not_applicable') return 'Kapsam Dışı';
   return 'Bilgi';
 }
 
@@ -65,6 +82,7 @@ function verdictFromStatus(status: ValidationStatus): ValidationVerdict {
   if (status === 'error') return 'FAIL';
   if (status === 'warning') return 'WARNING';
   if (status === 'unknown') return 'UNKNOWN';
+  if (status === 'not_applicable') return 'NOT_APPLICABLE';
   return 'PASS';
 }
 
@@ -82,7 +100,7 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
   ) => {
     const level: ValidationLevel = c.isInfoOnly ? 'Bilgi' : levelFromStatus(c.status);
     const verdict: ValidationVerdict = c.verdict ?? verdictFromStatus(c.status);
-    if (c.status !== 'pass') {
+    if (c.status !== 'pass' && c.status !== 'not_applicable') {
       warnings.push(`[${level} - ${c.modulePair}] ${c.message}`);
     }
     checks.push({
@@ -117,26 +135,62 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
   // 1. Fotometri: Efektif Lümen ÷ Alan ↔ Ortalama Lux & Nits
   if (p.photometricSurfaces && p.photometricSurfaces.length > 0) {
     p.photometricSurfaces.forEach((ps, idx) => {
+      // Zorunlu sıralama kuralı: E_min ≤ E_ort ≤ E_max (aynı LuxField içinde)
+      if (ps.avgLux > 0 && ps.maxLux > 0) {
+        const orderIssues = validateLuxOrder(
+          Number.isFinite(ps.minLux) ? ps.minLux : null,
+          ps.avgLux,
+          ps.maxLux
+        );
+        addCheck({
+          id: `lux-order-${idx}`,
+          modulePair: 'Fotometri ↔ Min/Ort/Max Sıralaması',
+          title: `${ps.surfaceName}: E_min ≤ E_ort ≤ E_max`,
+          status: orderIssues.length > 0 ? 'error' : 'pass',
+          category: 'mathematical',
+          isMandatory: true,
+          testInput: `min=${ps.minLux} · ort=${r1(ps.avgLux)} · max=${ps.maxLux} lx`,
+          formula: 'E_min ≤ E_ort ≤ E_max',
+          expectedValue: 'Sıralama korunmalı',
+          actualValue: `${ps.minLux} ≤ ${r1(ps.avgLux)} ≤ ${ps.maxLux}`,
+          tolerancePct: 0,
+          deviationPct: orderIssues.length > 0 ? 100 : 0,
+          differenceText: orderIssues.length > 0 ? 'Matematiksel Çelişki' : 'Tutarlı',
+          message:
+            orderIssues.length > 0
+              ? `${orderIssues.join('; ')}. Ortalama değer teorik (Φ/A), min/max ise LuxField'den geliyor olabilir — kaynaklar karıştırılmış (FAIL).`
+              : 'Min/Ortalama/Max sıralaması aynı veri setinde tutarlı.',
+        });
+      }
       const area = Math.max(0.01, ps.widthM * ps.heightM);
       const effFlux = ps.effectiveTotalLumens ?? ps.avgLux * area;
       const expectedLux = effFlux / area;
-      const devPct = r1((Math.abs(expectedLux - ps.avgLux) / Math.max(1, expectedLux)) * 100);
+      const reportedTheoLux = ps.effectiveTheoreticalLux ?? ps.theoreticalAvgLux ?? ps.avgLux;
+      const devPct = r1((Math.abs(expectedLux - reportedTheoLux) / Math.max(1, expectedLux)) * 100);
       const tol = 8;
       const status: ValidationStatus = devPct > 20 ? 'error' : devPct > tol ? 'warning' : 'pass';
+      const hasSeparateSimAvg =
+        ps.luxSource === 'SIMULATED_LUXFIELD' &&
+        (ps.effectiveTheoreticalLux !== undefined || ps.theoreticalAvgLux !== undefined) &&
+        Math.abs(reportedTheoLux - ps.avgLux) > 1;
       const msg =
         status === 'pass'
-          ? `Akı/Alan oranı (${r1(expectedLux)} lx) ile ortalama ekran aydınlığı (${r1(ps.avgLux)} lx) tutarlı.`
-          : `Efektif akı/alan (${r1(expectedLux)} lx) ile raporlanan ortalama Lux (${r1(ps.avgLux)} lx) arasında %${devPct} sapma var.`;
+          ? hasSeparateSimAvg
+            ? `Teorik Efektif Akı/Alan (${r1(expectedLux)} lx) doğrulandı; Simüle LuxField ortalaması (9-Nokta Eşit: ${r1(ps.avgLux)} lx${ps.gridAvgLux ? `, 288-Nokta Grid: ${ps.gridAvgLux} lx` : ''}) teorik değerden ayrı tutuldu.`
+            : `Akı/Alan oranı (${r1(expectedLux)} lx) ile ortalama ekran aydınlığı (${r1(ps.avgLux)} lx) tutarlı.`
+          : `Efektif akı/alan (${r1(expectedLux)} lx) ile raporlanan teorik/ortalama Lux (${r1(reportedTheoLux)} lx) arasında %${devPct} sapma var.`;
       addCheck({
         id: `photo-flux-${idx}`,
         modulePair: 'Fotometri ↔ Alan',
-        title: `${ps.surfaceName}: Lümen / m² ↔ Lux`,
+        title: `${ps.surfaceName}: Lümen / m² ↔ Teorik & Simüle Lux Ayrımı`,
         status,
-        expectedValue: `${r1(expectedLux)} Lux`,
-        actualValue: `${r1(ps.avgLux)} Lux`,
+        expectedValue: `Teorik Φ_eff/A: ${r1(expectedLux)} Lux`,
+        actualValue: hasSeparateSimAvg
+          ? `Teorik: ${r1(reportedTheoLux)} lx · Simüle 9-Nokta: ${r1(ps.avgLux)} lx${ps.gridAvgLux ? ` · 288-Grid: ${ps.gridAvgLux} lx` : ''}`
+          : `${r1(reportedTheoLux)} Lux`,
         tolerancePct: tol,
         deviationPct: devPct,
-        differenceText: `${r1(ps.avgLux - expectedLux) >= 0 ? '+' : ''}${r1(ps.avgLux - expectedLux)} lx (%${devPct})`,
+        differenceText: `${r1(reportedTheoLux - expectedLux) >= 0 ? '+' : ''}${r1(reportedTheoLux - expectedLux)} lx (%${devPct})`,
         message: msg,
       });
 
@@ -185,7 +239,7 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         });
       }
 
-      if (ps.distributionRows && ps.distributionRows.length > 0 && ps.distributionRows.length !== ps.projectorCount) {
+      if (ps.distributionRows !== undefined && ps.distributionRows.length !== ps.projectorCount) {
         addCheck({
           id: `dist-rows-count-${idx}`,
           modulePair: 'Fotometri ↔ Dağılım Cetveli',
@@ -290,6 +344,35 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         });
       }
 
+      // 11B. Gerçek ACR: cihaz doğal siyah seviyesi (native kontrast) kontrolü
+      if (ps.nativeContrast !== undefined || ps.nativeBlackNits !== undefined || !ps.ambientLux || ps.ambientLux <= 0) {
+        const refl = ps.surfaceReflectance && ps.surfaceReflectance > 0 ? ps.surfaceReflectance : 0.85;
+        const contrast = computeContrastAnalysis({
+          white: { source: ps.luxSource ?? 'SIMULATED_LUXFIELD', luxUsed: ps.avgLux, nits: ps.luminanceNits > 0 ? ps.luminanceNits : null, formula: 'L = E × Gain × ρ / π' },
+          ambientLux: typeof ps.ambientLux === 'number' ? ps.ambientLux : null,
+          gain: ps.screenGain || 1,
+          reflectance: refl,
+          nativeContrast: ps.nativeContrast ?? null,
+          nativeBlackNits: ps.nativeBlackNits ?? null,
+        });
+        addCheck({
+          id: `photo-acr-native-black-${idx}`,
+          modulePair: 'ACR ↔ Cihaz Doğal Siyah Seviyesi',
+          title: `${ps.surfaceName}: Gerçek ACR (Doğal Siyah Dahil)`,
+          status: contrast.acrVerified ? 'pass' : 'unknown',
+          category: 'engineering',
+          isMandatory: false,
+          testInput: `L_beyaz=${contrast.whiteNits ?? '—'} nit [${contrast.whiteSource}], L_ortam=${contrast.ambientBlackNits ?? '—'} nit, L_doğal=${contrast.nativeBlackNits ?? 'UNKNOWN'} nit`,
+          formula: 'ACR = (L_beyaz + L_ortam + L_doğal) / (L_ortam + L_doğal)',
+          expectedValue: 'Native kontrast / siyah seviyesi tanımlı',
+          actualValue: contrast.acrVerified ? `${contrast.acr}:1` : `Tahmini ortam kontrastı ${contrast.estimatedAmbientContrast ?? '—'}:1`,
+          tolerancePct: 0,
+          deviationPct: 0,
+          differenceText: contrast.acrVerified ? 'Doğrulandı' : 'UNKNOWN',
+          message: contrast.message,
+        });
+      }
+
       // 12. Noktasal Lux – Ortalama Lux – Uniformity
       if (typeof ps.uniformityU0 === 'number' && ps.uniformityU0 > 0 && ps.avgLux > 0) {
         const u0Pct = ps.uniformityU0 <= 1 ? r1(ps.uniformityU0 * 100) : r1(ps.uniformityU0);
@@ -358,8 +441,8 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         const syncedU0Pct9 = typeof ps.uniformityU0 === 'number' && ps.uniformityU0 > 0
           ? (ps.uniformityU0 <= 1 ? r1(ps.uniformityU0 * 100) : r1(ps.uniformityU0))
           : 82;
-        const simTr = ps.distributionRows?.[0]?.throwRatio || matchedPlFor9?.throwRatio || 0;
-        const simDist = ps.distributionRows?.[0]?.throwDistM || matchedPlFor9?.throwDistM || 0;
+        const simTr = ps.distributionRows?.[0]?.throwRatio || matchedPlFor9?.throwRatio || p.projection?.throwRatio || 0;
+        const simDist = ps.distributionRows?.[0]?.throwDistM || matchedPlFor9?.throwDistM || p.projection?.distanceM || 0;
         const refl = ps.surfaceReflectance && ps.surfaceReflectance > 0 ? ps.surfaceReflectance : 0.85;
         const netEffPct = ps.effectiveTotalLumens && ps.totalNominalLumens && ps.totalNominalLumens > 0
           ? r1((ps.effectiveTotalLumens / ps.totalNominalLumens) * 100)
@@ -367,7 +450,11 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         const unitLumen = ps.nominalLumensPerProj || (ps.totalNominalLumens ? Math.round(ps.totalNominalLumens / Math.max(1, ps.projectorCount)) : 0);
         const grid288 = simTr > 0 && simDist > 0 && unitLumen > 0
           ? computeLuxSimulationGrid({
-              room: { widthM: 14, lengthM: 10, heightM: Math.max(3.5, ps.heightM + 0.6) },
+              room: {
+                widthM: p.interProjectorAnalysis?.roomDimensions?.widthM || 14,
+                lengthM: p.interProjectorAnalysis?.roomDimensions?.lengthM || 10,
+                heightM: p.interProjectorAnalysis?.roomDimensions?.heightM || 3.5,
+              },
               surface: { id: ps.surfaceId, name: ps.surfaceName, widthM: ps.widthM, heightM: ps.heightM, viewingDistanceM: 3.5 },
               projector: {
                 model: 'Doğrulama',
@@ -458,11 +545,12 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
             const hasCoverageGap = grid288.minLux === 0;
             const gridColsCnt = Math.max(1, matchedPlFor9?.cols || ps.projectorCount || 1);
             const ovFrac = gridColsCnt > 1 ? Math.max(0, Math.min(0.995, effOv9 / 100)) : 0;
-            // Normal edge-blending (≤%85) bölgesinde karartma rampası toplam akıyı azaltır; teorik ps.avgLux ile fiziksel grid arasındaki beklenen oran:
+            // Normal edge-blending (≤%85) bölgesinde karartma rampası toplam akıyı azaltır; teorik Φ_eff/A ile fiziksel grid arasındaki beklenen oran:
             const blendRetention = gridColsCnt > 1 && ovFrac <= 0.85
               ? (gridColsCnt - (gridColsCnt - 1) * ovFrac) / gridColsCnt
               : 1;
-            const expectedPhysGridAvg = Math.round(ps.avgLux * blendRetention * 0.92);
+            const baseTheoLux = ps.effectiveTheoreticalLux ?? ps.theoreticalAvgLux ?? Math.round((ps.effectiveTotalLumens ?? ps.avgLux * ps.widthM * ps.heightM) / Math.max(0.1, ps.widthM * ps.heightM));
+            const expectedPhysGridAvg = Math.round(baseTheoLux * blendRetention * 0.92);
             const refGridAvg = hasVerticalOverspill && grid288.activeAvgLux > 0 ? grid288.activeAvgLux : grid288.avgLux;
             const gridDev = r1((Math.abs(refGridAvg - expectedPhysGridAvg) / Math.max(1, expectedPhysGridAvg)) * 100);
             addCheck({
@@ -470,20 +558,35 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
               modulePair: '288-Nokta Lux Grid ↔ Fotometri & U0/U1',
               title: `${ps.surfaceName}: 288-Nokta Fiziksel Grid ↔ Alan Ortalaması`,
               status: hasVerticalOverspill && gridDev > 15 ? 'warning' : gridDev > 20 ? 'warning' : 'pass',
-              testInput: `Grid 24×12 · TR=${simTr}, D=${simDist}m, Teorik=${Math.round(ps.avgLux)} lx (Blend Tutma %${Math.round(blendRetention * 100)})`,
+              testInput: `Grid 24×12 · TR=${simTr}, D=${simDist}m, Teorik Φ_eff/A=${Math.round(baseTheoLux)} lx (Blend Tutma %${Math.round(blendRetention * 100)})`,
               formula: 'E_grid ≈ E_teorik × k_blend × k_falloff',
-              expectedValue: `~${expectedPhysGridAvg} lx (Teorik: ${Math.round(ps.avgLux)} lx)`,
-              actualValue: `${grid288.avgLux} lx (Aktif: ${grid288.activeAvgLux} lx · U0 %${grid288.u0Pct} · U1 %${gridU1})`,
+              expectedValue: `~${expectedPhysGridAvg} lx (Teorik Φ_eff/A: ${Math.round(baseTheoLux)} lx)`,
+              actualValue: `${grid288.avgLux} lx (9-Nokta Eşit: ${eqMean} lx · Aktif: ${grid288.activeAvgLux} lx · U0 %${grid288.u0Pct} · U1 %${gridU1})`,
               tolerancePct: 20,
               deviationPct: gridDev,
               differenceText: `${Math.round(refGridAvg - expectedPhysGridAvg)} lx (%${gridDev})`,
               message: hasVerticalOverspill
-                ? `288-nokta fiziksel grid (${grid288.avgLux} lx; aktif içi ${grid288.activeAvgLux} lx, aktif U0 %${grid288.activeU0Pct}), dikey taşma (${beamH.toFixed(2)}m > ${ps.heightM}m) nedeniyle beklenen fiziksel ortalamadan (%${gridDev}) ayrışıyor.`
+                ? `288-nokta fiziksel grid (${grid288.avgLux} lx; 9-nokta eşit ${eqMean} lx; aktif içi ${grid288.activeAvgLux} lx, aktif U0 %${grid288.activeU0Pct}), dikey taşma (${beamH.toFixed(2)}m > ${ps.heightM}m) nedeniyle teorik üst sınırdan (${Math.round(baseTheoLux)} lx) ve taşmasız fiziksel beklentiden (~${expectedPhysGridAvg} lx, %${gridDev}) ayrışıyor.`
                 : hasCoverageGap
                   ? `288-nokta grid ortalaması (${grid288.avgLux} lx) blend/falloff beklentisiyle (~${expectedPhysGridAvg} lx) uyumlu; kaplama dışı şeritler (0 lx) nedeniyle aktif içi ortalama ${grid288.activeAvgLux} lx (aktif U0 %${grid288.activeU0Pct}).`
                   : `288-nokta grid ortalaması (${grid288.avgLux} lx, U0 %${grid288.u0Pct}, U1 %${gridU1}) blend ve falloff modeliyle (~${expectedPhysGridAvg} lx) tutarlı.`,
             });
           }
+        } else if (p.sections.lux !== false) {
+          addCheck({
+            id: `photo-luxfield-missing-${idx}`,
+            modulePair: 'Fotometri ↔ LuxField Simülasyonu',
+            title: `${ps.surfaceName}: LuxField Fiziksel Işık Dağılımı`,
+            status: 'unknown',
+            category: 'engineering',
+            isMandatory: true,
+            expectedValue: 'TR, Atım Mesafesi & Birim Lümen tanımlı',
+            actualValue: 'Yalnızca teorik Φ/A hesabı',
+            tolerancePct: 0,
+            deviationPct: 100,
+            differenceText: 'LuxField Yok',
+            message: `${ps.surfaceName} için teorik alan ortalaması (${Math.round(ps.avgLux)} lx) hesaplanmış olsa da TR, atım mesafesi veya birim lümen eksik olduğundan LuxField simülasyonu doğrulanamadı (UNKNOWN).`,
+          });
         }
       }
     });
@@ -491,7 +594,7 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
 
   // 2. Optik Projeksiyon ↔ Throw Ratio ↔ Zoom/Katalog Sınırları ↔ FOV
   if (p.projection && p.projection.imageWidthM > 0 && p.projection.distanceM > 0) {
-    const { imageWidthM, distanceM, throwRatio, throwMin, throwMax } = p.projection;
+    const { imageWidthM, distanceM, throwRatio, throwMin, throwMax, lensName } = p.projection;
     const calcTR = r2(distanceM / imageWidthM);
     const hfov = r1(2 * Math.atan(imageWidthM / (2 * distanceM)) * (180 / Math.PI));
     if (typeof throwRatio === 'number' && throwRatio > 0) {
@@ -516,23 +619,32 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
       });
     }
     if (typeof throwMin === 'number' && typeof throwMax === 'number' && throwMax > 0) {
+      const nameRangeMatch = (lensName || '').match(/(\d+[.,]\d+)\s*[-–]\s*(\d+[.,]\d+)\s*:?\s*1/);
+      const parsedNameMin = nameRangeMatch ? parseFloat(nameRangeMatch[1].replace(',', '.')) : null;
+      const parsedNameMax = nameRangeMatch ? parseFloat(nameRangeMatch[2].replace(',', '.')) : null;
+      const hasNameRangeConflict =
+        parsedNameMin !== null &&
+        parsedNameMax !== null &&
+        (Math.abs(parsedNameMin - throwMin) > 0.05 || Math.abs(parsedNameMax - throwMax) > 0.05);
       const inRange = calcTR >= throwMin - 0.02 && calcTR <= throwMax + 0.02;
-      const status: ValidationStatus = inRange ? 'pass' : 'error';
-      const msg = inRange
-        ? `Hesaplanan TR (${calcTR}:1) seçili lens zoom aralığında (${throwMin}–${throwMax}:1).`
-        : `Hesaplanan TR (${calcTR}:1) seçili lensin fiziksel zoom sınırları (${throwMin}–${throwMax}:1) dışında!`;
+      const status: ValidationStatus = !inRange || hasNameRangeConflict ? 'error' : 'pass';
+      const msg = hasNameRangeConflict
+        ? `Lens adı içindeki zoom aralığı (${parsedNameMin}–${parsedNameMax}:1) ile tanımlı throwMin–throwMax (${throwMin}–${throwMax}:1) çelişiyor (FAIL)!`
+        : inRange
+          ? `Hesaplanan TR (${calcTR}:1) seçili lens zoom aralığında (${throwMin}–${throwMax}:1).`
+          : `Hesaplanan TR (${calcTR}:1) seçili lensin fiziksel zoom sınırları (${throwMin}–${throwMax}:1) dışında!`;
       addCheck({
         id: 'proj-lens-range',
         modulePair: 'Optik Lens ↔ Katalog Zoom Sınırı',
         title: 'Lens Fiziksel Zoom / Throw Ratio Sınır Kontrolü',
         status,
-        testInput: `D=${distanceM}m, W=${imageWidthM}m, Lens=${throwMin}–${throwMax}:1`,
+        testInput: `D=${distanceM}m, W=${imageWidthM}m, Lens=${lensName || '—'} (${throwMin}–${throwMax}:1)`,
         formula: 'throwMin ≤ D/W ≤ throwMax',
         expectedValue: `${throwMin}–${throwMax}:1`,
-        actualValue: `${calcTR}:1`,
+        actualValue: hasNameRangeConflict ? `${calcTR}:1 (Etiket: ${parsedNameMin}–${parsedNameMax}:1)` : `${calcTR}:1`,
         tolerancePct: 0,
-        deviationPct: inRange ? 0 : 100,
-        differenceText: inRange ? 'Aralıkta' : 'Sınır Dışı',
+        deviationPct: status === 'pass' ? 0 : 100,
+        differenceText: hasNameRangeConflict ? 'Etiket Çelişkisi' : inRange ? 'Aralıkta' : 'Sınır Dışı',
         message: msg,
       });
     } else {
@@ -632,26 +744,137 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
       }
 
       if (ps.netW > 0 && ps.effectiveWidthM > 0 && ps.avgMmPerPx > 0) {
-        const expectedPxPerM = ps.netW / ps.effectiveWidthM;
-        const expectedMm = r2(1000 / Math.max(0.01, expectedPxPerM));
-        const mmDev = r1((Math.abs(expectedMm - ps.avgMmPerPx) / Math.max(0.01, expectedMm)) * 100);
+        const expectedPxPerMH = ps.netW / ps.effectiveWidthM;
+        const expectedMmH = Math.round((1000 / Math.max(0.01, expectedPxPerMH)) * 1000) / 1000;
+        const expectedPxPerMV = ps.netH > 0 && ps.effectiveHeightM > 0 ? ps.netH / ps.effectiveHeightM : expectedPxPerMH;
+        const expectedMmV = Math.round((1000 / Math.max(0.01, expectedPxPerMV)) * 1000) / 1000;
+        const hvDiffPct = r1((Math.abs(expectedMmH - expectedMmV) / Math.max(0.01, expectedMmH)) * 100);
+        const devVsH = r1((Math.abs(expectedMmH - ps.avgMmPerPx) / Math.max(0.01, expectedMmH)) * 100);
+        const devVsV = r1((Math.abs(expectedMmV - ps.avgMmPerPx) / Math.max(0.01, expectedMmV)) * 100);
+        const meanMm = (expectedMmH + expectedMmV) / 2;
+        const devVsMean = r1((Math.abs(meanMm - ps.avgMmPerPx) / Math.max(0.01, meanMm)) * 100);
+        // Raporlanan mm/px'in kaynağı: Yatay / Dikey / H-V ortalaması / Kaynaksız
+        const mmSource = identifyMmPerPxSource(ps.avgMmPerPx, expectedMmH, expectedMmV, 2);
+        const isSwappedAxis = mmSource === 'vertical' && hvDiffPct > 3;
+        const minDev = Math.min(devVsH, devVsV, devVsMean);
         const tol = 10;
-        const status: ValidationStatus = mmDev > tol ? 'warning' : 'pass';
-        const msg =
-          status === 'pass'
-            ? `1000 ÷ (${r1(expectedPxPerM)} px/m) = ${expectedMm} mm/px ile raporlanan (${ps.avgMmPerPx} mm/px) uyumlu.`
-            : `Hesaplanan piksel boyutu (${expectedMm} mm/px) ile raporlanan değer (${ps.avgMmPerPx} mm/px) arasında %${mmDev} fark var.`;
+        const status: ValidationStatus =
+          isSwappedAxis ? 'error'
+          : mmSource === 'unmatched' ? (minDev > tol ? 'error' : 'warning')
+          : mmSource === 'mean' && hvDiffPct > 5 ? 'warning'
+          : 'pass';
+        const srcLabel = mmSource === 'horizontal' ? 'Yatay (H)' : mmSource === 'vertical' ? 'Dikey (V)' : mmSource === 'mean' ? 'H/V Ortalaması' : 'Kaynaksız';
+        const msg = isSwappedAxis
+          ? `Yatay ve dikey mm/px eksenleri karıştırılmış! Yatay: ${expectedMmH} mm/px, Dikey: ${expectedMmV} mm/px iken raporlanan (${ps.avgMmPerPx} mm/px) dikey değeri yatay yerine kullanıyor.`
+          : mmSource === 'unmatched'
+            ? `Raporlanan ${ps.avgMmPerPx} mm/px değeri içerik kanvasından (${ps.netW}×${ps.netH} px / ${ps.effectiveWidthM}×${ps.effectiveHeightM} m) türetilemiyor: H=${expectedMmH}, V=${expectedMmV}, Ort=${r3(meanMm)} mm/px. Kaynağı belirsiz değer rapora basılamaz.`
+            : mmSource === 'mean' && hvDiffPct > 5
+              ? `Raporlanan ${ps.avgMmPerPx} mm/px, H (${expectedMmH}) ve V (${expectedMmV}) ortalamasıdır; %${hvDiffPct} anizotropide tek değer temsil edici değildir — H ve V ayrı gösterilmeli.`
+              : `Kaynak: ${srcLabel}. Yatay: 1000 ÷ ${r1(expectedPxPerMH)} px/m = ${expectedMmH} mm/px · Dikey: 1000 ÷ ${r1(expectedPxPerMV)} px/m = ${expectedMmV} mm/px.`;
         addCheck({
           id: `pm-mm-${idx}`,
           modulePair: 'Pixel Map ↔ Fiziksel Yüzey',
-          title: `${ps.name}: px/m ↔ mm/px Tutarlılığı`,
+          title: `${ps.name}: px/m ↔ mm/px Tutarlılığı (H/V Ayrı)`,
           status,
-          expectedValue: `${expectedMm} mm/px`,
-          actualValue: `${ps.avgMmPerPx} mm/px`,
+          isMandatory: true,
+          testInput: `${ps.netW}×${ps.netH} px / ${ps.effectiveWidthM}×${ps.effectiveHeightM} m · Kaynak: ${srcLabel}`,
+          formula: 'mm/px_H = 1000 / (W_px / W_m), mm/px_V = 1000 / (H_px / H_m)',
+          expectedValue: `H: ${expectedMmH} · V: ${expectedMmV} mm/px`,
+          actualValue: `${ps.avgMmPerPx} mm/px (${srcLabel})`,
           tolerancePct: tol,
-          deviationPct: mmDev,
-          differenceText: `${r2(ps.avgMmPerPx - expectedMm) >= 0 ? '+' : ''}${r2(ps.avgMmPerPx - expectedMm)} mm/px`,
+          deviationPct: minDev,
+          differenceText: `${r2(ps.avgMmPerPx - expectedMmH) >= 0 ? '+' : ''}${r2(ps.avgMmPerPx - expectedMmH)} mm/px`,
           message: msg,
+        });
+      }
+
+      // Tek kanvas geometrisi: içerik kanvası (netW×netH) birleşik rasterdan türetilmeli
+      if (ps.cols >= 1 && ps.projW > 0 && ps.netW > 0 && ps.netH > 0 && ps.throwDistM > 0 && ps.throwRatio > 0 && ps.effectiveWidthM > 0 && ps.effectiveHeightM > 0) {
+        const pjH = ps.projH || 1200;
+        const imgW = ps.throwDistM / ps.throwRatio;
+        const imgH = imgW * (pjH / ps.projW);
+        const ovPxRaw = ps.cols > 1 ? (ps.ovPxX > 0 ? ps.ovPxX : ps.projW * ((ps.overlapX || 0) / 100)) : 0;
+        const rasterW = ps.projNetW || Math.round(ps.cols * ps.projW - (ps.cols - 1) * ovPxRaw);
+        const rasterH = ps.projNetH || Math.round((ps.rows || 1) * pjH - Math.max(0, (ps.rows || 1) - 1) * (ps.ovPxY || 0));
+        const cc = computeContentCanvas({
+          rasterW,
+          rasterH,
+          opticalPxPerMeterH: ps.projW / imgW,
+          opticalPxPerMeterV: pjH / imgH,
+          surfaceWidthM: ps.effectiveWidthM,
+          surfaceHeightM: ps.effectiveHeightM,
+        });
+        const dW = Math.abs(cc.contentCanvas.w - ps.netW) / Math.max(1, cc.contentCanvas.w);
+        const dH = Math.abs(cc.contentCanvas.h - ps.netH) / Math.max(1, cc.contentCanvas.h);
+        const mismatch = dW > 0.01 || dH > 0.01;
+        addCheck({
+          id: `content-canvas-sync-${idx}`,
+          modulePair: 'Net Raster ↔ İçerik Kanvası',
+          title: `${ps.name}: İçerik Kanvası Tek Kaynak Doğrulaması`,
+          status: mismatch ? 'error' : 'pass',
+          category: 'mathematical',
+          isMandatory: true,
+          testInput: `Raster ${rasterW}×${rasterH} px, Yüzey ${ps.effectiveWidthM}×${ps.effectiveHeightM} m, Optik ${r1(ps.projW / imgW)} px/m`,
+          formula: 'İçerik = min(Raster, Yüzey × px/m_optik) | Raster yüzey oranına kırpılır',
+          expectedValue: `${cc.contentCanvas.w}×${cc.contentCanvas.h} px (${cc.contentCanvas.mp} MP · ${cc.mode})`,
+          actualValue: `${ps.netW}×${ps.netH} px`,
+          tolerancePct: 1,
+          deviationPct: r1(Math.max(dW, dH) * 100),
+          differenceText: mismatch ? `${ps.netW - cc.contentCanvas.w}×${ps.netH - cc.contentCanvas.h} px` : 'Aynı Kanvas',
+          message: mismatch
+            ? `Raporlanan içerik kanvası (${ps.netW}×${ps.netH}) ile birleşik rasterdan (${rasterW}×${rasterH}) türetilen kanvas (${cc.contentCanvas.w}×${cc.contentCanvas.h}) uyuşmuyor — projeksiyon rasteri ile içerik kanvası karıştırılmış olabilir (FAIL).`
+            : `İçerik kanvası ${cc.contentCanvas.w}×${cc.contentCanvas.h} px: H ${cc.pxPerMeterH} px/m (${cc.mmPerPxH} mm/px) · V ${cc.pxPerMeterV} px/m (${cc.mmPerPxV} mm/px) · ${cc.pxPerSqMeter} px/m² · ${cc.contentCanvas.mp} MP.`,
+        });
+      }
+
+      // Çoklu projektör kesişimi (komşu olmayan PJ1∩PJ3 / üçlü overlap) modeli
+      if (ps.cols >= 2 && ps.projW > 0 && ps.throwDistM > 0 && ps.throwRatio > 0 && ps.effectiveWidthM > 0 && ps.effectiveHeightM > 0) {
+        const pjH = ps.projH || 1200;
+        const imgW = ps.throwDistM / ps.throwRatio;
+        const imgH = imgW * (pjH / ps.projW);
+        const ovFrac = ps.ovPxX > 0 ? ps.ovPxX / ps.projW : (ps.overlapX || 0) / 100;
+        const geo = analyzeFootprintOverlaps(
+          buildGridFootprints({
+            cols: ps.cols,
+            rows: ps.rows || 1,
+            imageWidthM: imgW,
+            imageHeightM: imgH,
+            overlapFracX: ovFrac,
+            overlapFracY: (ps.overlapY || 0) / 100,
+            surfaceHeightM: ps.effectiveHeightM,
+          }),
+          ps.effectiveWidthM,
+          ps.effectiveHeightM,
+          ps.cols
+        );
+        const pxm = ps.projW / imgW;
+        const unionW = geo.footprints.length > 0
+          ? Math.max(...geo.footprints.map(f => f.x1)) - Math.min(...geo.footprints.map(f => f.x0))
+          : 0;
+        const geoNetW = Math.round(unionW * pxm);
+        const repNetW = ps.projNetW || Math.round(ps.cols * ps.projW - (ps.cols - 1) * (ps.ovPxX > 0 ? ps.ovPxX : ps.projW * ovFrac));
+        const netDev = r1((Math.abs(geoNetW - repNetW) / Math.max(1, geoNetW)) * 100);
+        const nonAdj = geo.pairwiseIntersections.filter(pi => !pi.adjacent);
+        const triples = geo.higherOrderIntersections.filter(h => h.multiplicity >= 3);
+        const status: ValidationStatus = !geo.geometryConsistent || netDev > 1 ? 'error' : 'pass';
+        addCheck({
+          id: `multi-overlap-geometry-${idx}`,
+          modulePair: 'Overlap ↔ Poligon Kesişimi (Çoklu)',
+          title: `${ps.name}: Çoklu Projektör Kesişim Modeli`,
+          status,
+          category: 'mathematical',
+          isMandatory: true,
+          testInput: `${ps.cols}×${ps.rows || 1} PJ, W=${r2(imgW)} m, overlap %${r1(ovFrac * 100)}`,
+          formula: '∪A = ΣA_i − ΣA_i∩A_j + ΣA_i∩A_j∩A_k − … (inclusion–exclusion) = geometrik birleşim',
+          expectedValue: `Birleşim ${geo.unionAreaM2} m² (Duvar İçi: ${geo.surfaceCoveredAreaM2} m²) · Net ${geoNetW} px`,
+          actualValue: `IE ${geo.unionAreaInclusionExclusionM2 ?? '—'} m² · Net ${repNetW} px · max ${geo.maxMultiplicity}× kat`,
+          tolerancePct: 1,
+          deviationPct: netDev,
+          differenceText: triples.length > 0 ? `${triples.length} üçlü bölge` : 'İkili',
+          message:
+            status === 'error'
+              ? `Net raster (${repNetW} px) geometrik birleşimden (${geoNetW} px) %${netDev} sapıyor veya inclusion–exclusion doğrulaması tutmuyor (FAIL).`
+              : `${geo.pairwiseIntersections.length} çift kesişim${nonAdj.length > 0 ? ` (komşu olmayan: ${nonAdj.map(n => `${n.projectorIds.join('∩')} ${n.widthM} m`).join(', ')})` : ''}${triples.length > 0 ? `, ${triples.length} üçlü bölge (${triples.map(t => `${t.projectorIds.join('∩')} tam düzlem ${t.widthM}×${t.heightM} m = ${t.areaM2} m², duvar içi ${t.clippedWidthM ?? t.widthM}×${t.clippedHeightM ?? t.heightM} m = ${t.clippedAreaM2 ?? t.areaM2} m²`).join('; ')})` : ''}; projeksiyon düzleminde tekrar aydınlatılan alan ${geo.redundantOverlapAreaM2} m², fiziksel duvar sınırları içinde tekrar aydınlatılan alan ${geo.surfaceRedundantOverlapAreaM2} m², yüzey kaplama %${geo.surfaceCoveragePct}.`,
         });
       }
 
@@ -802,20 +1025,45 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
           message: physCov.summaryMessage,
         });
       } else {
+        const vertOverM = r2(Math.max(0, physCov.singleImageHeightM - ps.effectiveHeightM));
+        const roomH = p.interProjectorAnalysis?.roomDimensions?.heightM || 0;
+        const roomOverM = roomH > 0 ? r2(Math.max(0, physCov.singleImageHeightM - roomH)) : 0;
         addCheck({
           id: `vertical-surface-coverage-${idx}`,
           modulePair: 'Optik En-Boy ↔ Fiziksel Yüzey Kaplama',
           title: `${ps.name}: Fiziksel Yüzey Kaplama Doğrulaması`,
           status: 'pass',
-          testInput: `W_tek=${physCov.singleImageWidthM}m, Yüzey=${ps.effectiveWidthM}×${ps.effectiveHeightM}m`,
+          testInput: `W_tek=${physCov.singleImageWidthM}m, H_tek=${physCov.singleImageHeightM}m, Yüzey=${ps.effectiveWidthM}×${ps.effectiveHeightM}m${roomH > 0 ? `, Tavan=${roomH}m` : ''}`,
           formula: 'H_görüntü ≥ H_yüzey ∧ W_kaplanan ≥ W_yüzey',
           expectedValue: `≥ ${ps.effectiveWidthM}×${ps.effectiveHeightM} m`,
-          actualValue: `${physCov.coveredWidthM}×${physCov.coveredHeightM} m (%100 Kaplama)`,
+          actualValue: `${physCov.coveredWidthM}×${physCov.coveredHeightM} m (%100 Kaplama${vertOverM > 0.05 ? ` · Dikey +${vertOverM}m Taşma` : ''})`,
           tolerancePct: 0,
           deviationPct: 0,
-          differenceText: 'Tam Kaplama',
-          message: physCov.summaryMessage,
+          differenceText: vertOverM > 0.05 ? `Tam Kaplama (+${vertOverM}m Taşma)` : 'Tam Kaplama',
+          message: vertOverM > 0.05
+            ? `${physCov.summaryMessage} (Not: Tekil görüntü yüksekliği ${physCov.singleImageHeightM}m, duvar yüksekliğini +${vertOverM}m${roomOverM > 0 ? ` ve oda tavan yüksekliğini (${roomH}m) +${roomOverM}m` : ''} aşmaktadır; dikey maskeleme/kırpma gerekir.)`
+            : physCov.summaryMessage,
         });
+        if (vertOverM / Math.max(0.1, ps.effectiveHeightM) > 0.25) {
+          addCheck({
+            id: `vertical-overspill-ceiling-${idx}`,
+            modulePair: 'Optik Görüntü Yüksekliği ↔ Duvar & Tavan Yüksekliği',
+            title: `${ps.name}: Dikey Taşma & Oda Tavan Sınırı Kontrolü`,
+            status: 'warning',
+            category: 'engineering',
+            isMandatory: false,
+            testInput: `H_görüntü=${physCov.singleImageHeightM}m, H_duvar=${ps.effectiveHeightM}m${roomH > 0 ? `, H_oda=${roomH}m` : ''}`,
+            formula: 'H_görüntü ≤ H_duvar ∧ H_görüntü ≤ H_oda',
+            expectedValue: `≤ ${ps.effectiveHeightM} m (Duvar)${roomH > 0 ? ` / ≤ ${roomH} m (Oda)` : ''}`,
+            actualValue: `${physCov.singleImageHeightM} m (+${vertOverM} m duvar taşması${roomOverM > 0 ? `, +${roomOverM} m tavan/zemin aşımı` : ''})`,
+            tolerancePct: 25,
+            deviationPct: r1((vertOverM / Math.max(0.1, ps.effectiveHeightM)) * 100),
+            differenceText: roomOverM > 0 ? `+${vertOverM}m Duvar / +${roomOverM}m Oda` : `+${vertOverM}m Dikey Taşma`,
+            message: roomOverM > 0
+              ? `Tekil görüntü yüksekliği (${physCov.singleImageHeightM} m), hem hedef duvar yüksekliğini (${ps.effectiveHeightM} m, +${vertOverM} m) hem de oda tavan yüksekliğini (${roomH} m, +${roomOverM} m) aşıyor! Tavan/zemin yansıması, dikey piksel kırpılması ve ışık kaybı oluşur.`
+              : `Tekil görüntü yüksekliği (${physCov.singleImageHeightM} m), hedef duvar yüksekliğini (${ps.effectiveHeightM} m) +${vertOverM} m aşıyor; dikey optik maskeleme/kırpma gerekir.`,
+          });
+        }
       }
 
       if (ps.viewDistM > 0 && ps.effectiveWidthM > 0 && ps.netW > 0) {
@@ -1071,13 +1319,47 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
 
   if (p.sections.electrical && p.electrical) {
     const { supply, loads } = p.electrical;
-    const totalLoadW = loads.reduce((a, l) => a + Math.max(1, l.qty || 1) * (l.powerW || 0), 0);
-    if (!supply.voltage || supply.voltage <= 0 || totalLoadW <= 0) {
+    const missingPowerLoads = loads.filter(l => l.powerW === null || l.powerW === undefined || !Number.isFinite(l.powerW));
+    const zeroPowerLoads = loads.filter(l => l.powerW === 0);
+    const totalLoadW = loads.reduce((a, l) => a + Math.max(1, l.qty || 1) * (l.powerW && Number.isFinite(l.powerW) ? l.powerW : 0), 0);
+    if (missingPowerLoads.length > 0 && totalLoadW <= 0) {
+      addCheck({
+        id: 'electrical-missing',
+        modulePair: 'Elektrik Altyapısı',
+        title: 'Elektrik Yük Gücü Verisi Kontrolü',
+        status: 'unknown',
+        category: 'engineering',
+        isMandatory: true,
+        expectedValue: 'Tüm yükler için güç (W) tanımlı',
+        actualValue: `${missingPowerLoads.map(l => l.name).join(', ')} (UNKNOWN)`,
+        tolerancePct: 0,
+        deviationPct: 100,
+        differenceText: 'Veri Eksik',
+        message: `Cihaz gücü girilmemiş (${missingPowerLoads.map(l => l.name).join(', ')}); toplam güç, akım (Ib), kesici önerisi ve gerilim düşümü UNKNOWN olarak tutuldu.`,
+      });
+    } else if (zeroPowerLoads.length > 0 && totalLoadW <= 0 && supply.voltage > 0) {
+      addCheck({
+        id: 'elec-zero-power-warning',
+        modulePair: 'Elektrik Altyapısı',
+        title: 'Sıfır Güç (0 W) Olağandışı Değer Kontrolü',
+        status: 'warning',
+        category: 'engineering',
+        isMandatory: true,
+        expectedValue: 'Normal projektör gücü > 0 W',
+        actualValue: `0 W (${zeroPowerLoads.map(l => l.name).join(', ')})`,
+        tolerancePct: 0,
+        deviationPct: 100,
+        differenceText: '0 W Girilmiş',
+        message: `Olağandışı Değer: ${zeroPowerLoads.map(l => l.name).join(', ')} için 0 W girilmiş; gerçek cihaz gücü doğrulanmalıdır.`,
+      });
+    } else if (!supply.voltage || supply.voltage <= 0 || totalLoadW <= 0) {
       addCheck({
         id: 'electrical-missing',
         modulePair: 'Elektrik Altyapısı',
         title: 'Elektrik Besleme & Yük Verisi Kontrolü',
         status: 'unknown',
+        category: 'engineering',
+        isMandatory: true,
         expectedValue: 'Gerilim > 0 V, Yük > 0 W',
         actualValue: `${supply.voltage || 0} V · ${totalLoadW} W`,
         tolerancePct: 0,
@@ -1086,7 +1368,13 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         message: 'Elektrik modülünde cihaz gücü veya besleme gerilimi eksik; Ib hesabı yapılamadı (UNKNOWN).',
       });
     } else {
-      const pf = supply.defaultPf > 0 ? supply.defaultPf : 1;
+      const basePf = supply.defaultPf > 0 ? supply.defaultPf : 1;
+      const totalVa = loads.reduce((a, l) => {
+        const lp = (l.qty || 0) * (l.powerW || 0);
+        const lPf = Math.min(1, Math.max(0.1, l.pf ?? basePf));
+        return a + lp / lPf;
+      }, 0);
+      const pf = totalLoadW > 0 && totalVa > 0 ? +(totalLoadW / totalVa).toFixed(4) : basePf;
       const effLineV = supply.phases === 3 && supply.voltage <= 260 ? supply.voltage * Math.sqrt(3) : supply.voltage;
       const expIb = r2(
         supply.phases === 3
@@ -1098,16 +1386,16 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         modulePair: 'Cihaz Gücü ↔ Faz Akımı',
         title: 'Yük Gücü ↔ Hat Akımı (Ib) Doğrulaması',
         status: 'pass',
-        testInput: `${totalLoadW} W, ${supply.voltage} V (${supply.phases}-Faz), PF=${pf}`,
+        testInput: `${totalLoadW} W, ${supply.voltage} V (${supply.phases}-Faz), PF=${r2(pf)}`,
         formula: supply.phases === 3 ? 'Ib = P / (√3 × V_LL × PF)' : 'Ib = P / (V × PF)',
         expectedValue: `${expIb} A`,
         actualValue: `${expIb} A`,
         tolerancePct: 2,
         deviationPct: 0,
         differenceText: '0 A',
-        message: `${totalLoadW} W yük için ${supply.phases}-faz hat akımı ${expIb} A olarak doğrulandı.`,
+        message: `${totalLoadW} W yük (efektif cosφ=${r2(pf)}) için ${supply.phases}-faz hat akımı ${expIb} A olarak doğrulandı.`,
       });
-      // Güç faktörü (PF) tutarlılığı (Özet Ib vs Linye Ib) & Linye adında eski PJ adedi kontrolü
+      // Güç faktörü (PF) tutarlılığı (Özet efektif PF vs Linye yükü PF)
       const pfMismatches = loads.filter(l => l.pf !== undefined && Math.abs(l.pf - pf) > 0.02);
       if (pfMismatches.length > 0) {
         const lPf = pfMismatches[0].pf!;
@@ -1117,15 +1405,15 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
           id: 'elec-summary-vs-circuits',
           modulePair: 'Elektrik Özet ↔ Linye Tablosu',
           title: 'Güç Faktörü (PF) & Hat Akımı Tutarlılığı',
-          status: 'error',
-          testInput: `Özet cosφ=${pf}, Yük cosφ=${lPf}`,
+          status: ibDev > 2 ? 'warning' : 'pass',
+          testInput: `Özet cosφ=${r2(pf)}, Yük cosφ=${lPf}`,
           formula: 'PF_özet == PF_linye',
-          expectedValue: `${expIb} A (cosφ=${pf})`,
+          expectedValue: `${expIb} A (cosφ=${r2(pf)})`,
           actualValue: `${circuitIb} A (cosφ=${lPf})`,
           tolerancePct: 2,
           deviationPct: ibDev,
           differenceText: `${r2(circuitIb - expIb)} A (%${ibDev})`,
-          message: `Elektrik özetinde cosφ=${pf} (${expIb} A) kullanılırken linye yükünde cosφ=${lPf} (${circuitIb} A) kullanılmış!`,
+          message: `Yükler arasında farklı güç faktörleri mevcut; ağırlıklı ortalama cosφ=${r2(pf)} (${expIb} A) ile linye yükü cosφ=${lPf} (${circuitIb} A) farkı %${ibDev}.`,
         });
       }
       if (p.interProjectorAnalysis && p.interProjectorAnalysis.totalProjectors > 0) {
@@ -1175,12 +1463,14 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
             modulePair: 'Elektrik ↔ Koruma Koordinasyonu',
             title: 'Kısa Devre (Icu/Icn) & Selektivite Doğrulaması',
             status: 'unknown',
+            category: 'engineering',
+            isMandatory: false,
             expectedValue: 'Icu/Icn, açma eğrisi & inrush tanımlı',
             actualValue: 'Yalnızca Ib ve ΔU hesaplandı',
             tolerancePct: 0,
             deviationPct: 0,
             differenceText: 'Kapsam Dışı',
-            message: 'Kısa devre akımı, selektivite ve projektör ilk kalkış (inrush) akımı verisi tanımlı olmadığından tam koruma koordinasyonu onaylanmadı (UNKNOWN).',
+            message: protCoord.summary,
           });
         } else {
           const coordStatus = protCoord.issues.length > 0 ? 'error' : !protCoord.selectivityVerified ? 'unknown' : 'pass';
@@ -1189,6 +1479,8 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
             modulePair: 'Elektrik ↔ Koruma Koordinasyonu',
             title: 'Kısa Devre (Icu/Icn) & Selektivite Doğrulaması',
             status: coordStatus,
+            category: 'engineering',
+            isMandatory: false,
             expectedValue: 'Icu ≥ Ik, Inrush ≤ Manyetik Eşik & Üretici Selektivite Tablosu',
             actualValue: coordStatus === 'pass' ? 'Tüm kriterler sağlandı' : coordStatus === 'unknown' ? 'Selektivite tablosu tanımlı değil' : `${protCoord.issues.length} ihlal`,
             tolerancePct: 0,
@@ -1217,6 +1509,38 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         }
       }
     }
+  } else if (p.sections.electrical === false) {
+    addCheck({
+      id: 'electrical-scope-na',
+      modulePair: 'Rapor Kapsamı ↔ Elektrik',
+      title: 'Elektrik Altyapı Doğrulaması',
+      status: 'not_applicable',
+      category: 'engineering',
+      isMandatory: false,
+      expectedValue: 'Kapsam Dışı',
+      actualValue: 'Seçilmedi',
+      tolerancePct: 0,
+      deviationPct: 0,
+      differenceText: 'N/A',
+      message: 'Rapor kapsamından elektrik bölümü çıkarıldığı için NOT_APPLICABLE.',
+    });
+  }
+
+  if (p.sections.lux === false) {
+    addCheck({
+      id: 'photometry-scope-na',
+      modulePair: 'Rapor Kapsamı ↔ Fotometri',
+      title: 'Fotometrik LuxField Doğrulaması',
+      status: 'not_applicable',
+      category: 'engineering',
+      isMandatory: false,
+      expectedValue: 'Kapsam Dışı',
+      actualValue: 'Seçilmedi',
+      tolerancePct: 0,
+      deviationPct: 0,
+      differenceText: 'N/A',
+      message: 'Rapor kapsamından fotometri (Lux) bölümü çıkarıldığı için NOT_APPLICABLE.',
+    });
   }
 
   const categorizedChecks: ReportValidationCheck[] = checks.map(c => ({
@@ -1231,22 +1555,24 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         ? 'engineering'
         : 'mathematical'),
   }));
-  const passCount = categorizedChecks.filter(c => c.status === 'pass').length;
-  const infoCount = categorizedChecks.filter(c => c.level === 'Bilgi').length;
-  const warningCount = categorizedChecks.filter(c => c.status === 'warning').length;
-  const errorCount = categorizedChecks.filter(c => c.status === 'error').length;
-  const unknownCount = categorizedChecks.filter(c => c.status === 'unknown').length;
+  const activeChecks = categorizedChecks.filter(c => c.status !== 'not_applicable');
+  const passCount = activeChecks.filter(c => c.status === 'pass').length;
+  const infoCount = activeChecks.filter(c => c.level === 'Bilgi').length;
+  const warningCount = activeChecks.filter(c => c.status === 'warning').length;
+  const errorCount = activeChecks.filter(c => c.status === 'error').length;
+  const unknownCount = activeChecks.filter(c => c.status === 'unknown').length;
+  const notApplicableCount = categorizedChecks.filter(c => c.status === 'not_applicable').length;
   const hasCriticalErrors = errorCount > 0;
   const consistencyScorePct =
-    categorizedChecks.length === 0
-      ? 100
-      : Math.max(0, Math.round(((passCount + warningCount * 0.5) / categorizedChecks.length) * 100));
+    activeChecks.length === 0
+      ? 0
+      : Math.max(0, Math.round(((passCount + warningCount * 0.5) / activeChecks.length) * 100));
 
-  const mathChecks = categorizedChecks.filter(c => c.category === 'mathematical');
-  const engChecks = categorizedChecks.filter(c => c.category === 'engineering');
+  const mathChecks = activeChecks.filter(c => c.category === 'mathematical');
+  const engChecks = activeChecks.filter(c => c.category === 'engineering');
   const calcCatScore = (arr: ReportValidationCheck[]) =>
     arr.length === 0
-      ? 100
+      ? 0
       : Math.max(
           0,
           Math.round(
@@ -1257,13 +1583,49 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         );
   const mathScorePct = calcCatScore(mathChecks);
   const engineeringScorePct = calcCatScore(engChecks);
-  const canExportFinalPdf = mathChecks.every(c => c.status !== 'error') && errorCount === 0;
+
+  const mandatoryUnknownChecks = activeChecks.filter(c => c.status === 'unknown' && c.isMandatory !== false);
+  const optionalUnknownChecks = activeChecks.filter(c => c.status === 'unknown' && c.isMandatory === false);
+
+  const approvalBlockReasons: string[] = [];
+  if (hasCriticalErrors) {
+    approvalBlockReasons.push(`${errorCount} adet kritik mühendislik/matematik hatası (FAIL)`);
+  }
+  if (activeChecks.length === 0) {
+    approvalBlockReasons.push('Hiçbir aktif doğrulama kontrolü yürütülemedi (eksik veya boş proje verisi).');
+  }
+  for (const mc of mandatoryUnknownChecks) {
+    approvalBlockReasons.push(`Zorunlu veri eksik (UNKNOWN): ${mc.title}`);
+  }
+
+  let pdfApprovalStatus: PdfApprovalStatus;
+  if (hasCriticalErrors || activeChecks.length === 0) {
+    pdfApprovalStatus = 'BLOCKED';
+  } else if (mandatoryUnknownChecks.length > 0) {
+    pdfApprovalStatus = 'DRAFT';
+  } else if (optionalUnknownChecks.length > 0 || warningCount > 0) {
+    pdfApprovalStatus = 'CONDITIONAL';
+  } else {
+    pdfApprovalStatus = 'APPROVED';
+  }
+
+  const pdfGateStatus: PdfGateStatus =
+    pdfApprovalStatus === 'APPROVED'
+      ? 'READY'
+      : pdfApprovalStatus === 'CONDITIONAL'
+        ? 'CONDITIONAL'
+        : 'BLOCKED';
+  const canExportFinalPdf = pdfApprovalStatus === 'APPROVED' || pdfApprovalStatus === 'CONDITIONAL';
+  const draftRequired = pdfApprovalStatus === 'BLOCKED' || pdfApprovalStatus === 'DRAFT';
 
   return {
-    isConsistent: errorCount === 0 && warningCount === 0 && unknownCount === 0,
+    isConsistent: errorCount === 0 && warningCount === 0 && unknownCount === 0 && activeChecks.length > 0,
     hasCriticalErrors,
-    draftRequired: hasCriticalErrors || unknownCount > 0,
+    draftRequired,
     canExportFinalPdf,
+    pdfApprovalStatus,
+    pdfGateStatus,
+    approvalBlockReasons,
     consistencyScorePct: hasCriticalErrors ? Math.min(89, consistencyScorePct) : consistencyScorePct,
     mathScorePct,
     engineeringScorePct,
@@ -1272,6 +1634,7 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
     warningCount,
     errorCount,
     unknownCount,
+    notApplicableCount,
     checks: categorizedChecks,
     warnings,
   };
@@ -1279,19 +1642,30 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
 
 export function renderValidationEngineA4Html(res: ReportValidationResult): string {
   if (res.checks.length === 0) return '';
+  const activeCount = Math.max(0, res.checks.length - res.notApplicableCount);
   const badgeColor =
-    res.errorCount > 0
+    res.pdfApprovalStatus === 'BLOCKED'
       ? 'background:#fee2e2; color:#991b1b; border-color:#fca5a5;'
-      : res.warningCount > 0 || res.unknownCount > 0
+      : res.pdfApprovalStatus === 'DRAFT' || res.pdfApprovalStatus === 'CONDITIONAL'
       ? 'background:#fef3c7; color:#92400e; border-color:#fcd34d;'
       : 'background:#dcfce7; color:#166534; border-color:#86efac;';
   const badgeLabel =
-    res.errorCount > 0
-      ? `⛔ TASLAK / KRİTİK HATA (${res.errorCount} Hata · ${res.warningCount} Uyarı · ${res.unknownCount} Eksik)`
-      : res.warningCount > 0 || res.unknownCount > 0
-      ? `⚠️ ${res.warningCount} Uyarı · ${res.unknownCount} Veri Eksik (UNKNOWN)`
-      : '✓ Tüm Modüller Matematiksel Olarak Doğrulandı';
-  const catSummaryLine = `Matematiksel Tutarlılık: %${res.mathScorePct} · Mühendislik Uygulanabilirliği: %${res.engineeringScorePct} · Nihai PDF Onayı: ${res.canExportFinalPdf ? 'HAZIR' : 'BLOKLU (Hata Mevcut)'}`;
+    res.pdfApprovalStatus === 'BLOCKED'
+      ? `⛔ BLOKLU / KRİTİK HATA (${res.errorCount} Hata · ${res.warningCount} Uyarı · ${res.unknownCount} Eksik)`
+      : res.pdfApprovalStatus === 'DRAFT'
+      ? `📝 TASLAK / ZORUNLU VERİ EKSİK (${res.unknownCount} Eksik · ${res.warningCount} Uyarı)`
+      : res.pdfApprovalStatus === 'CONDITIONAL'
+      ? `⚠️ KOŞULLU ONAY (${res.warningCount} Uyarı · ${res.unknownCount} Opsiyonel Eksik)`
+      : '✓ Tüm Zorunlu Modüller Matematiksel & Mühendislik Olarak Doğrulandı';
+  const approvalText =
+    res.pdfApprovalStatus === 'APPROVED'
+      ? 'ONAYLANDI (HAZIR)'
+      : res.pdfApprovalStatus === 'CONDITIONAL'
+      ? 'KOŞULLU ONAY'
+      : res.pdfApprovalStatus === 'DRAFT'
+      ? 'TASLAK (Zorunlu Veri Eksik)'
+      : 'BLOKLU (Hata Mevcut)';
+  const catSummaryLine = `Matematiksel Tutarlılık: %${res.mathScorePct} · Mühendislik Uygulanabilirliği: %${res.engineeringScorePct} · Nihai PDF Onayı: ${approvalText}`;
 
   const rows = res.checks
     .map(c => {
@@ -1300,6 +1674,8 @@ export function renderValidationEngineA4Html(res: ReportValidationResult): strin
           ? '<span style="color:#dc2626; font-weight:700;">⛔ FAIL</span>'
           : c.level === 'Veri Eksik'
           ? '<span style="color:#7c3aed; font-weight:700;">❓ UNKNOWN</span>'
+          : c.level === 'Kapsam Dışı'
+          ? '<span style="color:#64748b; font-weight:700;">➖ N/A</span>'
           : c.level === 'Uyarı'
           ? '<span style="color:#d97706; font-weight:700;">⚠ WARNING</span>'
           : '<span style="color:#0284c7; font-weight:700;">✓ PASS</span>';
@@ -1320,9 +1696,12 @@ export function renderValidationEngineA4Html(res: ReportValidationResult): strin
     <h2>🛡️ Mühendislik Çapraz Doğrulama Motoru</h2>
     <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border:1px solid; border-radius:6px; margin-bottom:4px; font-size:11px; font-weight:700; ${badgeColor}">
       <span>${badgeLabel}</span>
-      <span style="font-family:monospace;">Tutarlılık Skoru: %${res.consistencyScorePct} (${res.passCount}/${res.checks.length} Pass${res.warningCount > 0 ? ` + ${res.warningCount}×0.5 Uyarı` : ''})</span>
+      <span style="font-family:monospace;">Tutarlılık Skoru: %${res.consistencyScorePct} (${res.passCount}/${activeCount} Pass${res.warningCount > 0 ? ` + ${res.warningCount}×0.5 Uyarı` : ''})</span>
     </div>
     <div style="font-size:9.5px; color:#475569; font-family:monospace; margin-bottom:8px; padding:4px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;">${esc(catSummaryLine)}</div>
+    ${res.approvalBlockReasons.length > 0 ? `<div style="margin-bottom:8px; padding:6px 8px; background:#fef2f2; border:1px solid #fecaca; border-radius:4px; font-size:9px; color:#991b1b;">
+      <b>⛔ PDF Onay Engel Gerekçeleri:</b> ${res.approvalBlockReasons.map(r => esc(r)).join(' · ')}
+    </div>` : ''}
     <table class="compact-table" style="font-size:9.5px; background:#ffffff;">
       <thead>
         <tr>

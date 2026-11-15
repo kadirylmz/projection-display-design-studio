@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeCameraFov,
+  computeFovShadowAnalysis,
   computeFovSurfaceProjection,
   computeProjectorFov,
   computeSurfaceFov,
@@ -175,5 +176,50 @@ describe('fovProjection', () => {
     expect(surfFov.hfovDeg).toBeGreaterThan(20);
     expect(surfFov.vfovDeg).toBeGreaterThan(10);
     expect(surfFov.dfovDeg).toBeGreaterThan(surfFov.hfovDeg);
+  });
+
+  it('computeFovShadowAnalysis kritik gölge giriş mesafesini ve perdedeki gölge boyutunu hesaplar', () => {
+    // 4m × 2.25m perde (zeminde 0..2.25m), cihaz 4.5m mesafede ve yerden 3.0m yükseklikte (posY = 3.0 - 1.125 = 1.875)
+    const sh = computeFovShadowAnalysis({
+      devicePos: [0, 1.875, 4.5],
+      surfaceWidthM: 4,
+      surfaceHeightM: 2.25,
+      screenBottomHeightM: 0,
+      activeCorners2D: [
+        [-2, 1.125],
+        [2, 1.125],
+        [2, -1.125],
+        [-2, -1.125],
+      ],
+      personHeightM: 1.75,
+      personWidthM: 0.5,
+      personDistFromScreenM: 1.5,
+      personXM: 0,
+    });
+    // H_bot(z) = (z / 4.5) * 3.0 = 1.75 => z_crit = 4.5 * (1.75 / 3.0) = 2.625 -> 2.63 m
+    expect(sh.shadowEntryDistFromScreenM).toBeCloseTo(2.63, 2);
+    expect(sh.isCastingShadow).toBe(true);
+    expect(sh.shadowWidthM).toBeCloseTo(0.75, 2); // 0.5 * (4.5 / 3.0) = 0.75m
+    expect(sh.shadowHeightM).toBeGreaterThan(0);
+
+    // İnsan 3.2m mesafede (2.63m sınırının dışında) -> gölge oluşmaz
+    const shSafe = computeFovShadowAnalysis({
+      devicePos: [0, 1.875, 4.5],
+      surfaceWidthM: 4,
+      surfaceHeightM: 2.25,
+      screenBottomHeightM: 0,
+      activeCorners2D: [
+        [-2, 1.125],
+        [2, 1.125],
+        [2, -1.125],
+        [-2, -1.125],
+      ],
+      personHeightM: 1.75,
+      personWidthM: 0.5,
+      personDistFromScreenM: 3.2,
+      personXM: 0,
+    });
+    expect(shSafe.isCastingShadow).toBe(false);
+    expect(shSafe.headClearanceM).toBeGreaterThan(0);
   });
 });

@@ -149,18 +149,21 @@ export default function ElectricalDrawingStudio() {
           pf,
         });
 
+        const prevCir = currentCircuits.find(c => c.id === circuitId);
         newCircuits.push({
           id: circuitId,
           name: `Linye-${i + 1} (${countOnThisCircuit}x Projektör)`,
           loadIds: [loadId],
           phase: phasesCount === 3 ? phaseList[i % 3] : 'L1',
           cableMm2: cfg.cableMm2,
-          lengthM: 25,
+          lengthM: prevCir?.lengthM ?? 25,
           ampacityA: cfg.ampacityA,
-          breakerIcuKa: 6,
-          prospectiveFaultKa: 4.5,
-          tripCurve: 'C',
-          inrushA: Math.max(15, Math.round(((countOnThisCircuit * watt) / Math.max(110, supply.voltage || 230)) * 4)),
+          breakerIcuKa: prevCir?.breakerIcuKa,
+          prospectiveFaultKa: prevCir?.prospectiveFaultKa,
+          tripCurve: prevCir?.tripCurve,
+          inrushA: prevCir?.inrushA,
+          inrushMultiplier: prevCir?.inrushMultiplier,
+          selectivityVerified: prevCir?.selectivityVerified,
         });
       }
 
@@ -686,7 +689,7 @@ export default function ElectricalDrawingStudio() {
                 className="inp !mt-0 text-right"
                 type="number"
                 min="1"
-                value={l.powerW}
+                value={l.powerW ?? ''}
                 onChange={e => updLoad(l.id, { powerW: Math.max(1, +e.target.value) })}
                 title="Birim W"
               />

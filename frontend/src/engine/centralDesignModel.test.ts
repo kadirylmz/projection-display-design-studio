@@ -7,6 +7,16 @@ import {
   CentralDesignInput,
 } from './centralDesignModel';
 import { buildReportHtml, DEFAULT_SECTIONS } from './report';
+import { analyze as analyzeElectrical } from './electrical';
+import { validateReportConsistency } from './reportValidation';
+import { evaluatePhysicalCoverage } from './physicalCoverage';
+import {
+  analyzeFootprintOverlaps,
+  buildGridFootprints,
+  computeContentCanvas,
+  identifyMmPerPxSource,
+  normalizedBlendWeights,
+} from './projectionGeometry';
 
 const baseInput: CentralDesignInput = {
   projectName: 'AV Mühendislik Refactor Testi',
@@ -238,7 +248,7 @@ describe('AV Projection Design Studio — Merkezi Hesaplama & Doğrulama Senaryo
     // İzlenebilirlik
     expect(res.traceability.scenarioId).toBe('SCN-TR05-75OV');
     expect(res.traceability.surfaceId).toBe('wall-main');
-    expect(res.traceability.engineVersion).toBe('2.4.0');
+    expect(res.traceability.engineVersion).toBe('2.5.0');
 
     // 1920/8 = 240 px/m, 1200/5 = 240 px/m, 6*240 = 1440 overlap px, 5760 - 2*1440 = 2880 px
     expect(res.lensSpecs.singleImageWidthM).toBe(8);
@@ -480,5 +490,527 @@ describe('AV Projection Design Studio — Merkezi Hesaplama & Doğrulama Senaryo
     expect(sample9.minLux).toBeGreaterThanOrEqual(grid288.minLux);
     expect(sample9.maxLux).toBeLessThanOrEqual(grid288.maxLux);
     expect(sample9.zones9.length).toBe(9);
+  });
+
+  it('V6 Case A: Eksik güç verisi (null/undefined) UNKNOWN olarak işaretlenir', () => {
+    const res = analyzeElectrical(
+      [{ id: 'l1', name: 'PJ-1', powerW: undefined, qty: 1 }],
+      [{ id: 'c1', name: 'L1-A', loadIds: ['l1'], phase: 'L1', cableMm2: 2.5, lengthM: 20, ampacityA: 24 }],
+      { voltage: 230, phases: 1, defaultPf: 1, designMargin: 1.25, maxDropPct: 3, rho: 0.0225, diversity: 1 }
+    );
+    expect(res.electricalDataStatus).toBe('UNKNOWN');
+    expect(res.missingPowerLoadNames).toEqual(['PJ-1']);
+    expect(res.circuits[0].dataStatus).toBe('UNKNOWN');
+    expect(res.circuits[0].breakerA).toBeNull();
+  });
+
+  it('V6 Case B: Açık 0 W değeri UNKNOWN yerine olağandışı değer uyarısı (ZERO_POWER) üretir', () => {
+    const res = analyzeElectrical(
+      [{ id: 'l1', name: 'PJ-Zero', powerW: 0, qty: 1 }],
+      [{ id: 'c1', name: 'L1-A', loadIds: ['l1'], phase: 'L1', cableMm2: 2.5, lengthM: 20, ampacityA: 24 }],
+      { voltage: 230, phases: 1, defaultPf: 1, designMargin: 1.25, maxDropPct: 3, rho: 0.0225, diversity: 1 }
+    );
+    expect(res.electricalDataStatus).toBe('ZERO_POWER');
+    expect(res.zeroPowerLoadNames).toEqual(['PJ-Zero']);
+    expect(res.circuits[0].warnings.some(w => w.includes('0 W'))).toBe(true);
+  });
+
+  it('V6 Case C: 450 W @ 230V 1-Faz cosφ=1 -> Ib = 1.96 A', () => {
+    const res = analyzeElectrical(
+      [{ id: 'l1', name: 'PJ-450', powerW: 450, qty: 1 }],
+      [{ id: 'c1', name: 'L1-A', loadIds: ['l1'], phase: 'L1', cableMm2: 2.5, lengthM: 20, ampacityA: 24 }],
+      { voltage: 230, phases: 1, defaultPf: 1, designMargin: 1.25, maxDropPct: 3, rho: 0.0225, diversity: 1 }
+    );
+    expect(res.electricalDataStatus).toBe('OK');
+    expect(res.totalIbA).toBeCloseTo(1.96, 2);
+    expect(res.circuits[0].ibA).toBeCloseTo(1.96, 2);
+  });
+
+  it('V6 Case D: Elektrik güç verisi eksik olduğunda PDF onayı DRAFT olarak bloklanır', () => {
+    const v = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'V6 Test', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, electrical: true, lux: false },
+      electrical: {
+        loads: [{ id: 'l1', name: 'PJ-1', powerW: null, qty: 1 }],
+        circuits: [{ id: 'c1', name: 'L1-A', loadIds: ['l1'], phase: 'L1', cableMm2: 2.5, lengthM: 20, ampacityA: 24 }],
+        supply: { voltage: 230, phases: 1, defaultPf: 1, designMargin: 1.25, maxDropPct: 3, rho: 0.0225, diversity: 1 },
+      },
+    });
+    expect(v.pdfApprovalStatus).toBe('DRAFT');
+    expect(v.canExportFinalPdf).toBe(false);
+    expect(v.approvalBlockReasons.some(r => r.includes('UNKNOWN'))).toBe(true);
+    expect(v.engineeringScorePct).toBeLessThan(100);
+  });
+
+  it('V6 Case E: Fotometri (Lux) açıkken LuxField/grid eksikse PDF onayı DRAFT olarak bloklanır', () => {
+    const v = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'V6 Test', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: true, electrical: false },
+      photometricSurfaces: [
+        {
+          surfaceId: 'wall-1',
+          surfaceName: 'Ana Duvar',
+          surfaceType: 'wall',
+          widthM: 12,
+          heightM: 4.3,
+          projectorCount: 3,
+          screenGain: 1.0,
+          avgLux: 523.26,
+          minLux: 400,
+          maxLux: 600,
+          luminanceNits: 141.58,
+          luminanceFL: 41.3,
+          ambientLux: 20,
+          ambientContrastRatio: 27.2,
+          nominalLumensPerProj: 10000,
+          totalNominalLumens: 30000,
+          effectiveTotalLumens: 27000,
+          idealNits: 141.58,
+          uniformityU0: 80,
+          uniformityU1: 66.7,
+        },
+      ],
+    });
+    expect(v.pdfApprovalStatus).toBe('DRAFT');
+    expect(v.canExportFinalPdf).toBe(false);
+    expect(v.checks.some(c => c.id === 'photo-luxfield-missing-0' && c.status === 'unknown')).toBe(true);
+  });
+
+  it('V6 Case F: Zorunlu kontroller PASS ve yalnızca opsiyonel kontroller UNKNOWN iken CONDITIONAL onay verilir', () => {
+    const v = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'V6 Test', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: false, electrical: true },
+      electrical: {
+        loads: [{ id: 'l1', name: 'PJ-1', powerW: 450, qty: 1 }],
+        circuits: [{ id: 'c1', name: 'L1-A', loadIds: ['l1'], phase: 'L1', cableMm2: 2.5, lengthM: 20, ampacityA: 24 }],
+        supply: { voltage: 230, phases: 1, defaultPf: 1, designMargin: 1.25, maxDropPct: 3, rho: 0.0225, diversity: 1 },
+      },
+    });
+    expect(v.errorCount).toBe(0);
+    expect(v.pdfApprovalStatus).toBe('CONDITIONAL');
+    expect(v.canExportFinalPdf).toBe(true);
+    expect(v.engineeringScorePct).toBeLessThan(100);
+  });
+
+  it('Deep Refactor Test A: 3 projektör, 1920x1200, 6.25m genişlik, 5m atım -> TR = 0.8 ve 3 bağımsız PJ kaydı', () => {
+    const res = evaluateCentralProjectionDesign(baseInput);
+    expect(res.lensSpecs.throwDistM / res.lensSpecs.singleImageWidthM).toBeCloseTo(0.8, 3);
+    expect(res.projectorDistribution).toHaveLength(3);
+    expect(res.projectorDistribution.map(p => p.projectorId)).toEqual(['PJ-01', 'PJ-02', 'PJ-03']);
+    expect(res.projectorDistribution.every(p => p.throwRatio === 0.8 && p.imageWidthM === 6.25)).toBe(true);
+  });
+
+  it('Deep Refactor Test B: 12x4.3m yüzey, 3.90625m görüntü yüksekliği -> %90.84 dikey kaplama, 0.394m eksik ve FAIL', () => {
+    const cov = evaluatePhysicalCoverage({
+      surfaceWidthM: 12,
+      surfaceHeightM: 4.3,
+      cols: 3,
+      rows: 1,
+      projW: 1920,
+      projH: 1200,
+      throwDistM: 5,
+      throwRatio: 0.8,
+      overlapX: 54,
+    });
+    expect(cov.verdict).toBe('FAIL');
+    expect(cov.verticalCoveragePct).toBeCloseTo(90.84, 1);
+    expect(cov.uncoveredHeightM).toBeCloseTo(0.394, 2);
+    expect(cov.requiredThrowRatioForFullHeight).toBeLessThan(0.8);
+  });
+
+  it('Deep Refactor Test C: 3686x1200 raster, 12x4.3m hedef yüzey -> H≈307.17 px/m, V≈279.07 px/m, px/m²≈85721', () => {
+    const res = evaluateCentralProjectionDesign({
+      ...baseInput,
+      blending: { overlapPctX: 54 },
+    });
+    expect(res.pixelMapping.targetSurface.pxPerMeterW).toBeCloseTo(307.17, 1);
+    expect(res.pixelMapping.targetSurface.pxPerMeterH).toBeCloseTo(279.07, 1);
+    expect(res.pixelMapping.targetSurface.pxPerSqMeter).toBeCloseTo(85721, -1);
+  });
+
+  it('Deep Refactor Test D: 3686x1200 raster, 12x3.906m aktif alan -> H≈307.17 px/m, V≈307.22 px/m, px/m²≈94362', () => {
+    const res = evaluateCentralProjectionDesign({
+      ...baseInput,
+      blending: { overlapPctX: 54 },
+    });
+    expect(res.pixelMapping.activeProjectionArea.pxPerMeterW).toBeCloseTo(307.17, 0);
+    expect(res.pixelMapping.activeProjectionArea.pxPerMeterH).toBeCloseTo(307.22, 0);
+    expect(res.pixelMapping.activeProjectionArea.pxPerSqMeter).toBeCloseTo(94362, -2);
+  });
+
+  it('Deep Refactor Test E: 307.2 px/m -> 3.255 mm/px (H), 279.1 px/m -> 3.583 mm/px (V); eksen karıştırılırsa FAIL', () => {
+    expect(1000 / 307.2).toBeCloseTo(3.255, 3);
+    expect(1000 / 279.1).toBeCloseTo(3.583, 3);
+    const vSwapped = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'Swap Test', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: false, electrical: false },
+      plannerSurfaces: [
+        {
+          id: 'wall-1',
+          name: 'Ana Duvar',
+          type: 'wall',
+          cols: 3,
+          rows: 1,
+          projW: 1920,
+          projH: 1200,
+          netW: 3686,
+          netH: 1200,
+          overlapX: 54,
+          overlapY: 0,
+          ovPxX: 1037,
+          ovPxY: 0,
+          effectiveWidthM: 12,
+          effectiveHeightM: 4.3,
+          throwDistM: 5,
+          throwRatio: 0.8,
+          avgMmPerPx: 3.583, // Hata: dikey değer yatay yerine verilmiş!
+          viewDistM: 3.5,
+        },
+      ],
+    });
+    expect(vSwapped.checks.some(c => c.id === 'pm-mm-0' && c.status === 'error')).toBe(true);
+    expect(vSwapped.pdfApprovalStatus).toBe('BLOCKED');
+  });
+
+  it('Deep Refactor Test F: Yüzeyde 3 projektör tanımlanıp dağılım listesinde 1 satır varsa FAIL olmalıdır', () => {
+    const v = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'Dist Test', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: true, electrical: false },
+      photometricSurfaces: [
+        {
+          surfaceId: 'wall-1',
+          surfaceName: 'Ana Duvar',
+          surfaceType: 'wall',
+          widthM: 12,
+          heightM: 4.3,
+          projectorCount: 3,
+          screenGain: 1.0,
+          avgLux: 523.26,
+          minLux: 400,
+          maxLux: 600,
+          luminanceNits: 141.58,
+          luminanceFL: 41.3,
+          ambientLux: 20,
+          ambientContrastRatio: 27.2,
+          uniformityU0: 80,
+          uniformityU1: 66.7,
+          distributionRows: [
+            { code: 'PJ-1', startX: 0, endX: 6.25, widthM: 6.25, centerX: 3.125, throwDistM: 5, throwRatio: 0.8, overlapText: '—' },
+          ],
+        },
+      ],
+    });
+    expect(v.checks.some(c => c.id === 'dist-rows-count-0' && c.status === 'error')).toBe(true);
+    expect(v.pdfApprovalStatus).toBe('BLOCKED');
+    expect(v.canExportFinalPdf).toBe(false);
+  });
+
+  it('Deep Refactor Test G: LuxField 288-nokta min/max aralığı dışına 9-nokta örneklemesi çıkamaz', () => {
+    const grid288 = computeLuxSimulationGrid(baseInput, 24, 12);
+    const sample9 = sampleNinePointsFromLuxGrid(grid288, 12, 4.3, 1.0, 0.85);
+    expect(grid288.samplingMethod).toBe('288-point-grid');
+    expect(grid288.sampleCount).toBe(288);
+    expect(sample9.samplingMethod).toBe('9-point-sampling');
+    expect(sample9.sampleCount).toBe(9);
+    expect(sample9.luxFieldId).toBe(grid288.luxFieldId);
+    expect(sample9.surfaceId).toBe(grid288.surfaceId);
+    for (const z of sample9.zones9) {
+      expect(z.lux).toBeGreaterThanOrEqual(grid288.minLux);
+      expect(z.lux).toBeLessThanOrEqual(grid288.maxLux);
+    }
+  });
+
+  it('Deep Refactor Test H: Kısa devre veya selektivite verisi yoksa sonuç UNKNOWN olmalıdır', () => {
+    const v = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'ShortCircuit Test', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: false, electrical: true },
+      electrical: {
+        loads: [{ id: 'l1', name: 'PJ-1', powerW: 450, qty: 1 }],
+        circuits: [{ id: 'c1', name: 'L1-A', loadIds: ['l1'], phase: 'L1', cableMm2: 2.5, lengthM: 20, ampacityA: 24 }],
+        supply: { voltage: 230, phases: 1, defaultPf: 1, designMargin: 1.25, maxDropPct: 3, rho: 0.0225, diversity: 1 },
+      },
+    });
+    expect(v.checks.some(c => c.id === 'elec-shortcircuit-selectivity' && c.status === 'unknown')).toBe(true);
+  });
+
+  it('REV.1 Test 1: 30.000 lm, %90 verim, 36 m² (12×3 m) -> Teorik 750 lx ile Simüle LuxField ve Saha Ölçümü ayrı tutulur', () => {
+    const res = evaluateCentralProjectionDesign({
+      ...baseInput,
+      surface: { id: 'wall-12x3', name: '12x3 Duvar', widthM: 12, heightM: 3, viewingDistanceM: 4 },
+      projector: { ...baseInput.projector, nativeContrast: undefined },
+      photometrics: { ...baseInput.photometrics, measuredLuxSamples: [410, 445, 460] },
+    });
+    expect(res.illuminance.theoretical.source).toBe('THEORETICAL');
+    expect(res.illuminance.theoretical.avgLux).toBe(750);
+    expect(res.illuminance.simulated.source).toBe('SIMULATED_LUXFIELD');
+    expect(res.illuminance.simulated.avgLux).not.toBe(750);
+    expect(res.illuminance.simulated.minLux!).toBeLessThanOrEqual(res.illuminance.simulated.avgLux!);
+    expect(res.illuminance.simulated.avgLux!).toBeLessThanOrEqual(res.illuminance.simulated.maxLux!);
+    expect(res.illuminance.measured.source).toBe('MEASURED');
+    expect(res.illuminance.measured.avgLux).toBeCloseTo(438.33, 1);
+    expect(res.luminance.theoretical.source).toBe('THEORETICAL');
+    expect(res.luminance.simulated.source).toBe('SIMULATED_LUXFIELD');
+    expect(res.luminance.measured.source).toBe('MEASURED');
+    expect(res.contrast.acrVerified).toBe(false);
+    expect(res.contrast.acr).toBeNull();
+    expect(res.contrast.estimatedAmbientContrast).toBeGreaterThan(1);
+  });
+
+  it('REV.1 Test 2: Üçlü Overlap Motoru — PJ1(0–6.25m), PJ2(2.88–9.13m), PJ3(5.75–12m) -> 0.50m üçlü kesişim ve IE=Geometrik Birleşim', () => {
+    const fps = buildGridFootprints({
+      cols: 3,
+      rows: 1,
+      imageWidthM: 6.25,
+      imageHeightM: 3.90625,
+      overlapFracX: 0.54,
+      surfaceHeightM: 4.3,
+      positionsX: [0, 2.88, 5.75],
+    });
+    const ov = analyzeFootprintOverlaps(fps, 12, 4.3, 3);
+    expect(ov.hasNonAdjacentOverlap).toBe(true);
+    expect(ov.maxMultiplicity).toBe(3);
+    const pj13 = ov.pairwiseIntersections.find(p => p.projectorIds.join(',') === 'PJ-01,PJ-03');
+    expect(pj13).toBeDefined();
+    expect(pj13!.adjacent).toBe(false);
+    expect(pj13!.widthM).toBeCloseTo(0.5, 2);
+    expect(ov.higherOrderIntersections).toHaveLength(1);
+    expect(ov.higherOrderIntersections[0].multiplicity).toBe(3);
+    expect(ov.higherOrderIntersections[0].widthM).toBeCloseTo(0.5, 2);
+    expect(ov.geometryConsistent).toBe(true);
+    expect(ov.unionAreaM2).toBeCloseTo(ov.unionAreaInclusionExclusionM2!, 2);
+
+    const wTriple = normalizedBlendWeights(fps, 6.0, 2.15);
+    expect(wTriple.filter(w => w > 0)).toHaveLength(3);
+    expect(wTriple.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
+  });
+
+  it('REV.1 Test 3: Tek Kaynaklı Kırpılmış Kanvas — 12×3 m yüzey, 3686×922 px -> H=307.17, V=307.33 px/m, 3.256/3.254 mm/px, 3.40 MP ve 2.41 mm/px reddi', () => {
+    const cc = computeContentCanvas({
+      rasterW: 3686,
+      rasterH: 1200,
+      opticalPxPerMeterH: 1920 / 6.25,
+      opticalPxPerMeterV: 1200 / 3.90625,
+      surfaceWidthM: 12,
+      surfaceHeightM: 3,
+    });
+    expect(cc.contentCanvas.w).toBe(3686);
+    expect(cc.contentCanvas.h).toBe(922);
+    expect(cc.pxPerMeterH).toBeCloseTo(307.17, 2);
+    expect(cc.pxPerMeterV).toBeCloseTo(307.33, 2);
+    expect(cc.mmPerPxH).toBeCloseTo(3.256, 3);
+    expect(cc.mmPerPxV).toBeCloseTo(3.254, 3);
+    expect(cc.contentCanvas.mp).toBe(3.4);
+    expect(identifyMmPerPxSource(2.41, cc.mmPerPxH, cc.mmPerPxV)).toBe('unmatched');
+
+    const vBadMm = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'BadMm', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: false, electrical: false },
+      plannerSurfaces: [
+        {
+          id: 'wall-12x3',
+          name: '12x3 Duvar',
+          type: 'wall',
+          cols: 3,
+          rows: 1,
+          projW: 1920,
+          projH: 1200,
+          netW: 3686,
+          netH: 922,
+          overlapX: 54,
+          overlapY: 0,
+          ovPxX: 1037,
+          ovPxY: 0,
+          effectiveWidthM: 12,
+          effectiveHeightM: 3,
+          throwDistM: 5,
+          throwRatio: 0.8,
+          avgMmPerPx: 2.41,
+          viewDistM: 4,
+        },
+      ],
+    });
+    expect(vBadMm.checks.some(c => c.id === 'pm-mm-0' && c.status === 'error')).toBe(true);
+    expect(vBadMm.pdfGateStatus).toBe('BLOCKED');
+  });
+
+  it('REV.1 Test 4: Ortalama lux maksimumu aştığında (E_avg > E_max) otomatik FAIL ve BLOCKED üretilir', () => {
+    const v = validateReportConsistency({
+      lang: 'tr',
+      meta: { companyName: 'Test', customer: '', projectName: 'LuxOrder', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: true, electrical: false },
+      photometricSurfaces: [
+        {
+          surfaceId: 's1',
+          surfaceName: 'Ana Duvar',
+          surfaceType: 'wall',
+          widthM: 12,
+          heightM: 3,
+          projectorCount: 3,
+          screenGain: 1.0,
+          avgLux: 750, // Teorik ortalama yanlışlıkla LuxField min/max ile karıştırılmış!
+          minLux: 210,
+          maxLux: 480,
+          luminanceNits: 202.9,
+          luminanceFL: 59.2,
+          ambientLux: 20,
+          ambientContrastRatio: 38,
+          uniformityU0: 28,
+          uniformityU1: 43.8,
+        },
+      ],
+    });
+    expect(v.checks.some(c => c.id === 'lux-order-0' && c.status === 'error')).toBe(true);
+    expect(v.pdfGateStatus).toBe('BLOCKED');
+  });
+
+  it('REV.1 Denetim Bulguları 1–8: 5 yöntemli Lux/Nit ayrımı, Tablo A/B kanvas metrikleri, duvar içi üçlü overlap (20.25 m² / 1.50 m²), tavan aşımı, lens etiket çelişkisi ve elektrik UNKNOWN dürüstlüğü doğrulanır', () => {
+    // 1. Üçlü overlap: tam projeksiyon düzlemi (26.367 m², üçlü 1.953 m²) vs 12×3 m duvar içi kırpılmış (20.25 m², üçlü 1.50 m²)
+    const footprints = buildGridFootprints({
+      cols: 3,
+      rows: 1,
+      imageWidthM: 6.25,
+      imageHeightM: 3.90625,
+      overlapFracX: 0.54,
+      surfaceHeightM: 3,
+    });
+    const ov = analyzeFootprintOverlaps(footprints, 12, 3, 3);
+    expect(ov.redundantOverlapAreaM2).toBeCloseTo(26.367, 1);
+    expect(ov.surfaceSumFootprintAreaM2).toBeCloseTo(56.25, 2);
+    expect(ov.surfaceRedundantOverlapAreaM2).toBeCloseTo(20.25, 2);
+    expect(ov.surfaceHigherOrderOverlapAreaM2).toBeCloseTo(1.5, 2);
+    expect(ov.higherOrderIntersections[0]?.clippedAreaM2).toBeCloseTo(1.5, 2);
+
+    // 2. 5 Yöntemli Lux & Nit tablosu ve Tablo A / Tablo B kanvas metrikleri HTML raporda ayrıştırılır
+    const simGrid = computeLuxSimulationGrid({
+      room: { widthM: 12, lengthM: 6, heightM: 3.5 },
+      surface: { id: 'w1', name: 'Ana Duvar', widthM: 12, heightM: 3, viewingDistanceM: 4 },
+      projector: { model: 'Laser 10K', cols: 3, rows: 1, nativeW: 1920, nativeH: 1200, ansiLumensPerUnit: 10000, powerWPerUnit: 450 },
+      lens: { model: 'Short Zoom', throwDistM: 5, throwRatio: 0.8 },
+      photometrics: { opticalEfficiencyPct: 90, screenGain: 1.0, reflectance: 0.85, ambientLux: 20 },
+      blending: { overlapPctX: 54 },
+      electrical: { supplyVoltageV: 230, phases: 3, pf: 1 },
+    }, 24, 12);
+    const g9 = sampleNinePointsFromLuxGrid(simGrid, 12, 3, 1.0, 0.85);
+
+    const payload = {
+      lang: 'tr' as const,
+      meta: { companyName: 'Test', customer: '', projectName: 'AuditRev1', location: '', category: '', date: '2026-11-15', revision: 1, description: '' },
+      sections: { ...DEFAULT_SECTIONS, lux: true, multiProjector: true, electrical: true },
+      interProjectorAnalysis: {
+        projectors: [],
+        surfaceStats: [],
+        cornerTransitions: [],
+        totalProjectors: 3,
+        totalPowerW: 1350,
+        roomDimensions: { widthM: 12, lengthM: 6, heightM: 3.5 },
+      },
+      photometricSurfaces: [
+        {
+          surfaceId: 'w1',
+          surfaceName: '1. Düz Duvar',
+          surfaceType: 'wall',
+          widthM: 12,
+          heightM: 3,
+          projectorCount: 3,
+          nominalLumensPerProj: 10000,
+          totalNominalLumens: 30000,
+          effectiveTotalLumens: 27000,
+          nominalTheoreticalLux: 833.3,
+          effectiveTheoreticalLux: 750,
+          theoreticalAvgLux: 750,
+          ninePointEqualLux: Math.round(g9.equalMeanLux),
+          ninePointWeightedLux: +(g9.weightedMeanLux).toFixed(1),
+          gridAvgLux: simGrid.avgLux,
+          gridUniformityU0Pct: simGrid.u0Pct,
+          gridUniformityU1Pct: simGrid.u1Pct,
+          avgLux: Math.round(g9.equalMeanLux),
+          minLux: Math.round(g9.minLux),
+          maxLux: Math.round(g9.maxLux),
+          uniformityU0: +(g9.u0Pct / 100).toFixed(4),
+          uniformityU1: +(g9.u1Pct / 100).toFixed(4),
+          screenGain: 1.0,
+          surfaceReflectance: 0.85,
+          luminanceNits: +((g9.equalMeanLux * 0.85) / Math.PI).toFixed(1),
+          luminanceFL: +(((g9.equalMeanLux * 0.85) / Math.PI) * 0.2919).toFixed(1),
+          ambientLux: 20,
+          ambientContrastRatio: +(((g9.equalMeanLux + 20) / 20)).toFixed(1),
+          luxSource: 'SIMULATED_LUXFIELD' as const,
+          distributionRows: [
+            { code: 'PJ 1', startX: 0, endX: 6.25, widthM: 6.25, centerX: 3.13, throwDistM: 5, throwRatio: 0.8, overlapText: '3.38m (%54 Blend)' },
+            { code: 'PJ 2', startX: 2.88, endX: 9.13, widthM: 6.25, centerX: 6.0, throwDistM: 5, throwRatio: 0.8, overlapText: '3.38m (%54 Blend)' },
+            { code: 'PJ 3', startX: 5.75, endX: 12.0, widthM: 6.25, centerX: 8.88, throwDistM: 5, throwRatio: 0.8, overlapText: '— (Kenar)' },
+          ],
+        },
+      ],
+      plannerSurfaces: [
+        {
+          id: 'w1',
+          name: '1. Düz Duvar',
+          type: 'wall',
+          cols: 3,
+          rows: 1,
+          projW: 1920,
+          projH: 1200,
+          projNetW: 3686,
+          projNetH: 1200,
+          netW: 3686,
+          netH: 922,
+          overlapX: 54,
+          overlapY: 0,
+          ovPxX: 1037,
+          ovPxY: 0,
+          effectiveWidthM: 12,
+          effectiveHeightM: 3,
+          throwDistM: 5,
+          throwRatio: 0.8,
+          avgMmPerPx: 3.26,
+          distMmPerPx: 3.26,
+          viewDistM: 4,
+        },
+      ],
+      projection: {
+        screenName: '1. Düz Duvar',
+        projectorName: '3x Genel Projektör',
+        lensName: '1.25 – 1.60:1 Standart Zoom', // 0.72–1.60 ile çelişkili etiket!
+        distanceM: 5,
+        imageWidthM: 6.25,
+        throwRatio: 0.8,
+        throwMin: 0.72,
+        throwMax: 1.6,
+        aspectW: 16,
+        aspectH: 10,
+      },
+      electrical: {
+        supply: { voltage: 230, phases: 3 as const, defaultPf: 0.95, designMargin: 0.25, maxDropPct: 3, rho: 0.0225, diversity: 1 },
+        loads: [{ id: 'L1', name: '3x Projektör', powerW: 450, qty: 3, pf: 0.95 }],
+        circuits: [{ id: 'C1', name: 'Linye-1 (3x Projektör)', loadIds: ['L1'], phase: 'L1' as const, cableMm2: 2.5, lengthM: 25, ampacityA: 25 }],
+      },
+    };
+
+    const html = buildReportHtml(payload);
+    // 5 yöntemli tablo ve Tablo A / Tablo B kanvas ayrımı
+    expect(html).toContain('5 Yöntemli Aydınlık (Lux) &amp; Parlaklık (Nit) Karşılaştırma Tablosu');
+    expect(html).toContain('Tablo A — Birleşik Projeksiyon Rasteri');
+    expect(html).toContain('Tablo B — Kırpılmış İçerik Kanvası');
+    // Üst kartta 750 lx ile Min 327 / Max 360 lx asla aynı ortalama gibi gösterilmez
+    expect(html).not.toContain('750 <span style="font-size:11px; font-weight:normal; color:#64748b;">lx</span>');
+
+    const val = validateReportConsistency(payload);
+    // Dikey taşma (3.91 m > 3.0 m duvar ve > 3.5 m oda tavanı) uyarısı
+    expect(val.checks.some(c => c.id === 'vertical-overspill-ceiling-0' && c.status === 'warning')).toBe(true);
+    // Lens adı (1.25–1.60:1) ile throwMin–throwMax (0.72–1.60:1) çelişkisi yakalanır
+    expect(val.checks.some(c => c.id === 'proj-lens-range' && c.status === 'error')).toBe(true);
+    // Elektrikte girilmeyen Icu/Ik/inrush için "doğrulandı" denmez
+    const elecCheck = val.checks.find(c => c.id === 'elec-shortcircuit-selectivity');
+    expect(elecCheck?.status).toBe('unknown');
+    expect(elecCheck?.message).not.toContain('Icu ≥ Ik ve inrush doğrulandı');
+    expect(elecCheck?.message).toContain('Yalnızca Ib ve ΔU hesaplandı');
   });
 });

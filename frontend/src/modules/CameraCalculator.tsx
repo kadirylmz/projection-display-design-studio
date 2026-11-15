@@ -1,14 +1,16 @@
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Grid, Line, OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { focalForFraming, framing, visibleSize } from '../engine/camera';
 import {
   computeCameraFov,
+  computeFovShadowAnalysis,
   computeFovSurfaceProjection,
   computeProjectorFov,
   computeSurfaceFov,
   computeViewerFov,
+  FovShadowResult,
   OpticalDeviceKind,
   SCANNER_3D_PRESETS,
   VR_SYSTEM_PRESETS,
@@ -44,6 +46,9 @@ function FovFrustum3DScene({
   pitchDeg,
   rollDeg,
   isPortrait,
+  showPerson,
+  showLabels = true,
+  shadow,
 }: {
   pos: [number, number, number];
   surfW: number;
@@ -58,6 +63,9 @@ function FovFrustum3DScene({
   pitchDeg: number;
   rollDeg: number;
   isPortrait: boolean;
+  showPerson: boolean;
+  showLabels?: boolean;
+  shadow: FovShadowResult;
 }) {
   const deviceQuat = useMemo(() => {
     const euler = new THREE.Euler(
@@ -132,18 +140,138 @@ function FovFrustum3DScene({
       ? '#a855f7'
       : '#10b981';
 
+  const deviceTitle =
+    deviceKind === 'projector'
+      ? `📽️ Projektör${isPortrait ? ' (Dikey)' : ''}`
+      : deviceKind === 'camera'
+      ? '📷 Kamera'
+      : deviceKind === 'scanner3d'
+      ? '📡 3D Tarayıcı'
+      : '🥽 VR Sistemi';
+
+  const zCrit = Math.max(0, Math.min(pos[2], shadow.shadowEntryDistFromScreenM));
+  const safeSpanZ = Math.max(0, pos[2] - zCrit);
+
+  // Perde üzerindeki gerçekçi insan gölgesi (THREE.ShapeGeometry) ve dış kontur çizgisi
+  const { humanShadowShapeGeo, humanShadowLoop, floorShadowShapeGeo } = useMemo(() => {
+    let wallGeo: THREE.ShapeGeometry | null = null;
+    let wallLoop: [number, number, number][] = [];
+    if (shadow.isCastingShadow && shadow.shadowPolygonScene2D && shadow.shadowPolygonScene2D.length >= 3) {
+      const shape = new THREE.Shape();
+      shadow.shadowPolygonScene2D.forEach(([x, y], idx) => {
+        if (idx === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
+      });
+      shape.closePath();
+      wallGeo = new THREE.ShapeGeometry(shape);
+      wallLoop = [
+        ...shadow.shadowPolygonScene2D.map(([x, y]) => [x, y, 0.029] as [number, number, number]),
+        [shadow.shadowPolygonScene2D[0][0], shadow.shadowPolygonScene2D[0][1], 0.029],
+      ];
+    }
+
+    // Zeminde insandan perdeye doğru uzanan gerçekçi insan gölgesi formu
+    let flGeo: THREE.ShapeGeometry | null = null;
+    if (shadow.isCastingShadow && shadow.personDistFromScreenM > 0.08) {
+      const w0 = shadow.personWidthM;
+      const w1 = Math.max(w0 * 1.1, Math.min(surfW, shadow.shadowWidthM || w0 * 1.25));
+      const len = shadow.personDistFromScreenM;
+      const flShape = new THREE.Shape();
+      // Ayaklardan (y=0) perdeye (y=len) uzanan omuz/baş daralmalı insan gölge izdüşümü
+      flShape.moveTo(-w0 * 0.22, 0);
+      flShape.lineTo(-w0 * 0.42, len * 0.45);
+      flShape.lineTo(-w1 * 0.48, len * 0.82);
+      flShape.lineTo(-w1 * 0.22, len);
+      flShape.lineTo(w1 * 0.22, len);
+      flShape.lineTo(w1 * 0.48, len * 0.82);
+      flShape.lineTo(w0 * 0.42, len * 0.45);
+      flShape.lineTo(w0 * 0.22, 0);
+      flShape.closePath();
+      flGeo = new THREE.ShapeGeometry(flShape);
+    }
+
+    return { humanShadowShapeGeo: wallGeo, humanShadowLoop: wallLoop, floorShadowShapeGeo: flGeo };
+  }, [shadow.isCastingShadow, shadow.shadowPolygonScene2D, shadow.personDistFromScreenM, shadow.personWidthM, shadow.shadowWidthM, surfW]);
+
+  const pH = shadow.personHeightM;
+  const pW = shadow.personWidthM;
+  const jacketColor = shadow.isCastingShadow ? '#e11d48' : '#059669';
+  const jacketEmissive = shadow.isCastingShadow ? '#be123c' : '#047857';
+
   return (
     <>
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[6, 10, 8]} intensity={0.8} />
+      <ambientLight intensity={0.78} />
+      <directionalLight position={[6, 10, 8]} intensity={0.9} />
       <Grid
-        args={[24, 24]}
-        position={[0, -surfH / 2, 0]}
+        args={[26, 26]}
+        position={[0, shadow.floorSceneY, 0]}
         cellSize={0.5}
         cellColor="#1e293b"
         sectionSize={2}
         sectionColor="#334155"
       />
+
+      {/* Perde Yerden Yüksekteyse: Perde Altı Duvar / Sahne Eteği ve Yükseklik Ölçüsü */}
+      {shadow.screenBottomHeightM > 0.01 && (
+        <group>
+          <mesh position={[0, -surfH / 2 - shadow.screenBottomHeightM / 2, -0.008]}>
+            <planeGeometry args={[surfW, shadow.screenBottomHeightM]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.9} transparent opacity={0.78} side={THREE.DoubleSide} />
+          </mesh>
+          <Line
+            points={[
+              [-surfW / 2, shadow.floorSceneY, 0.005],
+              [surfW / 2, shadow.floorSceneY, 0.005],
+              [surfW / 2, -surfH / 2, 0.005],
+              [-surfW / 2, -surfH / 2, 0.005],
+              [-surfW / 2, shadow.floorSceneY, 0.005],
+            ]}
+            color="#64748b"
+            lineWidth={1.5}
+            dashed
+            dashSize={0.14}
+            gapSize={0.1}
+          />
+          {/* Sol kenarda Perde Yerden Başlangıç Yüksekliği ölçü dikmesi */}
+          <Line
+            points={[
+              [-surfW / 2 - 0.28, shadow.floorSceneY, 0.01],
+              [-surfW / 2 - 0.28, -surfH / 2, 0.01],
+            ]}
+            color="#38bdf8"
+            lineWidth={2}
+          />
+          <Line
+            points={[
+              [-surfW / 2 - 0.36, shadow.floorSceneY, 0.01],
+              [-surfW / 2 - 0.2, shadow.floorSceneY, 0.01],
+            ]}
+            color="#38bdf8"
+            lineWidth={2}
+          />
+          <Line
+            points={[
+              [-surfW / 2 - 0.36, -surfH / 2, 0.01],
+              [-surfW / 2 - 0.2, -surfH / 2, 0.01],
+            ]}
+            color="#38bdf8"
+            lineWidth={2}
+          />
+          {showLabels && (
+            <Text
+              position={[-surfW / 2 - 0.38, -surfH / 2 - shadow.screenBottomHeightM / 2, 0.02]}
+              fontSize={0.135}
+              color="#7dd3fc"
+              anchorX="right"
+              anchorY="middle"
+              outlineWidth={0.02}
+              outlineColor="#020617"
+            >
+              {`↕ Perde Yerden Yüksekliği\n+${shadow.screenBottomHeightM.toFixed(2)}m (Üst: ${(shadow.screenBottomHeightM + surfH).toFixed(2)}m)`}
+            </Text>
+          )}
+        </group>
+      )}
 
       {/* Hedef Yüzey Düzlemi */}
       <mesh position={[0, 0, 0]}>
@@ -159,16 +287,31 @@ function FovFrustum3DScene({
           [-surfW / 2, surfH / 2, 0.01],
         ]}
         color="#f8fafc"
-        lineWidth={2}
+        lineWidth={2.2}
       />
-      <Text
-        position={[0, surfH / 2 + 0.22, 0.02]}
-        fontSize={0.22}
-        color="#e2e8f0"
-        anchorX="center"
-      >
-        {`Hedef Yüzey (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m)`}
-      </Text>
+      {showLabels && (
+        <>
+          <Line
+            points={[
+              [0, surfH / 2, 0.02],
+              [0, surfH / 2 + 0.28, 0.02],
+            ]}
+            color="#94a3b8"
+            lineWidth={1.2}
+          />
+          <Text
+            position={[0, surfH / 2 + 0.34, 0.02]}
+            fontSize={0.19}
+            color="#f8fafc"
+            anchorX="center"
+            anchorY="bottom"
+            outlineWidth={0.024}
+            outlineColor="#020617"
+          >
+            {`① HEDEF PERDE / YÜZEY (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m · Yerden: +${shadow.screenBottomHeightM.toFixed(2)}m)`}
+          </Text>
+        </>
+      )}
 
       {/* Yarı Saydam 3B Görüş Konisi (FOV Frustum) */}
       <mesh geometry={coneGeo}>
@@ -203,7 +346,7 @@ function FovFrustum3DScene({
         <meshBasicMaterial
           color={accent}
           transparent
-          opacity={0.32}
+          opacity={0.3}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -217,31 +360,358 @@ function FovFrustum3DScene({
         <Line points={edgeLoop} color={accent} lineWidth={2.2} />
       )}
 
-      {/* Cihaz Gövdesi (Yaw, Pitch, Roll ve Dikey/Portrait moduna göre gerçek 3B yönelim) */}
+      {/* Cihaz Gövdesi + Zemin Dikmesi */}
       <group position={pos} quaternion={deviceQuat}>
         <mesh>
-          <boxGeometry args={[0.32, 0.16, 0.36]} />
-          <meshStandardMaterial color={deviceColor} emissive={deviceColor} emissiveIntensity={0.25} />
+          <boxGeometry args={[0.34, 0.16, 0.38]} />
+          <meshStandardMaterial color={deviceColor} emissive={deviceColor} emissiveIntensity={0.28} />
         </mesh>
-        <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]}>
+        <mesh position={[0, 0, -0.21]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.055, 0.065, 0.08, 16]} />
-          <meshStandardMaterial color="#0f172a" emissive={deviceColor} emissiveIntensity={0.45} />
+          <meshStandardMaterial color="#0f172a" emissive={deviceColor} emissiveIntensity={0.5} />
         </mesh>
       </group>
-      <Text
-        position={[pos[0], pos[1] + 0.3, pos[2]]}
-        fontSize={0.2}
-        color={deviceColor}
-        anchorX="center"
-      >
-        {deviceKind === 'projector'
-          ? `Projektör${isPortrait ? ' (Dikey)' : ''}`
-          : deviceKind === 'camera'
-          ? 'Kamera'
-          : deviceKind === 'scanner3d'
-          ? '3D Tarayıcı'
-          : 'VR Sistemi'}
-      </Text>
+      <Line
+        points={[
+          [pos[0], shadow.floorSceneY, pos[2]],
+          [pos[0], pos[1], pos[2]],
+        ]}
+        color="#475569"
+        lineWidth={1.2}
+        dashed
+        dashSize={0.16}
+        gapSize={0.12}
+      />
+      {showLabels && (
+        <Text
+          position={[pos[0], pos[1] + 0.28, pos[2]]}
+          fontSize={0.17}
+          color={deviceColor}
+          anchorX="center"
+          anchorY="bottom"
+          outlineWidth={0.022}
+          outlineColor="#020617"
+        >
+          {`④ ${deviceTitle} (Perdeye Z:${pos[2].toFixed(2)}m · Yerden Y:${shadow.deviceHeightFromFloorM.toFixed(2)}m)`}
+        </Text>
+      )}
+
+      {/* İnsan Modeli, Zemin Bölgeleri, Kritik Gölge Sınır Bayrağı ve Perde Üzerindeki Gölge İzdüşümü */}
+      {showPerson && (
+        <>
+          {/* Zeminde Renkli Bölge Halıları (Gölgeli Risk Bölgesi vs Gölgesiz Güvenli Bölge) */}
+          {!shadow.neverCastsShadow && zCrit > 0.05 && (
+            <group>
+              {/* Kırmızı: Gölgeli Risk Bölgesi (0 -> zCrit) */}
+              <mesh
+                position={[0, shadow.floorSceneY + 0.006, zCrit / 2]}
+                rotation={[-Math.PI / 2, 0, 0]}
+              >
+                <planeGeometry args={[surfW, zCrit]} />
+                <meshBasicMaterial color="#ef4444" transparent opacity={0.13} side={THREE.DoubleSide} />
+              </mesh>
+              {showLabels && zCrit >= 0.6 && (
+                <Text
+                  position={[-surfW / 2 - 0.15, shadow.floorSceneY + 0.08, zCrit / 2]}
+                  fontSize={0.13}
+                  color="#fca5a5"
+                  anchorX="right"
+                  anchorY="middle"
+                  outlineWidth={0.02}
+                  outlineColor="#020617"
+                >
+                  {`🔴 GÖLGELİ RİSK BÖLGESİ\n(Perdeden 0 – ${zCrit.toFixed(2)}m)`}
+                </Text>
+              )}
+
+              {/* Yeşil: Gölgesiz Güvenli Bölge (zCrit -> Cihaz) */}
+              {safeSpanZ > 0.15 && (
+                <>
+                  <mesh
+                    position={[0, shadow.floorSceneY + 0.006, zCrit + safeSpanZ / 2]}
+                    rotation={[-Math.PI / 2, 0, 0]}
+                  >
+                    <planeGeometry args={[surfW, safeSpanZ]} />
+                    <meshBasicMaterial color="#10b981" transparent opacity={0.1} side={THREE.DoubleSide} />
+                  </mesh>
+                  {showLabels && safeSpanZ >= 0.6 && (
+                    <Text
+                      position={[-surfW / 2 - 0.15, shadow.floorSceneY + 0.08, zCrit + safeSpanZ / 2]}
+                      fontSize={0.13}
+                      color="#6ee7b7"
+                      anchorX="right"
+                      anchorY="middle"
+                      outlineWidth={0.02}
+                      outlineColor="#020617"
+                    >
+                      {`🟢 GÖLGESİZ GÜVENLİ BÖLGE\n(${zCrit.toFixed(2)} – ${pos[2].toFixed(2)}m)`}
+                    </Text>
+                  )}
+                </>
+              )}
+
+              {/* Zeminde Kritik Gölge Başlangıç Çizgisi ve Sağ Kenar Dikmeli Bilgi Bayrağı */}
+              <Line
+                points={[
+                  [-surfW / 2 - 0.45, shadow.floorSceneY + 0.015, zCrit],
+                  [surfW / 2 + 0.55, shadow.floorSceneY + 0.015, zCrit],
+                ]}
+                color="#f59e0b"
+                lineWidth={2.4}
+                dashed
+                dashSize={0.18}
+                gapSize={0.1}
+              />
+              {showLabels && (
+                <>
+                  {/* Sağ kenarda dikme direği — diğer yazılarla çakışmayı önler */}
+                  <Line
+                    points={[
+                      [surfW / 2 + 0.55, shadow.floorSceneY + 0.015, zCrit],
+                      [surfW / 2 + 0.55, shadow.floorSceneY + 0.55, zCrit],
+                    ]}
+                    color="#f59e0b"
+                    lineWidth={1.6}
+                  />
+                  <Text
+                    position={[surfW / 2 + 0.62, shadow.floorSceneY + 0.55, zCrit]}
+                    fontSize={0.145}
+                    color="#fde047"
+                    anchorX="left"
+                    anchorY="middle"
+                    outlineWidth={0.022}
+                    outlineColor="#020617"
+                  >
+                    {`② KRİTİK GÖLGE BAŞLANGIÇ SINIRI\nPerdeden: ${shadow.shadowEntryDistFromScreenM.toFixed(2)}m | Cihazdan: ${shadow.shadowEntryDistFromDeviceM.toFixed(2)}m`}
+                  </Text>
+                </>
+              )}
+            </group>
+          )}
+
+          {/* Gerçekçi 3B Anatomik İnsan Modeli (Ayakkabı, Bacak, Kalça, Gövde, Omuz, Kollar/Eller, Boyun, Baş/Saç) */}
+          <group position={[shadow.personXM, shadow.floorSceneY, shadow.personDistFromScreenM]}>
+            {/* Zemindeki Dairesel Temas Halkası */}
+            <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <circleGeometry args={[Math.max(0.24, pW * 0.56), 28]} />
+              <meshBasicMaterial color="#020617" transparent opacity={0.68} side={THREE.DoubleSide} />
+            </mesh>
+            <mesh position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[Math.max(0.22, pW * 0.52), Math.max(0.26, pW * 0.6), 32]} />
+              <meshBasicMaterial color={shadow.isCastingShadow ? '#ef4444' : '#10b981'} side={THREE.DoubleSide} />
+            </mesh>
+
+            {/* Zeminde İnsandan Perdeye Uzanan İnsan Formlu Gölge */}
+            {shadow.isCastingShadow && floorShadowShapeGeo && (
+              <mesh
+                position={[0, 0.009, 0]}
+                rotation={[-Math.PI / 2, 0, 0]}
+                geometry={floorShadowShapeGeo}
+              >
+                <meshBasicMaterial color="#020617" transparent opacity={0.62} side={THREE.DoubleSide} />
+              </mesh>
+            )}
+
+            {/* Sol & Sağ Ayakkabı (Perdeye -Z yönüne doğru) */}
+            <mesh position={[-pW * 0.19, pH * 0.026, -pW * 0.06]} rotation={[Math.PI / 2, 0, 0]}>
+              <capsuleGeometry args={[pW * 0.085, pW * 0.22, 8, 14]} />
+              <meshStandardMaterial color="#0f172a" roughness={0.5} />
+            </mesh>
+            <mesh position={[pW * 0.19, pH * 0.026, -pW * 0.06]} rotation={[Math.PI / 2, 0, 0]}>
+              <capsuleGeometry args={[pW * 0.085, pW * 0.22, 8, 14]} />
+              <meshStandardMaterial color="#0f172a" roughness={0.5} />
+            </mesh>
+
+            {/* Sol & Sağ Alt Bacak (Baldır) ve Üst Bacak (Uyluk) */}
+            <mesh position={[-pW * 0.19, pH * 0.26, 0]}>
+              <capsuleGeometry args={[pW * 0.115, Math.max(0.18, pH * 0.38), 10, 18]} />
+              <meshStandardMaterial color="#1e293b" roughness={0.6} />
+            </mesh>
+            <mesh position={[pW * 0.19, pH * 0.26, 0]}>
+              <capsuleGeometry args={[pW * 0.115, Math.max(0.18, pH * 0.38), 10, 18]} />
+              <meshStandardMaterial color="#1e293b" roughness={0.6} />
+            </mesh>
+
+            {/* Kalça / Pelvis Kemeri */}
+            <mesh position={[0, pH * 0.49, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <capsuleGeometry args={[pH * 0.055, pW * 0.26, 10, 18]} />
+              <meshStandardMaterial color="#1e293b" roughness={0.55} />
+            </mesh>
+
+            {/* Gövde / Ceket (Bel -> Göğüs) */}
+            <mesh position={[0, pH * 0.66, 0]}>
+              <capsuleGeometry args={[pW * 0.27, Math.max(0.16, pH * 0.2), 12, 22]} />
+              <meshStandardMaterial
+                color={jacketColor}
+                emissive={jacketEmissive}
+                emissiveIntensity={0.28}
+                roughness={0.42}
+              />
+            </mesh>
+
+            {/* Yaka / Göğüs Detayı (Perdeye -Z yönüne bakan ön yüz) */}
+            <mesh position={[0, pH * 0.75, -pW * 0.16]}>
+              <sphereGeometry args={[pW * 0.13, 14, 14]} />
+              <meshStandardMaterial color="#f8fafc" roughness={0.4} />
+            </mesh>
+
+            {/* Yuvarlak Omuz Köprüsü */}
+            <mesh position={[0, pH * 0.79, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <capsuleGeometry args={[pH * 0.042, pW * 0.62, 10, 20]} />
+              <meshStandardMaterial
+                color={jacketColor}
+                emissive={jacketEmissive}
+                emissiveIntensity={0.25}
+                roughness={0.42}
+              />
+            </mesh>
+
+            {/* Sol & Sağ Kollar (Omuzdan Bel Hizasına Sarkan Anatomik Kollar) */}
+            <mesh position={[-pW * 0.43, pH * 0.64, 0]} rotation={[0, 0, 0.08]}>
+              <capsuleGeometry args={[pW * 0.082, Math.max(0.16, pH * 0.24), 10, 18]} />
+              <meshStandardMaterial color={jacketColor} roughness={0.45} />
+            </mesh>
+            <mesh position={[pW * 0.43, pH * 0.64, 0]} rotation={[0, 0, -0.08]}>
+              <capsuleGeometry args={[pW * 0.082, Math.max(0.16, pH * 0.24), 10, 18]} />
+              <meshStandardMaterial color={jacketColor} roughness={0.45} />
+            </mesh>
+
+            {/* Sol & Sağ Eller */}
+            <mesh position={[-pW * 0.46, pH * 0.485, 0]}>
+              <sphereGeometry args={[pW * 0.082, 14, 14]} />
+              <meshStandardMaterial color="#f1c27d" roughness={0.5} />
+            </mesh>
+            <mesh position={[pW * 0.46, pH * 0.485, 0]}>
+              <sphereGeometry args={[pW * 0.082, 14, 14]} />
+              <meshStandardMaterial color="#f1c27d" roughness={0.5} />
+            </mesh>
+
+            {/* Boyun */}
+            <mesh position={[0, pH * 0.855, 0]}>
+              <cylinderGeometry args={[pW * 0.095, pW * 0.11, pH * 0.06, 16]} />
+              <meshStandardMaterial color="#f1c27d" roughness={0.48} />
+            </mesh>
+
+            {/* Baş ve Saç */}
+            <mesh position={[0, pH * 0.932, 0]}>
+              <sphereGeometry args={[pH * 0.068, 24, 24]} />
+              <meshStandardMaterial color="#f1c27d" roughness={0.45} />
+            </mesh>
+            <mesh position={[0, pH * 0.946, pH * 0.008]} rotation={[-0.18, 0, 0]}>
+              <sphereGeometry args={[pH * 0.071, 24, 18, 0, Math.PI * 2, 0, Math.PI * 0.62]} />
+              <meshStandardMaterial color="#0f172a" roughness={0.75} />
+            </mesh>
+
+            {/* Baş Üstü İşaret Dikmesi ve Açıklayıcı Etiket */}
+            {showLabels && (
+              <>
+                <Line
+                  points={[
+                    [0, pH + 0.02, 0],
+                    [0, pH + 0.34, 0],
+                  ]}
+                  color={shadow.isCastingShadow ? '#f87171' : '#34d399'}
+                  lineWidth={1.6}
+                />
+                <Text
+                  position={[0, pH + 0.38, 0]}
+                  fontSize={0.145}
+                  color={shadow.isCastingShadow ? '#fecaca' : '#a7f3d0'}
+                  anchorX="center"
+                  anchorY="bottom"
+                  outlineWidth={0.022}
+                  outlineColor="#020617"
+                >
+                  {`③ İZLEYİCİ KONUMU (Boy: ${pH.toFixed(2)}m · Omuz: ${pW.toFixed(2)}m)\nPerdeye: ${shadow.personDistFromScreenM.toFixed(2)}m · Cihaza: ${shadow.personDistFromDeviceM.toFixed(2)}m · ${
+                    shadow.isCastingShadow
+                      ? `Işığa ${shadow.intrusionHeightM.toFixed(2)}m Giriyor`
+                      : `Baş Üstü +${Math.max(0, shadow.headClearanceM).toFixed(2)}m Boşluk`
+                  }`}
+                </Text>
+              </>
+            )}
+          </group>
+
+          {/* Perde Üzerindeki Gerçekçi İnsan Gölgesi Silüeti, Ölçü Çerçevesi ve Gölge Işınları */}
+          {shadow.isCastingShadow && shadow.shadowRect2D && (
+            <>
+              {/* Gerçekçi İnsan Gölgesi Silüeti (Baş, Boyun, Omuzlar, Kollar, Gövde ve Bacaklar) */}
+              {humanShadowShapeGeo ? (
+                <mesh position={[0, 0, 0.027]} geometry={humanShadowShapeGeo}>
+                  <meshBasicMaterial color="#020617" transparent opacity={0.93} side={THREE.DoubleSide} />
+                </mesh>
+              ) : (
+                <mesh
+                  position={[
+                    (shadow.shadowRect2D[0] + shadow.shadowRect2D[2]) / 2,
+                    (shadow.shadowRect2D[1] + shadow.shadowRect2D[3]) / 2,
+                    0.027,
+                  ]}
+                >
+                  <planeGeometry args={[shadow.shadowWidthM, shadow.shadowHeightM]} />
+                  <meshBasicMaterial color="#020617" transparent opacity={0.9} side={THREE.DoubleSide} />
+                </mesh>
+              )}
+
+              {/* İnsan Gölgesi Kontur Çizgisi */}
+              {humanShadowLoop.length >= 4 && (
+                <Line
+                  points={humanShadowLoop}
+                  color="#ef4444"
+                  lineWidth={2.2}
+                />
+              )}
+
+              {/* Mühendislik Ölçü Sınır Çerçevesi (Kesikli Kırmızı Bounding Box: W × H m) */}
+              <Line
+                points={[
+                  [shadow.shadowRect2D[0], shadow.shadowRect2D[1], 0.029],
+                  [shadow.shadowRect2D[2], shadow.shadowRect2D[1], 0.029],
+                  [shadow.shadowRect2D[2], shadow.shadowRect2D[3], 0.029],
+                  [shadow.shadowRect2D[0], shadow.shadowRect2D[3], 0.029],
+                  [shadow.shadowRect2D[0], shadow.shadowRect2D[1], 0.029],
+                ]}
+                color="#f87171"
+                lineWidth={1.3}
+                dashed
+                dashSize={0.1}
+                gapSize={0.08}
+              />
+
+              {/* Cihazdan insan başına ve perdedeki gölge üst kenarına gölge sınır ışını */}
+              <Line
+                points={[
+                  pos,
+                  [shadow.personXM, shadow.floorSceneY + shadow.personHeightM, shadow.personDistFromScreenM],
+                  [(shadow.shadowRect2D[0] + shadow.shadowRect2D[2]) / 2, shadow.shadowRect2D[3], 0.029],
+                ]}
+                color="#ef4444"
+                lineWidth={1.6}
+                dashed
+                dashSize={0.14}
+                gapSize={0.08}
+              />
+              {showLabels && (
+                <Text
+                  position={[
+                    (shadow.shadowRect2D[0] + shadow.shadowRect2D[2]) / 2,
+                    shadow.shadowRect2D[3] + 0.08,
+                    0.035,
+                  ]}
+                  fontSize={Math.max(0.115, Math.min(0.155, shadow.shadowWidthM * 0.15))}
+                  color="#fecaca"
+                  anchorX="center"
+                  anchorY="bottom"
+                  outlineWidth={0.024}
+                  outlineColor="#020617"
+                >
+                  {`⬛ İNSAN GÖLGESİ (${shadow.shadowWidthM}m × ${shadow.shadowHeightM}m · %${shadow.shadowCoveragePct})`}
+                </Text>
+              )}
+            </>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -289,6 +759,40 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
   const [surfaceTiltDeg, setSurfaceTiltDeg] = useState<number>(0);
   const [surfaceCurvatureDeg, setSurfaceCurvatureDeg] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
+  const [showSceneLabels, setShowSceneLabels] = useState<boolean>(true);
+  const glRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<any>(null);
+
+  const set3DCameraPreset = (preset: 'iso' | 'side' | 'front' | 'top') => {
+    const cam = cameraRef.current;
+    const ctrl = controlsRef.current;
+    if (!cam) return;
+    const zMid = Math.max(1.5, dist * 0.45);
+    if (preset === 'iso') {
+      cam.position.set(Math.max(4.2, subW * 0.95), Math.max(2.6, subH * 1.15), Math.max(6.5, dist * 1.45));
+    } else if (preset === 'side') {
+      cam.position.set(Math.max(6.5, dist * 1.6), 0.3, zMid);
+    } else if (preset === 'front') {
+      cam.position.set(0, 0.2, Math.max(5.5, dist * 1.35));
+    } else if (preset === 'top') {
+      cam.position.set(0, Math.max(7.5, dist * 1.75), zMid);
+    }
+    if (ctrl) {
+      ctrl.target.set(0, 0, preset === 'front' ? 0 : zMid * 0.65);
+      ctrl.update();
+    }
+  };
+
+  // İnsan & Gölge Analizi (Shadow Analysis) parametreleri
+  const [showPerson, setShowPerson] = useState<boolean>(true);
+  const [personHeight, setPersonHeight] = useState<number>(1.75);
+  const [personWidth, setPersonWidth] = useState<number>(0.5);
+  const [personDist, setPersonDist] = useState<number>(1.8);
+  const [personX, setPersonX] = useState<number>(0);
+  const [screenBottomH, setScreenBottomH] = useState<number>(0);
+  const [reportSavedToast, setReportSavedToast] = useState<boolean>(false);
 
   const pickSensor = (k: string) => {
     setSensor(k);
@@ -312,13 +816,25 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
     }
   };
 
+  const updateScreenBottomH = (rawNext: number) => {
+    const next = Math.max(0, round(rawNext, 2));
+    if (yRefMode === 'floor') {
+      const prevCenterFromFloor = screenBottomH + subH / 2;
+      if (Math.abs(posY - prevCenterFromFloor) < 0.06) {
+        setPosY(round(next + subH / 2, 2));
+      }
+    }
+    setScreenBottomH(next);
+  };
+
   const r = useMemo(() => {
     try {
       const surfW = Math.max(0.1, toMeters(subW, unit));
       const surfH = Math.max(0.1, toMeters(subH, unit));
+      const screenBotM = Math.max(0, toMeters(screenBottomH, unit));
       const xM = toMeters(posX, unit);
       const rawYM = toMeters(posY, unit);
-      const yM = yRefMode === 'floor' ? rawYM - surfH / 2 : rawYM;
+      const yM = yRefMode === 'floor' ? rawYM - surfH / 2 - screenBotM : rawYM;
       const zM = Math.max(0.2, toMeters(dist, unit));
 
       let hfovDeg = 53.1;
@@ -384,7 +900,19 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
         surfaceCurvatureDeg,
       });
 
-      return { proj, viewerFov, surfaceFov, camMeta, surfW, surfH, posM: [xM, yM, zM] as [number, number, number], err: null as string | null };
+      const shadow = computeFovShadowAnalysis({
+        devicePos: [xM, yM, zM],
+        surfaceWidthM: surfW,
+        surfaceHeightM: surfH,
+        screenBottomHeightM: Math.max(0, toMeters(screenBottomH, unit)),
+        activeCorners2D: proj.activeCorners2D,
+        personHeightM: Math.max(0.4, toMeters(personHeight, unit)),
+        personWidthM: Math.max(0.2, toMeters(personWidth, unit)),
+        personDistFromScreenM: Math.max(0.05, toMeters(personDist, unit)),
+        personXM: toMeters(personX, unit),
+      });
+
+      return { proj, viewerFov, surfaceFov, shadow, camMeta, surfW, surfH, posM: [xM, yM, zM] as [number, number, number], err: null as string | null };
     } catch (e) {
       return { err: (e as Error).message } as any;
     }
@@ -417,8 +945,48 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
     viewerY,
     surfaceTiltDeg,
     surfaceCurvatureDeg,
+    personHeight,
+    personWidth,
+    personDist,
+    personX,
+    screenBottomH,
     unit,
   ]);
+
+  const sendShadowReportToPdf = () => {
+    if (!r || r.err || !r.shadow) return;
+    let snapshot3dDataUrl: string | undefined;
+    try {
+      if (glRef.current && sceneRef.current && cameraRef.current) {
+        glRef.current.render(sceneRef.current, cameraRef.current);
+        snapshot3dDataUrl = glRef.current.domElement.toDataURL('image/png');
+      }
+    } catch {
+      /* ignore WebGL capture error */
+    }
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      deviceKind,
+      surfaceWidthM: r.surfW,
+      surfaceHeightM: r.surfH,
+      devicePosM: r.posM,
+      hfovDeg: r.proj.hfovDeg,
+      vfovDeg: r.proj.vfovDeg,
+      dfovDeg: r.proj.dfovDeg,
+      incidenceAngleDeg: r.proj.incidenceAngleDeg,
+      coveragePct: r.proj.coveragePct,
+      snapshot3dDataUrl,
+      shadow: r.shadow,
+    };
+    try {
+      localStorage.setItem('agy_fov_shadow_report_v1', JSON.stringify(payload));
+      window.dispatchEvent(new CustomEvent('agy:fov-shadow-updated', { detail: payload }));
+      setReportSavedToast(true);
+      setTimeout(() => setReportSavedToast(false), 2600);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const u = (m: number) => `${round(fromMeters(m, unit), 2)} ${unit}`;
   const N = (l: string, v: number, s: (x: number) => void, step = 'any') => (
@@ -682,12 +1250,55 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
           </div>
         )}
 
-        {/* Hedef Yüzey Ölçüleri */}
-        <div className="space-y-1.5 p-2.5 rounded bg-slate-950/70 border border-slate-800">
-          <div className="text-[11px] font-bold text-amber-300">Hedef Yüzey Ölçüleri</div>
-          <div className="grid grid-cols-2 gap-2">
-            {N(`Yüzey Genişliği (${unit})`, subW, v => setSubW(Math.max(0.1, v)), '0.1')}
-            {N(`Yüzey Yüksekliği (${unit})`, subH, v => setSubH(Math.max(0.1, v)), '0.1')}
+        {/* Hedef Yüzey Ölçüleri & Yerden Başlangıç Yüksekliği */}
+        <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-amber-300">Hedef Yüzey (Perde) &amp; Yerden Yükseklik</span>
+            <span className="text-[10px] font-mono text-sky-300 bg-sky-950/70 px-1.5 py-0.5 rounded border border-sky-800/70">
+              Alt: {screenBottomH.toFixed(2)}{unit} → Üst: {round(screenBottomH + subH, 2)}{unit}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {N(`Genişlik (${unit})`, subW, v => setSubW(Math.max(0.1, v)), '0.1')}
+            {N(`Yükseklik (${unit})`, subH, v => setSubH(Math.max(0.1, v)), '0.1')}
+            {N(`Yerden Başlangıç (${unit})`, screenBottomH, v => updateScreenBottomH(v), '0.1')}
+          </div>
+          <div className="space-y-1 pt-0.5 border-t border-slate-800/80">
+            <div className="flex items-center justify-between text-[10.5px] text-slate-300">
+              <span>↕ Perde Yerden Başlangıç Yüksekliği:</span>
+              <span className="font-mono font-bold text-amber-300">+{screenBottomH.toFixed(2)} {unit}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={3.0}
+              step={0.05}
+              value={Math.min(3.0, screenBottomH)}
+              onChange={e => updateScreenBottomH(+e.target.value)}
+              className="w-full accent-amber-500 h-1.5 cursor-pointer"
+            />
+            <div className="flex flex-wrap items-center gap-1 pt-0.5">
+              {[
+                { label: '0m Zemin', val: 0 },
+                { label: '0.5m Sahne', val: 0.5 },
+                { label: '0.8m Masa', val: 0.8 },
+                { label: '1.2m Duvar', val: 1.2 },
+                { label: '1.6m Yüksek', val: 1.6 },
+              ].map(p => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => updateScreenBottomH(fromMeters(p.val, unit))}
+                  className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
+                    Math.abs(toMeters(screenBottomH, unit) - p.val) < 0.03
+                      ? 'bg-amber-600/80 border-amber-400 text-white font-semibold'
+                      : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -702,7 +1313,8 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                   const next = yRefMode === 'floor' ? 'center' : 'floor';
                   const curM = toMeters(posY, unit);
                   const surfHM = Math.max(0.1, toMeters(subH, unit));
-                  const convertedM = next === 'floor' ? curM + surfHM / 2 : curM - surfHM / 2;
+                  const botM = Math.max(0, toMeters(screenBottomH, unit));
+                  const convertedM = next === 'floor' ? curM + surfHM / 2 + botM : curM - surfHM / 2 - botM;
                   setPosY(round(fromMeters(convertedM, unit), 2));
                   setYRefMode(next);
                 }}
@@ -715,7 +1327,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                 type="button"
                 onClick={() => {
                   setPosX(0);
-                  setPosY(yRefMode === 'floor' ? round(subH / 2, 2) : 0);
+                  setPosY(yRefMode === 'floor' ? round(screenBottomH + subH / 2, 2) : 0);
                   setYaw(0);
                   setPitch(0);
                   setRoll(0);
@@ -728,12 +1340,24 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
           </div>
           <div className="grid grid-cols-3 gap-1.5">
             {N(`X Yanal (${unit})`, posX, setPosX, '0.1')}
-            {N(yRefMode === 'floor' ? `Yükseklik (${unit})` : `Y Merkez (${unit})`, posY, setPosY, '0.1')}
+            {N(yRefMode === 'floor' ? `Yerden Y (${unit})` : `Y Merkez (${unit})`, posY, setPosY, '0.1')}
             {N(`Z Mesafe (${unit})`, dist, v => setDist(Math.max(0.2, v)), '0.1')}
           </div>
           {yRefMode === 'floor' && !r.err && (
-            <div className="text-[10px] text-slate-400 font-mono">
-              Perde: 0–{subH} {unit} · Cihaz perde merkezine göre: {r.posM[1] >= 0 ? '+' : ''}{round(fromMeters(r.posM[1], unit), 2)} {unit}
+            <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-mono">
+              <span>
+                Perde: {round(screenBottomH, 2)}–{round(screenBottomH + subH, 2)} {unit} · Merkeze göre: {r.posM[1] >= 0 ? '+' : ''}{round(fromMeters(r.posM[1], unit), 2)} {unit}
+              </span>
+              {Math.abs(r.posM[1]) > 0.02 && (
+                <button
+                  type="button"
+                  onClick={() => setPosY(round(screenBottomH + subH / 2, 2))}
+                  className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700/70 hover:bg-emerald-900 shrink-0"
+                  title="Cihaz yüksekliğini perde merkezine hizalar"
+                >
+                  🎯 Merkeze Hizala
+                </button>
+              )}
             </div>
           )}
           <div className="space-y-1.5 pt-1">
@@ -800,6 +1424,74 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               <input type="range" min={0} max={180} step={5} value={surfaceCurvatureDeg} onChange={e => setSurfaceCurvatureDeg(+e.target.value)} className="w-full accent-purple-500" />
             </label>
           </div>
+        </div>
+
+        {/* İnsan & Gölge Analizi (Shadow Analysis) Kontrolleri */}
+        <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-rose-800/60">
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] font-bold text-rose-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPerson}
+                onChange={e => setShowPerson(e.target.checked)}
+                className="accent-rose-500"
+              />
+              <span>🚶 İnsan &amp; Gölge Analizi</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setPersonHeight(1.75);
+                setPersonWidth(0.5);
+                setPersonDist(1.8);
+                setPersonX(0);
+                updateScreenBottomH(0);
+              }}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+            >
+              Sıfırla
+            </button>
+          </div>
+
+          {showPerson && (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {N(`Boy (${unit})`, personHeight, v => setPersonHeight(Math.max(0.5, v)), '0.05')}
+                {N(`Omuz (${unit})`, personWidth, v => setPersonWidth(Math.max(0.2, v)), '0.05')}
+                {N(`Perde AltY (${unit})`, screenBottomH, v => updateScreenBottomH(v), '0.1')}
+              </div>
+              <label className="block text-[11px] text-slate-300">
+                <div className="flex justify-between">
+                  <span>Perdeye Uzaklık (Z)</span>
+                  <span className="font-mono text-rose-300">{personDist.toFixed(2)} {unit}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={Math.max(0.5, round(dist - 0.1, 2))}
+                  step={0.05}
+                  value={Math.min(personDist, Math.max(0.5, dist - 0.1))}
+                  onChange={e => setPersonDist(+e.target.value)}
+                  className="w-full accent-rose-500 h-1.5 mt-1 cursor-pointer"
+                />
+              </label>
+              <label className="block text-[11px] text-slate-300">
+                <div className="flex justify-between">
+                  <span>Yanal Konum (X)</span>
+                  <span className="font-mono text-rose-300">{personX >= 0 ? `+${personX.toFixed(2)}` : personX.toFixed(2)} {unit}</span>
+                </div>
+                <input
+                  type="range"
+                  min={-round(subW / 2, 2)}
+                  max={round(subW / 2, 2)}
+                  step={0.05}
+                  value={personX}
+                  onChange={e => setPersonX(+e.target.value)}
+                  className="w-full accent-rose-500 h-1.5 mt-1 cursor-pointer"
+                />
+              </label>
+            </>
+          )}
         </div>
       </div>
 
@@ -915,32 +1607,149 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               </div>
             </div>
 
-            {/* 3D / 2D Görünüm Geçişi */}
-            <div className="flex items-center justify-between">
-              <div className="flex rounded overflow-hidden border border-slate-700 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('3d')}
-                  className={`px-3 py-1 font-semibold ${viewMode === '3d' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-                >
-                  🧊 3D Görüş Konisi &amp; Yüzey İzdüşümü
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('2d')}
-                  className={`px-3 py-1 font-semibold ${viewMode === '2d' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
-                >
-                  📐 2B Yüzey İzdüşüm Planı
-                </button>
+            {/* İnsan & Gölge Analizi Rapor Kartı */}
+            {showPerson && r.shadow && (
+              <div
+                className={`p-3 rounded-lg border text-xs space-y-2 ${
+                  r.shadow.isCastingShadow
+                    ? 'bg-rose-950/40 border-rose-700/80 text-rose-100'
+                    : 'bg-emerald-950/35 border-emerald-700/70 text-emerald-100'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold text-sm flex items-center gap-2">
+                    <span>🕴️ İnsan &amp; Gölge Analizi Raporu</span>
+                    <span className="text-[11px] px-2 py-0.5 rounded bg-slate-950/70 border border-slate-700 font-mono">
+                      {r.shadow.zoneStatusLabel}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={sendShadowReportToPdf}
+                    className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] shadow transition"
+                  >
+                    {reportSavedToast ? '✅ PDF Raporuna Eklendi!' : '📋 Gölge Raporunu PDF Raporuna Ekle'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Gölge Başlangıç Sınırı (Perdeden)</div>
+                    <div className="text-amber-300 font-bold text-xs mt-0.5">
+                      {r.shadow.neverCastsShadow ? 'Gölge Yok (0 m)' : `0 – ${u(r.shadow.shadowEntryDistFromScreenM)}`}
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      Cihazdan: {u(r.shadow.shadowEntryDistFromDeviceM)}
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Mevcut İnsan Konumu</div>
+                    <div className="text-white font-bold text-xs mt-0.5">
+                      Perdeye {u(r.shadow.personDistFromScreenM)}
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      Cihaza: {u(r.shadow.personDistFromDeviceM)} · Boy: {u(r.shadow.personHeightM)}
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Konumdaki Işık Alt Sınırı</div>
+                    <div className="text-sky-300 font-bold text-xs mt-0.5">
+                      Yerden {u(r.shadow.beamBottomAtPersonM)}
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      {r.shadow.headClearanceM >= 0
+                        ? `Baş Üstü Boşluk: +${u(r.shadow.headClearanceM)}`
+                        : `Işığa Giriş: ${u(r.shadow.intrusionHeightM)}`}
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Perdedeki Gölge Ebadı</div>
+                    <div className={`font-bold text-xs mt-0.5 ${r.shadow.isCastingShadow ? 'text-rose-300' : 'text-emerald-300'}`}>
+                      {r.shadow.isCastingShadow
+                        ? `${u(r.shadow.shadowWidthM)} × ${u(r.shadow.shadowHeightM)}`
+                        : '0 m × 0 m (Temiz)'}
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      {r.shadow.isCastingShadow
+                        ? `Alan: ${r.shadow.shadowAreaM2} m² (%${r.shadow.shadowCoveragePct})`
+                        : 'Perdeye gölge düşmüyor'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800">
+                  <b>Mühendislik Özeti:</b> {r.shadow.reportSummaryTr}
+                </div>
+              </div>
+            )}
+
+            {/* 3D / 2D Görünüm Geçişi + Kamera Açıları & Etiket Kontrolü */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex rounded overflow-hidden border border-slate-700 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('3d')}
+                    className={`px-3 py-1 font-semibold ${viewMode === '3d' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    🧊 3D Görüş Konisi &amp; Gölge Simülasyonu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('2d')}
+                    className={`px-3 py-1 font-semibold ${viewMode === '2d' ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'}`}
+                  >
+                    📐 2B Perde İzdüşüm &amp; Gölge Planı
+                  </button>
+                </div>
+
+                {viewMode === '3d' && (
+                  <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-[10.5px]">
+                    <span className="text-slate-400">3B Kamera:</span>
+                    <button type="button" onClick={() => set3DCameraPreset('iso')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200">
+                      Perspektif
+                    </button>
+                    <button type="button" onClick={() => set3DCameraPreset('side')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300">
+                      Yan Kesit
+                    </button>
+                    <button type="button" onClick={() => set3DCameraPreset('front')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300">
+                      Perde Önü
+                    </button>
+                    <button type="button" onClick={() => set3DCameraPreset('top')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300">
+                      Üstten
+                    </button>
+                  </div>
+                )}
+
+                <label className="flex items-center gap-1.5 text-[11px] text-amber-300 cursor-pointer bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showSceneLabels}
+                    onChange={e => setShowSceneLabels(e.target.checked)}
+                    className="accent-amber-500"
+                  />
+                  <span>🏷️ Sahne Etiketleri</span>
+                </label>
               </div>
               <span className="text-[11px] text-slate-400">
-                Açıyı değiştirdiğinizde koni ve yamuk izdüşüm anlık güncellenir
+                ① Perde · ② Kritik Gölge Sınırı · ③ İzleyici Konumu · ④ Cihaz
               </span>
             </div>
 
             {viewMode === '3d' ? (
               <div className="flex-1 min-h-[420px] rounded-lg border border-slate-700 bg-slate-950 overflow-hidden relative">
-                <Canvas camera={{ position: [4.5, 3.2, 7.5], fov: 48 }}>
+                <Canvas
+                  camera={{ position: [4.8, 3.1, 7.6], fov: 48 }}
+                  gl={{ preserveDrawingBuffer: true, antialias: true }}
+                  onCreated={({ gl, scene, camera }) => {
+                    glRef.current = gl;
+                    sceneRef.current = scene;
+                    cameraRef.current = camera as THREE.PerspectiveCamera;
+                  }}
+                >
                   <Suspense fallback={null}>
                     <FovFrustum3DScene
                       pos={r.posM}
@@ -956,8 +1765,11 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                       pitchDeg={pitch}
                       rollDeg={roll}
                       isPortrait={deviceKind === 'projector' && orient === 'portrait'}
+                      showPerson={showPerson}
+                      showLabels={showSceneLabels}
+                      shadow={r.shadow}
                     />
-                    <OrbitControls makeDefault />
+                    <OrbitControls ref={controlsRef} makeDefault />
                   </Suspense>
                 </Canvas>
               </div>
@@ -970,6 +1782,9 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                 hasDigitalKeystone={r.proj.hasDigitalKeystone}
                 centerHit2D={r.proj.centerHit2D}
                 isFullCovered={r.proj.isFullSurfaceCovered}
+                showPerson={showPerson}
+                showLabels={showSceneLabels}
+                shadow={r.shadow}
               />
             )}
           </>
@@ -987,6 +1802,9 @@ function SurfaceFootprint2D({
   hasDigitalKeystone,
   centerHit2D,
   isFullCovered,
+  showPerson,
+  showLabels = true,
+  shadow,
 }: {
   surfW: number;
   surfH: number;
@@ -995,15 +1813,24 @@ function SurfaceFootprint2D({
   hasDigitalKeystone: boolean;
   centerHit2D: [number, number] | null;
   isFullCovered: boolean;
+  showPerson: boolean;
+  showLabels?: boolean;
+  shadow: FovShadowResult;
 }) {
   const xs = [-surfW / 2, surfW / 2, ...corners2D.map(c => c[0]), ...activeCorners2D.map(c => c[0])];
-  const ys = [-surfH / 2, surfH / 2, ...corners2D.map(c => c[1]), ...activeCorners2D.map(c => c[1])];
+  const ys = [
+    -surfH / 2,
+    surfH / 2,
+    ...(shadow.screenBottomHeightM > 0.01 ? [shadow.floorSceneY] : []),
+    ...corners2D.map(c => c[1]),
+    ...activeCorners2D.map(c => c[1]),
+  ];
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
   const span = Math.max(maxX - minX, maxY - minY, 1);
-  const pad = span * 0.14;
+  const pad = span * 0.16;
   const vbX = minX - pad;
   const vbY = -maxY - pad;
   const vbW = maxX - minX + 2 * pad;
@@ -1011,11 +1838,60 @@ function SurfaceFootprint2D({
 
   const rawPolyPoints = corners2D.map(([x, y]) => `${x},${-y}`).join(' ');
   const activePolyPoints = activeCorners2D.map(([x, y]) => `${x},${-y}`).join(' ');
+  const shadowPolySvgPoints = (shadow.shadowPolygonScene2D || []).map(([x, y]) => `${x},${-y}`).join(' ');
   const accent = isFullCovered ? '#22c55e' : '#f59e0b';
+  const fs = span * 0.032;
 
   return (
     <div className="flex-1 min-h-[420px] rounded-lg border border-slate-700 bg-slate-950 p-2 flex flex-col">
       <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="w-full flex-1 max-h-[55vh]">
+        {/* Perde Yerden Yüksekteyse: Perde Altı Duvar / Boşluk ve Zemin Çizgisi */}
+        {shadow.screenBottomHeightM > 0.01 && (
+          <g>
+            <rect
+              x={-surfW / 2}
+              y={surfH / 2}
+              width={surfW}
+              height={shadow.screenBottomHeightM}
+              fill="#0f172a"
+              fillOpacity={0.85}
+              stroke="#475569"
+              strokeDasharray={`${span / 70} ${span / 90}`}
+              strokeWidth={span / 200}
+            />
+            <line
+              x1={-surfW / 2 - span * 0.12}
+              y1={-shadow.floorSceneY}
+              x2={surfW / 2 + span * 0.12}
+              y2={-shadow.floorSceneY}
+              stroke="#64748b"
+              strokeWidth={span / 140}
+            />
+            {showLabels && (
+              <>
+                <text
+                  x={0}
+                  y={surfH / 2 + shadow.screenBottomHeightM / 2 + fs * 0.32}
+                  fill="#7dd3fc"
+                  fontSize={fs * 0.85}
+                  fontWeight="bold"
+                  textAnchor="middle"
+                >
+                  {`↕ Perde Yerden Başlangıç Yüksekliği: +${shadow.screenBottomHeightM.toFixed(2)}m (Üst Kenar: ${(shadow.screenBottomHeightM + surfH).toFixed(2)}m)`}
+                </text>
+                <text
+                  x={surfW / 2 + span * 0.02}
+                  y={-shadow.floorSceneY - fs * 0.2}
+                  fill="#94a3b8"
+                  fontSize={fs * 0.75}
+                  textAnchor="start"
+                >
+                  Zemin (0.00m)
+                </text>
+              </>
+            )}
+          </g>
+        )}
         <rect
           x={-surfW / 2}
           y={-surfH / 2}
@@ -1044,9 +1920,71 @@ function SurfaceFootprint2D({
         {centerHit2D && (
           <circle cx={centerHit2D[0]} cy={-centerHit2D[1]} r={span / 90} fill="#38bdf8" />
         )}
+        {showLabels && (
+          <text
+            x={0}
+            y={-surfH / 2 - span * 0.03}
+            fill="#f8fafc"
+            fontSize={fs}
+            fontWeight="bold"
+            textAnchor="middle"
+          >
+            {`① Hedef Perde / Yüzey (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m · Yerden: +${shadow.screenBottomHeightM.toFixed(2)}m)`}
+          </text>
+        )}
+        {showPerson && shadow.isCastingShadow && shadow.shadowRect2D && (
+          <g>
+            {/* Mühendislik Ölçü Sınır Kutusu (Kesik Çizgi) */}
+            <rect
+              x={shadow.shadowRect2D[0]}
+              y={-shadow.shadowRect2D[3]}
+              width={shadow.shadowWidthM}
+              height={shadow.shadowHeightM}
+              fill="none"
+              stroke="#f87171"
+              strokeDasharray={`${span / 80} ${span / 100}`}
+              strokeWidth={span / 180}
+            />
+            {/* Gerçekçi İnsan Gölgesi Silüeti */}
+            {shadowPolySvgPoints ? (
+              <polygon
+                points={shadowPolySvgPoints}
+                fill="#020617"
+                fillOpacity={0.92}
+                stroke="#ef4444"
+                strokeWidth={span / 140}
+              />
+            ) : (
+              <rect
+                x={shadow.shadowRect2D[0]}
+                y={-shadow.shadowRect2D[3]}
+                width={shadow.shadowWidthM}
+                height={shadow.shadowHeightM}
+                fill="#020617"
+                fillOpacity={0.9}
+                stroke="#ef4444"
+                strokeWidth={span / 130}
+              />
+            )}
+            {showLabels && (
+              <>
+                <text
+                  x={(shadow.shadowRect2D[0] + shadow.shadowRect2D[2]) / 2}
+                  y={-shadow.shadowRect2D[3] - fs * 0.35}
+                  fill="#fecaca"
+                  fontSize={fs * 0.85}
+                  fontWeight="bold"
+                  textAnchor="middle"
+                >
+                  {`⬛ İNSAN GÖLGESİ (${shadow.shadowWidthM}m × ${shadow.shadowHeightM}m · %${shadow.shadowCoveragePct})`}
+                </text>
+              </>
+            )}
+          </g>
+        )}
       </svg>
       <p className="text-[11px] text-slate-400 px-2 pt-1">
-        Beyaz dikdörtgen: Hedef yüzey ({surfW.toFixed(2)}m × {surfH.toFixed(2)}m). Renkli dörtgen: Aktif görüntü izdüşümü{hasDigitalKeystone ? ' (Kesik gri çerçeve: Ham optik ışık konisi)' : ''}.
+        Beyaz dikdörtgen: Hedef perde ({surfW.toFixed(2)}m × {surfH.toFixed(2)}m · Yerden +{shadow.screenBottomHeightM.toFixed(2)}m) · Renkli dörtgen: Aktif optik görüntü izdüşümü{hasDigitalKeystone ? ' (Kesik gri çerçeve: Ham optik ışık konisi)' : ''} · Siyah insan silüeti: İzleyicinin perdede oluşturduğu gerçek gölge izdüşümü.
       </p>
     </div>
   );

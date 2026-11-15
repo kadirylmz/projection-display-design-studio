@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { getLuxColorRGB } from '../engine/photometrics';
+import { getLuxColorRGB, simulatePhotometricLux, Projector3DConfig, Surface3DConfig } from '../engine/photometrics';
 import { computeViewingQualityAnalysis } from '../engine/lux';
 import {
   computeEffectiveMultiProjectorPixelArea,
@@ -11,6 +11,7 @@ import {
 } from '../engine/feasibility';
 import { LengthUnit, toMeters, fromMeters, round } from '../engine/units';
 import { usePhotometricStore } from '../photometricStore';
+import { usePlannerStore } from '../plannerStore';
 import { useProjectStore } from '../projectStore';
 import {
   CATALOG_BRANDS,
@@ -30,34 +31,194 @@ function loadStoredConfig() {
 
 export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: LengthUnit }) {
   const initial = useMemo(() => loadStoredConfig(), []);
+  const plannerSurfaces = usePlannerStore(s => s.surfaces);
+  const {
+    selectedSurfaceId,
+    screenW: storeScreenW,
+    screenH: storeScreenH,
+    geometry: storeGeometry,
+    curveRadius: storeCurveRadius,
+    curveAngle: storeCurveAngle,
+    inclineAngle: storeInclineAngle,
+    screenGain: storeScreenGain,
+    surfaceReflectance: storeReflectance,
+    ambientLux: storeAmbientLux,
+    projectors: storeProjectors,
+    blendOverlap: storeBlendOverlap,
+    isManualLux: storeIsManualLux,
+    manualAvgLux: storeManualAvgLux,
+    manualMinLux: storeManualMinLux,
+    manualMaxLux: storeManualMaxLux,
+    defaultProjectorLumens,
+    setScreenW: setStoreScreenW,
+    setScreenH: setStoreScreenH,
+    setScreenGain: setStoreScreenGain,
+    setSurfaceReflectance: setStoreReflectance,
+    setAmbientLux: setStoreAmbientLux,
+    setProjectors: setStoreProjectors,
+    importFromPlannerSurface,
+    saveSurfacePhotometric,
+  } = usePhotometricStore();
+
+  const activeStoreProjs = useMemo(
+    () => storeProjectors.filter(p => p.enabled),
+    [storeProjectors]
+  );
 
   // Bağımsız Proje Bilgileri (Kalıcı State)
   const [projectName, setProjectName] = useState<string>(initial?.projectName ?? 'Sergi Alanı Projeksiyon Parlaklık & Lens Hesabı');
   const [preparedBy, setPreparedBy] = useState<string>(initial?.preparedBy ?? 'AV & Projeksiyon Tasarım Ekibi');
 
-  // 1. Ekran Geometrisi
-  const [screenW, setScreenW] = useState<number>(initial?.screenW ?? 12.0); // metre
-  const [screenH, setScreenH] = useState<number>(initial?.screenH ?? 3.5);  // metre
+  // 1. Ekran Geometrisi (usePhotometricStore ile senkronize)
+  const [screenW, setScreenWState] = useState<number>(() => (storeScreenW > 0 ? storeScreenW : (initial?.screenW ?? 12.0)));
+  const [screenH, setScreenHState] = useState<number>(() => (storeScreenH > 0 ? storeScreenH : (initial?.screenH ?? 3.0)));
 
-  // 2. Projektör & Lens
-  const [projCount, setProjCount] = useState<number>(initial?.projCount ?? 3);
-  const [lumensPerProj, setLumensPerProj] = useState<number>(initial?.lumensPerProj ?? 7000); // Lümen
+  // 2. Projektör & Lens (usePhotometricStore ile senkronize)
+  const [projCount, setProjCountState] = useState<number>(() => (activeStoreProjs.length > 0 ? activeStoreProjs.length : (initial?.projCount ?? 3)));
+  const [lumensPerProj, setLumensPerProjState] = useState<number>(() => (activeStoreProjs[0]?.ansiLumens ?? initial?.lumensPerProj ?? 10000));
   const [lumenStandard, setLumenStandard] = useState<'ansi' | 'iso' | 'center'>(initial?.lumenStandard ?? 'ansi');
-  const [throwDistM, setThrowDistM] = useState<number>(initial?.throwDistM ?? 4.2);        // Atım mesafesi (m)
-  const [throwRatio, setThrowRatio] = useState<number>(initial?.throwRatio ?? 0.80);       // Lens Throw Ratio (TR)
-  const [opticalEfficiency, setOpticalEfficiency] = useState<number>(initial?.opticalEfficiency ?? 90); // %90 Lens & optik verimi
-  const [calibrationFactor, setCalibrationFactor] = useState<number>(initial?.calibrationFactor ?? 92); // %92 Kalibrasyon & yaşlanma korunumu
+  const [throwDistM, setThrowDistMState] = useState<number>(() =>
+    activeStoreProjs[0]?.pos?.[2] ? Math.abs(activeStoreProjs[0].pos[2]) : (initial?.throwDistM ?? 5.0)
+  );
+  const [throwRatio, setThrowRatioState] = useState<number>(() => (activeStoreProjs[0]?.throwRatio ?? initial?.throwRatio ?? 0.80));
+  const [opticalEfficiency, setOpticalEfficiencyState] = useState<number>(() =>
+    activeStoreProjs[0]?.efficiency ? Math.round(activeStoreProjs[0].efficiency * 100) : (initial?.opticalEfficiency ?? 90)
+  );
+  // Kalibrasyon varsayılanı %100 (Optik verim η içinde) — Detaylı Görünüm ve Rapor ile birebir aynı
+  const [calibrationFactor, setCalibrationFactor] = useState<number>(100);
 
-  // 3. Ekran ve Ortam Koşulları
-  const [screenGain, setScreenGain] = useState<number>(initial?.screenGain ?? 1.0);  // Kazanç
-  const [surfaceReflectance, setSurfaceReflectance] = useState<number>(initial?.surfaceReflectance ?? 0.85); // Yüzey yansıtma katsayısı ρ
-  const [ambientLux, setAmbientLux] = useState<number>(initial?.ambientLux ?? 50);   // Müze ortam ışığı (Lux)
-  const [viewDistM, setViewDistM] = useState<number>(initial?.viewDistM ?? 4.5);     // İzleme mesafesi (m)
-  const [nativeResW, setNativeResW] = useState<number>(initial?.nativeResW ?? 1920); // Projektör native X çözünürlük
-  const [nativeResH, setNativeResH] = useState<number>(initial?.nativeResH ?? 1080); // Projektör native Y çözünürlük
-  const [offAxisAngleDeg, setOffAxisAngleDeg] = useState<number>(initial?.offAxisAngleDeg ?? 0); // Eksen dışı açı (°)
+  // 3. Ekran ve Ortam Koşulları (usePhotometricStore ile senkronize)
+  const [screenGain, setScreenGainState] = useState<number>(() => (storeScreenGain > 0 ? storeScreenGain : (initial?.screenGain ?? 1.0)));
+  const [surfaceReflectance, setSurfaceReflectanceState] = useState<number>(() => (storeReflectance > 0 ? storeReflectance : (initial?.surfaceReflectance ?? 0.85)));
+  const [ambientLux, setAmbientLuxState] = useState<number>(() => (storeAmbientLux >= 0 ? storeAmbientLux : (initial?.ambientLux ?? 20)));
+  const [viewDistM, setViewDistM] = useState<number>(initial?.viewDistM ?? 4.5);
+  const [nativeResW, setNativeResW] = useState<number>(initial?.nativeResW ?? 1920);
+  const [nativeResH, setNativeResH] = useState<number>(initial?.nativeResH ?? 1200);
+  const [offAxisAngleDeg, setOffAxisAngleDeg] = useState<number>(initial?.offAxisAngleDeg ?? 0);
   const [catProjId, setCatProjId] = useState<string>('');
   const [catLensId, setCatLensId] = useState<string>('');
+
+  // Detaylı Görünümden veya Proje Yüzeyinden değişim olduğunda Sade Görünümü otomatik senkronize et
+  useEffect(() => {
+    if (storeScreenW > 0) setScreenWState(storeScreenW);
+    if (storeScreenH > 0) setScreenHState(storeScreenH);
+    if (storeScreenGain > 0) setScreenGainState(storeScreenGain);
+    if (storeReflectance > 0) setSurfaceReflectanceState(storeReflectance);
+    setAmbientLuxState(storeAmbientLux);
+    if (activeStoreProjs.length > 0) {
+      setProjCountState(activeStoreProjs.length);
+      setLumensPerProjState(activeStoreProjs[0].ansiLumens);
+      setOpticalEfficiencyState(Math.round((activeStoreProjs[0].efficiency || 0.9) * 100));
+      const d = Math.abs(activeStoreProjs[0].pos[2] || activeStoreProjs[0].pos[1] || 5.0);
+      if (d > 0.1) setThrowDistMState(round(d, 2));
+      if (activeStoreProjs[0].throwRatio > 0.1) setThrowRatioState(activeStoreProjs[0].throwRatio);
+    }
+  }, [
+    selectedSurfaceId,
+    storeScreenW,
+    storeScreenH,
+    storeScreenGain,
+    storeReflectance,
+    storeAmbientLux,
+    activeStoreProjs.length,
+    activeStoreProjs[0]?.ansiLumens,
+    activeStoreProjs[0]?.efficiency,
+    activeStoreProjs[0]?.throwRatio,
+    activeStoreProjs[0]?.pos?.[2],
+  ]);
+
+  // Sade Görünümden yapılan değişiklikleri usePhotometricStore'a da yaz (Detaylı Görünüm ile tek kaynak!)
+  const syncProjectorsToStore = useCallback(
+    (
+      nextW: number,
+      nextH: number,
+      nextCount: number,
+      nextLumens: number,
+      nextOptEffPct: number,
+      nextCalPct: number,
+      nextThrowDist: number,
+      nextTR: number
+    ) => {
+      const eff = Math.max(0.1, Math.min(1.0, (nextOptEffPct / 100) * (nextCalPct / 100)));
+      const colors = ['#38bdf8', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6'];
+      const halfW = nextW / 2;
+      const singleW = nextCount > 1
+        ? Math.max(nextThrowDist / Math.max(0.2, nextTR), nextW / Math.max(1, nextCount - (nextCount - 1) * 0.15))
+        : Math.max(nextW, nextThrowDist / Math.max(0.2, nextTR));
+      const stepW = nextCount > 1 ? (nextW - singleW) / (nextCount - 1) : 0;
+      const centerY = +(nextH / 2).toFixed(2);
+
+      const updated: Projector3DConfig[] = Array.from({ length: nextCount }, (_, idx) => {
+        const existing = storeProjectors[idx];
+        const posX = nextCount > 1 ? +(-halfW + idx * stepW + singleW / 2).toFixed(2) : 0;
+        return {
+          id: existing?.id || `proj-sync-${idx + 1}`,
+          name: existing?.name || `Projektör ${idx + 1}`,
+          model: existing?.model || 'Proje Projektörü',
+          ansiLumens: nextLumens,
+          efficiency: +eff.toFixed(3),
+          pos: [posX, centerY, +nextThrowDist.toFixed(2)],
+          target: [posX, centerY, 0],
+          yawDeg: existing?.yawDeg ?? 0,
+          pitchDeg: existing?.pitchDeg ?? 0,
+          rollDeg: existing?.rollDeg ?? 0,
+          throwRatio: nextTR,
+          zoom: existing?.zoom ?? 1.0,
+          lensModel: existing?.lensModel || `Lens TR ${nextTR}:1`,
+          cornerUniformity: existing?.cornerUniformity ?? 0.85,
+          photometricSource: existing?.photometricSource ?? 'ansi_cosine',
+          iesData: existing?.iesData,
+          enabled: true,
+          color: existing?.color || colors[idx % colors.length],
+        };
+      });
+      setStoreProjectors(updated);
+    },
+    [storeProjectors, setStoreProjectors]
+  );
+
+  const setScreenW = (val: number) => {
+    setScreenWState(val);
+    setStoreScreenW(val);
+    syncProjectorsToStore(val, screenH, projCount, lumensPerProj, opticalEfficiency, calibrationFactor, throwDistM, throwRatio);
+  };
+  const setScreenH = (val: number) => {
+    setScreenHState(val);
+    setStoreScreenH(val);
+    syncProjectorsToStore(screenW, val, projCount, lumensPerProj, opticalEfficiency, calibrationFactor, throwDistM, throwRatio);
+  };
+  const setProjCount = (val: number) => {
+    setProjCountState(val);
+    syncProjectorsToStore(screenW, screenH, val, lumensPerProj, opticalEfficiency, calibrationFactor, throwDistM, throwRatio);
+  };
+  const setLumensPerProj = (val: number) => {
+    setLumensPerProjState(val);
+    syncProjectorsToStore(screenW, screenH, projCount, val, opticalEfficiency, calibrationFactor, throwDistM, throwRatio);
+  };
+  const setOpticalEfficiency = (val: number) => {
+    setOpticalEfficiencyState(val);
+    syncProjectorsToStore(screenW, screenH, projCount, lumensPerProj, val, calibrationFactor, throwDistM, throwRatio);
+  };
+  const setThrowDistM = (val: number) => {
+    setThrowDistMState(val);
+    syncProjectorsToStore(screenW, screenH, projCount, lumensPerProj, opticalEfficiency, calibrationFactor, val, throwRatio);
+  };
+  const setThrowRatio = (val: number) => {
+    setThrowRatioState(val);
+    syncProjectorsToStore(screenW, screenH, projCount, lumensPerProj, opticalEfficiency, calibrationFactor, throwDistM, val);
+  };
+  const setScreenGain = (val: number) => {
+    setScreenGainState(val);
+    setStoreScreenGain(val);
+  };
+  const setSurfaceReflectance = (val: number) => {
+    setSurfaceReflectanceState(val);
+    setStoreReflectance(val);
+  };
+  const setAmbientLux = (val: number) => {
+    setAmbientLuxState(val);
+    setStoreAmbientLux(val);
+  };
 
   // Değerler değiştikçe LocalStorage'a kaydet (Asla başa dönmez!)
   useEffect(() => {
@@ -89,10 +250,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
   const [hoveredPointLux, setHoveredPointLux] = useState<SurfaceLuxPoint | null>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
 
-  // Zustand Store fonksiyonu (Ana rapora aktarma)
-  const saveSurfacePhotometric = usePhotometricStore(state => state.saveSurfacePhotometric);
-
-  // Matematiksel Hesaplamalar
+  // Matematiksel Hesaplamalar (Detaylı 2B/3B Simülasyon Motoru ile Tek Kaynak!)
   const calc = useMemo(() => {
     // 1. Alan (m²)
     const areaM2 = +(screenW * screenH).toFixed(2);
@@ -104,7 +262,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     const ansiEquivalentLumens = Math.round(totalLumens * (lumenStandard === 'center' ? 0.82 : lumenStandard === 'iso' ? 1.05 : 1.0));
     const isoEquivalentLumens = Math.round(ansiEquivalentLumens * 0.95);
 
-    // 3. Teorik Ortalama Lux (Kayıpsız)
+    // 3. Teorik Ortalama Lux (Kayıpsız Nominal: Φ_nom / A)
     const theoreticalAvgLux = Math.round(totalLumens / Math.max(0.1, areaM2));
 
     // 4. Lens, Optik, Kalibrasyon & Yaşlanma Kayıpları
@@ -114,74 +272,103 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     const effLumens = Math.round(totalLumens * netEfficiencyRatio);
     const lostLumens = Math.max(0, totalLumens - effLumens);
 
-    // 5. Birden Fazla Projektörün Işık Katkısı & Ortalama Ekran Aydınlığı (Lux)
+    // 5. Teorik Efektif Ortalama Lux (Φ_eff / A — 2B ideal alan ortalaması)
     const singleProjNominalLux = Math.round(lumensPerProj / Math.max(0.1, areaM2));
     const singleProjEffLux = Math.round((effLumens / Math.max(1, projCount)) / Math.max(0.1, areaM2));
-    const avgLux = Math.round(effLumens / Math.max(0.1, areaM2));
+    const theoreticalEffAvgLux = Math.round(effLumens / Math.max(0.1, areaM2));
 
-    // Lens Geometrisi (Tek projektörün açtığı görüntü boyutu)
+    // Lens Geometrisi (Tek projektörün açtığı görüntü boyutu — 16:10 WUXGA)
     const singleW = +(throwDistM / Math.max(0.1, throwRatio)).toFixed(2);
-    const singleH = +(singleW / 1.7778).toFixed(2); // 16:9 varsayım
+    const singleH = +(singleW / 1.6).toFixed(2);
     const totalCoverW = +(projCount * singleW).toFixed(2);
     const overlapM = projCount > 1 ? +((totalCoverW - screenW) / (projCount - 1)).toFixed(2) : 0;
     const overlapPct = projCount > 1 && singleW > 0 ? Math.round((overlapM / singleW) * 100) : 0;
     const unblendedOverlapLux = projCount > 1 ? singleProjEffLux * 2 : singleProjEffLux;
 
-    // Fiziksel Işık Düzgünlüğü (Uniformity U0) Hesabı:
-    // Lensin iç optik düşüşü (baz: %82) + Kapsama alanı ve Overlap geometrisi
-    let calculatedU0 = 82;
+    // 6. 3B Noktadan Noktaya Fotometrik LuxField Simülasyonu (Detaylı Görünüm ile BİREBİR AYNI MOTOR!)
+    const surface3D: Surface3DConfig = {
+      widthM: screenW,
+      heightM: screenH,
+      geometry: storeGeometry || 'flat',
+      radiusM: storeCurveRadius || 6.0,
+      curveAngleDeg: storeCurveAngle || 90,
+      inclineAngleDeg: storeInclineAngle || 0,
+      screenGain: screenGain * surfaceReflectance,
+      reflectance: surfaceReflectance,
+      ambientLux,
+    };
 
-    if (projCount === 1) {
-      // Tek projektörde ekran taşması / kapsama analizi
-      const covW = Math.min(1.0, singleW / Math.max(0.1, screenW));
-      const covH = Math.min(1.0, singleH / Math.max(0.1, screenH));
-      const coverage = Math.min(covW, covH);
-      calculatedU0 = Math.round(82 * Math.pow(coverage, 1.8));
-    } else {
-      // Çoklu projektörde örtüşme (overlap) ve kapsama analizi
-      const covW = Math.min(1.0, totalCoverW / Math.max(0.1, screenW));
-      const covH = Math.min(1.0, singleH / Math.max(0.1, screenH));
-      const coverage = Math.min(covW, covH);
+    const canUseStoreProjs =
+      activeStoreProjs.length === projCount &&
+      Math.abs((activeStoreProjs[0]?.ansiLumens || 0) - lumensPerProj) < 1 &&
+      Math.abs((activeStoreProjs[0]?.throwRatio || 0) - throwRatio) < 0.01;
 
-      if (overlapPct >= 15 && overlapPct <= 30) {
-        // İdeal blend aralığı: bindirme sayesinde homojenlik mükemmeldir
-        calculatedU0 = Math.round(85 * coverage);
-      } else if (overlapPct > 30) {
-        // Fazla örtüşme: merkezde gereksiz ışık birikmesi
-        calculatedU0 = Math.round(78 * coverage);
-      } else if (overlapPct >= 5) {
-        // Düşük örtüşme: hafif dalgalanma
-        calculatedU0 = Math.round(72 * coverage);
-      } else if (overlapPct >= 0) {
-        // Neredeyse sıfır örtüşme
-        calculatedU0 = Math.round(62 * coverage);
-      } else {
-        // Negatif örtüşme (projektörler arasında boşluk/kör nokta var)
-        calculatedU0 = Math.max(25, Math.round(50 + overlapPct * 0.8));
-      }
-    }
-    const uniformityU0 = Math.max(20, Math.min(95, calculatedU0));
+    const halfW = screenW / 2;
+    const simSingleW = projCount > 1
+      ? Math.max(throwDistM / Math.max(0.2, throwRatio), screenW / Math.max(1, projCount - (projCount - 1) * 0.15))
+      : Math.max(screenW, throwDistM / Math.max(0.2, throwRatio));
+    const simStepW = projCount > 1 ? (screenW - simSingleW) / (projCount - 1) : 0;
+    const centerY = +(screenH / 2).toFixed(2);
 
-    // Min ve Max Lux Değerleri:
-    // Homojenliğe göre gerçek minimum ve maksimum aydınlık
-    const minLux = Math.round(avgLux * (uniformityU0 / 100));
-    const maxLux = Math.round(avgLux * (1 + (1 - uniformityU0 / 100) * 0.65));
+    const projectors3D: Projector3DConfig[] = canUseStoreProjs
+      ? activeStoreProjs.map(p => ({
+          ...p,
+          ansiLumens: Math.round(p.ansiLumens * standardFactor),
+          efficiency: +netEfficiencyRatio.toFixed(3),
+        }))
+      : Array.from({ length: projCount }, (_, idx) => {
+          const posX = projCount > 1 ? +(-halfW + idx * simStepW + simSingleW / 2).toFixed(2) : 0;
+          return {
+            id: `quick-pj-${idx + 1}`,
+            name: `PJ ${idx + 1}`,
+            model: 'Proje Projektörü',
+            ansiLumens: Math.round(lumensPerProj * standardFactor),
+            efficiency: +netEfficiencyRatio.toFixed(3),
+            pos: [posX, centerY, +throwDistM.toFixed(2)],
+            target: [posX, centerY, 0],
+            yawDeg: 0,
+            pitchDeg: 0,
+            rollDeg: 0,
+            throwRatio,
+            zoom: 1.0,
+            cornerUniformity: 0.85,
+            photometricSource: 'ansi_cosine',
+            enabled: true,
+          };
+        });
 
-    // 6. Ekran Kazancı (Gain) & 7. Yüzey Yansıtma Katsayısı (ρ) -> Gerçekçi Parlaklık
+    const simResult = simulatePhotometricLux(surface3D, projectors3D, 30, 20, storeBlendOverlap);
+
+    // Ana Lux, Min, Max ve Homojenlik: Detaylı Görünüm ile birebir aynı (Simüle LuxField veya Manuel Saha Ölçümü)
+    const avgLux = storeIsManualLux ? Math.round(storeManualAvgLux) : Math.round(simResult.avgLux);
+    const minLux = storeIsManualLux ? Math.round(storeManualMinLux) : Math.round(simResult.minLux);
+    const maxLux = storeIsManualLux ? Math.round(storeManualMaxLux) : Math.round(simResult.maxLux);
+    const uniformityU0 = avgLux > 0 ? Math.round((minLux / avgLux) * 100) : 0;
+    const uniformityU1 = maxLux > 0 ? round(minLux / maxLux, 3) : 0;
+
+    // 9-Nokta Eşit ve Ağırlıklı Simülasyon Ortalamaları
+    const ansi9EqualAvgLux = Math.round(simResult.ansiAvgLux);
+    const ansi9Weights = [1, 2, 1, 2, 4, 2, 1, 2, 1];
+    const ansi9WeightedSum = simResult.ansi9Points.reduce((s, p, idx) => s + p.lux * (ansi9Weights[idx] || 1), 0);
+    const ansi9WeightTotal = simResult.ansi9Points.reduce((s, _, idx) => s + (ansi9Weights[idx] || 1), 0);
+    const ansi9WeightedAvgLux = ansi9WeightTotal > 0 ? Math.round(ansi9WeightedSum / ansi9WeightTotal) : ansi9EqualAvgLux;
+
+    // 7. Ekran Kazancı (Gain) & Yüzey Yansıtma Katsayısı (ρ) -> Gerçekçi Parlaklık (Simüle LuxField kaynaklı, Detaylı Görünüm ile aynı!)
     const theoreticalNits = Math.round((theoreticalAvgLux * screenGain) / Math.PI);
     const idealGainNits = Math.round((avgLux * screenGain) / Math.PI);
     const nits = Math.round((avgLux * screenGain * surfaceReflectance) / Math.PI);
-    const footLambert = +(nits * 0.2919).toFixed(1);
+    const theoreticalEffNits = Math.round((theoreticalEffAvgLux * screenGain * surfaceReflectance) / Math.PI);
+    const footLambert = +(nits / 3.426259).toFixed(1);
 
-    // 8. Ortam Işığı Etkisi & Ortam Kontrast Oranı (ACR)
+    // 8. Ortam Işığı Etkisi & Ortam Kontrast Oranı (ACR) — Detaylı Görünüm ile aynı!
     const ambientNits = +((ambientLux * screenGain * surfaceReflectance) / Math.PI).toFixed(1);
-    const acr = +((avgLux + ambientLux) / Math.max(1, ambientLux)).toFixed(1);
+    const acr = ambientLux > 0 ? +((avgLux + ambientLux) / Math.max(1, ambientLux)).toFixed(1) : 999;
 
     // Dinamik Homojenlik ve Mühendislik Değerlendirmesi
     let uniformityEvaluation = {
       title: 'Mükemmel Homojenlik (Müze & Sergi Standardı)',
       badgeClass: 'bg-emerald-950 text-emerald-300 border-emerald-700',
-      description: `Bu kurulumda hesaplanan %${uniformityU0} homojenlik değeri, profesyonel müze ve galeri standartlarına tam uyumludur. İzleyicinin gözü köşelerde ve kenarlarda kararma (vinyet) algılamaz. Renk ve ton dengesi tüm perdede eşittir.`,
+      description: `Bu kurulumda simüle edilen %${uniformityU0} homojenlik değeri, profesyonel müze ve galeri standartlarına tam uyumludur. İzleyicinin gözü köşelerde ve kenarlarda kararma (vinyet) algılamaz. Renk ve ton dengesi tüm perdede eşittir.`,
     };
 
     if (uniformityU0 < 60) {
@@ -194,7 +381,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       uniformityEvaluation = {
         title: 'Kabul Edilebilir Düzgünlük (Hafif Kenar Düşüşü)',
         badgeClass: 'bg-amber-950 text-amber-300 border-amber-700',
-        description: `Hesaplanan %${uniformityU0} homojenlik değeri genel sergiler için kabul edilebilir toleranstadır. Köşelerde standart lens optik düşüşüne bağlı hafif ışık azalması görülür, ancak izleme deneyimini bozmaz.`,
+        description: `Simüle edilen %${uniformityU0} homojenlik değeri genel sergiler için kabul edilebilir toleranstadır. Köşelerde standart lens optik düşüşüne bağlı hafif ışık azalması görülür, ancak izleme deneyimini bozmaz.`,
       };
     }
 
@@ -202,13 +389,13 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
     let evalStatus = {
       badge: '✓ İdeal Seviye (Müze & Sergi)',
       badgeClass: 'bg-emerald-950 text-emerald-400 border-emerald-700',
-      description: 'Müze, galeri ve karanlık/yarı karanlık sergiler için gözü yormayan, net ve canlı bir parlaklık seviyesindedir.',
+      description: `Simüle edilen ${avgLux} Lux (Teorik Φ_eff/A: ${theoreticalEffAvgLux} lx) aydınlık; müze, galeri ve karanlık/yarı karanlık sergiler için gözü yormayan, net ve canlı bir parlaklık seviyesindedir.`,
     };
     if (avgLux < 200) {
       evalStatus = {
         badge: '⚠ Düşük Parlaklık (Karanlık Şart)',
         badgeClass: 'bg-amber-950 text-amber-400 border-amber-700',
-        description: 'Ekran aydınlığı 200 Lux altındadır; ortamın tamamen karartılması (blackout) şarttır.',
+        description: `Simüle ekran aydınlığı (${avgLux} Lux; Teorik Φ_eff/A: ${theoreticalEffAvgLux} lx) 200 Lux altındadır; ortamın tamamen karartılması (blackout) şarttır.`,
       };
     } else if (avgLux > 700) {
       evalStatus = {
@@ -236,7 +423,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       ambientLux,
       nativeContrast: 2000,
       uniformityU0,
-      uniformityU1: Math.min(98, uniformityU0 + 6),
+      uniformityU1: Math.round(uniformityU1 * 100),
       projectorCount: projCount,
       overlapPct: Math.max(0, overlapPct),
       colorCalibrated: calibrationFactor >= 90,
@@ -247,7 +434,8 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       ? getCompatibleCatalogLenses(selectedCatProj).find(l => l.id === catLensId)
       : undefined;
 
-    const pointLuxDist = computeSurfacePointLuxDistribution({
+    // 9-Bölge Noktasal Lux Haritası doğrudan 3B SimResult ANSI 9-Nokta matrisinden türetilir (Detaylı Görünüm ile birebir aynı!)
+    const basePointLuxDist = computeSurfacePointLuxDistribution({
       widthM: screenW,
       heightM: screenH,
       cols: projCount,
@@ -259,6 +447,51 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       reflectance: surfaceReflectance,
       ambientLux,
     });
+    const zoneLabels = [
+      'Sol-Üst Köşe', 'Üst-Orta Kenar', 'Sağ-Üst Köşe',
+      'Sol-Orta Kenar', 'Tam Merkez (Optik Eksen)', 'Sağ-Orta Kenar',
+      'Sol-Alt Köşe', 'Alt-Orta Kenar', 'Sağ-Alt Köşe',
+    ];
+    const syncedZones9: SurfaceLuxPoint[] = simResult.ansi9Points.length === 9
+      ? simResult.ansi9Points.map((pt, idx) => {
+          const zKind: 'corner' | 'edge' | 'center' =
+            idx === 4 ? 'center' : (idx === 0 || idx === 2 || idx === 6 || idx === 8) ? 'corner' : 'edge';
+          const ptLux = Math.round(pt.lux);
+          const ptNits = round((ptLux * screenGain * surfaceReflectance) / Math.PI, 1);
+          const ptFl = round(ptNits / 3.426259, 1);
+          const pctOfAvg = avgLux > 0 ? Math.round((ptLux / avgLux) * 100) : 100;
+          const pctOfPeak = maxLux > 0 ? Math.round((ptLux / maxLux) * 100) : 100;
+          return {
+            id: `p${idx + 1}`,
+            label: `P${idx + 1} · ${zoneLabels[idx] || `Nokta ${idx + 1}`}`,
+            zoneKind: zKind,
+            normX: +(pt.xM / Math.max(0.1, screenW)).toFixed(2),
+            normY: +(pt.yM / Math.max(0.1, screenH)).toFixed(2),
+            xM: pt.xM,
+            yM: pt.yM,
+            lux: ptLux,
+            nits: ptNits,
+            fl: ptFl,
+            pctOfAvg,
+            pctOfPeak,
+            statusLabel: pctOfAvg >= 90 ? 'İdeal Homojen' : pctOfAvg >= 75 ? 'Normal Kenar Düşüşü' : 'Köşe Vinyet Bölgesi',
+          };
+        })
+      : basePointLuxDist.zones9;
+    const cornerPts = syncedZones9.filter(z => z.zoneKind === 'corner');
+    const edgePts = syncedZones9.filter(z => z.zoneKind === 'edge');
+    const centerPt = syncedZones9.find(z => z.zoneKind === 'center') || syncedZones9[4];
+    const cornerAvgLux = cornerPts.length > 0 ? Math.round(cornerPts.reduce((s, p) => s + p.lux, 0) / cornerPts.length) : minLux;
+    const edgeAvgLux = edgePts.length > 0 ? Math.round(edgePts.reduce((s, p) => s + p.lux, 0) / edgePts.length) : avgLux;
+    const peakCenterLux = centerPt ? centerPt.lux : maxLux;
+    const pointLuxDist = {
+      ...basePointLuxDist,
+      zones9: syncedZones9,
+      peakCenterLux,
+      cornerAvgLux,
+      edgeAvgLux,
+      centerToCornerDropPct: peakCenterLux > 0 ? round(Math.max(0, (1 - cornerAvgLux / peakCenterLux) * 100), 1) : 0,
+    };
 
     const effectivePixelArea = computeEffectiveMultiProjectorPixelArea({
       widthM: screenW,
@@ -311,6 +544,8 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       ansiEquivalentLumens,
       isoEquivalentLumens,
       theoreticalAvgLux,
+      theoreticalEffAvgLux,
+      theoreticalEffNits,
       netEfficiencyPct,
       totalLossPct,
       effLumens,
@@ -319,9 +554,12 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       singleProjEffLux,
       unblendedOverlapLux,
       avgLux,
+      ansi9EqualAvgLux,
+      ansi9WeightedAvgLux,
       minLux,
       maxLux,
       uniformityU0,
+      uniformityU1,
       uniformityEvaluation,
       theoreticalNits,
       idealGainNits,
@@ -340,8 +578,38 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       effectivePixelArea,
       feasibility,
       recommendations,
+      simResult,
     };
-  }, [screenW, screenH, projCount, lumensPerProj, lumenStandard, throwDistM, throwRatio, opticalEfficiency, calibrationFactor, screenGain, surfaceReflectance, ambientLux, viewDistM, nativeResW, nativeResH, offAxisAngleDeg, catProjId, catLensId]);
+  }, [
+    screenW,
+    screenH,
+    projCount,
+    lumensPerProj,
+    lumenStandard,
+    throwDistM,
+    throwRatio,
+    opticalEfficiency,
+    calibrationFactor,
+    screenGain,
+    surfaceReflectance,
+    ambientLux,
+    viewDistM,
+    nativeResW,
+    nativeResH,
+    offAxisAngleDeg,
+    catProjId,
+    catLensId,
+    storeGeometry,
+    storeCurveRadius,
+    storeCurveAngle,
+    storeInclineAngle,
+    storeBlendOverlap,
+    storeIsManualLux,
+    storeManualAvgLux,
+    storeManualMinLux,
+    storeManualMaxLux,
+    activeStoreProjs,
+  ]);
 
   const heatmapCanvasRef = useRef<HTMLCanvasElement>(null);
   const [heatmapDataUrl, setHeatmapDataUrl] = useState<string>('');
@@ -544,17 +812,37 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
 
   // Ana Rapor Modülüne Kaydet
   const handleSaveToMainReport = () => {
-    const standaloneId = 'quick-standalone-surface';
-    const surfaceTitle = projectName || 'Bağımsız Projeksiyon Alanı';
+    const matchedSurf = plannerSurfaces.find(s => s.id === selectedSurfaceId);
+    const targetSurfaceId = matchedSurf ? matchedSurf.id : 'quick-standalone-surface';
+    const surfaceTitle = matchedSurf ? matchedSurf.name : (projectName || 'Bağımsız Projeksiyon Alanı');
 
     // 1. Canlı 2B Isı Haritası görseli üret
     const snapshotUrl = renderHeatmapToCanvas();
 
+    // Her projektör için bağımsız dağılım satırı üret (PDF Rapor Çapraz Doğrulama Motoru uyumlu)
+    const stepX = projCount > 1 ? Math.max(0, (screenW - calc.singleW) / (projCount - 1)) : 0;
+    const indivRows = Array.from({ length: projCount }, (_, idx) => {
+      const startX = projCount > 1 ? +(idx * stepX).toFixed(2) : +Math.max(0, (screenW - calc.singleW) / 2).toFixed(2);
+      const endX = +Math.min(screenW, startX + calc.singleW).toFixed(2);
+      const centerX = +((startX + endX) / 2).toFixed(2);
+      return {
+        code: `PJ ${idx + 1}`,
+        name: `Projektör ${idx + 1} (${lumensPerProj.toLocaleString('tr-TR')} lm)`,
+        startX,
+        endX,
+        centerX,
+        widthM: calc.singleW,
+        throwDistM,
+        throwRatio,
+        overlapText: projCount > 1 ? `%${calc.overlapPct} Overlap (${calc.overlapM}m)` : 'Tek Cihaz (Örtüşme Yok)',
+      };
+    });
+
     // 2. Fotometrik Store'a kaydet (Isı Haritası SNAPSHOT DAHİL)
     saveSurfacePhotometric({
-      surfaceId: standaloneId,
+      surfaceId: targetSurfaceId,
       surfaceName: surfaceTitle,
-      surfaceType: 'wall',
+      surfaceType: matchedSurf?.type || 'wall',
       widthM: screenW,
       heightM: screenH,
       projectorCount: projCount,
@@ -562,13 +850,13 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       minLux: calc.minLux,
       maxLux: calc.maxLux,
       uniformityU0: calc.uniformityU0 / 100,
-      uniformityU1: 0.68,
+      uniformityU1: calc.uniformityU1,
       luminanceNits: calc.nits,
       luminanceFL: calc.footLambert,
       screenGain: screenGain,
       ambientLux: ambientLux,
       ambientContrastRatio: calc.acr,
-      isManualLux: true,
+      isManualLux: storeIsManualLux,
       heatmapSnapshotUrl: snapshotUrl,
       lumenStandard,
       nominalLumensPerProj: lumensPerProj,
@@ -585,19 +873,7 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
       theoreticalNits: calc.theoreticalNits,
       idealNits: calc.idealGainNits,
       ambientNits: calc.ambientNits,
-      distributionRows: [
-        {
-          code: `PJ Toplam (${projCount} Adet)`,
-          name: `${lumensPerProj.toLocaleString('tr-TR')} ANSI Lümen / Cihaz`,
-          startX: 0,
-          endX: screenW,
-          centerX: screenW / 2,
-          widthM: calc.singleW,
-          throwDistM: throwDistM,
-          throwRatio: throwRatio,
-          overlapText: projCount > 1 ? `%${calc.overlapPct} Overlap (${calc.overlapM}m)` : 'Tek Cihaz',
-        }
-      ]
+      distributionRows: indivRows,
     });
 
     // 2. ProjectStore luxSnap ve projectionSnap güncelle
@@ -691,8 +967,41 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
             <h2 className="text-xs font-bold text-sky-400 uppercase tracking-wider">
               1. Hesaplama Parametreleri
             </h2>
-            <span className="text-[10px] text-slate-400">Serbest Giriş</span>
+            <span className="text-[10px] text-emerald-400 font-mono">✓ Detaylı Görünüm ile Senkron</span>
           </div>
+
+          {/* Projedeki Yüzeyden Hızlı Aktarım (Detaylı Görünüm ile Ortak) */}
+          {plannerSurfaces.length > 0 && (
+            <div className="bg-sky-950/30 border border-sky-800/60 rounded-lg p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-bold text-sky-300">🎯 Projedeki Yüzeyden Aktar</span>
+                <span className="text-[10px] text-slate-400">{plannerSurfaces.length} Yüzey</span>
+              </div>
+              <select
+                className="w-full bg-slate-950 border border-sky-700/60 rounded px-2 py-1.5 text-xs text-sky-200 font-medium outline-none"
+                value={selectedSurfaceId}
+                onChange={e => {
+                  const sid = e.target.value;
+                  if (sid === 'custom') {
+                    usePhotometricStore.setState({ selectedSurfaceId: 'custom' });
+                  } else {
+                    const found = plannerSurfaces.find(s => s.id === sid);
+                    if (found) {
+                      importFromPlannerSurface(found, defaultProjectorLumens || lumensPerProj);
+                      setProjectName(found.name);
+                    }
+                  }
+                }}
+              >
+                {plannerSurfaces.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} — {s.widthM}m × {s.heightM}m ({s.cols * s.rows} Projektör)
+                  </option>
+                ))}
+                <option value="custom">✏ Özel / Serbest Giriş</option>
+              </select>
+            </div>
+          )}
 
           {/* Proje Başlığı */}
           <div>
@@ -1086,14 +1395,20 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
             {/* 1. Ortalama Ekran Lux'u */}
             <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-sky-800/80 rounded-xl p-4 shadow-xl flex flex-col justify-between">
               <div className="flex items-center justify-between text-xs text-slate-400">
-                <span className="font-semibold text-slate-300">Ortalama Ekran Lux</span>
+                <span className="font-semibold text-slate-300">Ortalama Ekran Lux (Simüle LuxField)</span>
                 <span className="text-[10px] bg-sky-950 text-sky-300 px-2 py-0.5 rounded border border-sky-800 font-mono">
-                  E_avg
+                  E_sim (288-Nokta)
                 </span>
               </div>
-              <div className="my-2.5">
+              <div className="my-2">
                 <div className="text-3xl sm:text-4xl font-extrabold text-sky-400 font-mono tracking-tight">
                   {calc.avgLux} <span className="text-lg font-normal text-slate-300">Lux</span>
+                </div>
+                <div className="text-[10.5px] font-mono text-amber-300/90 mt-1">
+                  Teorik Efektif (Φ_eff/A): <b>{calc.theoreticalEffAvgLux} lx</b> · Nominal: <b>{calc.theoreticalAvgLux} lx</b>
+                </div>
+                <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                  9-Nokta Eşit: <b>{calc.ansi9EqualAvgLux} lx</b> · Ağırlıklı: <b>{calc.ansi9WeightedAvgLux} lx</b>
                 </div>
               </div>
               <div className="text-[11px] text-slate-400 border-t border-slate-800/80 pt-1.5 flex justify-between">
@@ -1213,9 +1528,9 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
                       <td className="py-1 text-right text-[10px] text-slate-400">Oran {calc.aspect}:1</td>
                     </tr>
                     <tr>
-                      <td className="py-1 pr-2 font-semibold text-slate-200">3. Teorik Ortalama Lux</td>
-                      <td className="py-1 font-mono text-slate-200">{calc.totalLumens.toLocaleString('tr-TR')} ÷ {calc.areaM2} = <b>{calc.theoreticalAvgLux} Lux</b></td>
-                      <td className="py-1 text-right text-[10px] text-slate-400">Kayıpsız ideal değer</td>
+                      <td className="py-1 pr-2 font-semibold text-slate-200">3. Teorik Ortalama Lux (Φ/A)</td>
+                      <td className="py-1 font-mono text-slate-200">Nominal: <b>{calc.theoreticalAvgLux} lx</b> · Efektif: <b>{calc.theoreticalEffAvgLux} lx</b></td>
+                      <td className="py-1 text-right text-[10px] text-slate-400">2B ideal alan ortalaması ({calc.effLumens.toLocaleString('tr-TR')} lm ÷ {calc.areaM2} m²)</td>
                     </tr>
                     <tr>
                       <td className="py-1 pr-2 font-semibold text-slate-200">4. Lens &amp; Optik Kayıplar</td>
@@ -1223,9 +1538,9 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
                       <td className="py-1 text-right text-[10px] text-slate-400">Lens %{opticalEfficiency} × Kalib. %{calibrationFactor} → {calc.effLumens.toLocaleString('tr-TR')} lm</td>
                     </tr>
                     <tr>
-                      <td className="py-1 pr-2 font-semibold text-slate-200">5. Çoklu Projektör Katkısı</td>
-                      <td className="py-1 font-mono text-sky-300">Tek: {calc.singleProjEffLux} lx → {projCount} PJ: <b>{calc.avgLux} lx</b></td>
-                      <td className="py-1 text-right text-[10px] text-slate-400">{projCount > 1 ? `Overlap %${calc.overlapPct} (Harmanlanmamış: ${calc.unblendedOverlapLux} lx)` : 'Tek projektör'}</td>
+                      <td className="py-1 pr-2 font-semibold text-slate-200">5. 3B Simüle LuxField Ortalaması</td>
+                      <td className="py-1 font-mono text-sky-300">288-Nokta: <b>{calc.avgLux} lx</b> · 9-Nokta Eşit/Ağ.: <b>{calc.ansi9EqualAvgLux}/{calc.ansi9WeightedAvgLux} lx</b></td>
+                      <td className="py-1 text-right text-[10px] text-slate-400">{projCount > 1 ? `Overlap %${calc.overlapPct} (${calc.overlapM}m) + 3B cos(α)/d²` : '3B cos(α)/d² simülasyonu'}</td>
                     </tr>
                     <tr>
                       <td className="py-1 pr-2 font-semibold text-slate-200">6. Ekran Kazancı (Gain)</td>

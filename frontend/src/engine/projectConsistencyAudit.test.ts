@@ -534,7 +534,8 @@ describe('Proje Verisi ve Mühendislik Tutarlılığı Denetimi (2 Projektör Se
       },
     });
     expect(crossMismatch.checks.some(c => c.id === 'cross-proj-lumens-sync' && c.verdict === 'FAIL')).toBe(true);
-    expect(crossMismatch.checks.some(c => c.id === 'elec-summary-vs-circuits' && c.verdict === 'FAIL')).toBe(true);
+    // Tüm yükler cosφ=0.95 olduğunda özet efektif PF ile hizalanır (çelişki üretmez)
+    expect(crossMismatch.checks.some(c => c.id === 'elec-summary-vs-circuits')).toBe(false);
     expect(crossMismatch.consistencyScorePct).toBeLessThan(100);
 
     // 6. 6.25×3.906m görüntü 4.3m duvar yüksekliğini kaplamıyor -> vertical-surface-coverage-0 FAIL

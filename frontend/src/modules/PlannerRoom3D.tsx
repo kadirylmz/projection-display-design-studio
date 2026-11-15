@@ -7,7 +7,25 @@ import { useProjectStore } from '../projectStore';
 import { usePlannerStore } from '../plannerStore';
 import { resolveSurfaceCrossSlot } from './ContentPlanner';
 import { evaluateSystemFeasibility } from '../engine/feasibility';
+import { HUMAN_SILHOUETTE_NORM } from '../engine/fovProjection';
 import type { CalculatedSurface, PhysicalRoomConfig, SurfaceItem } from './ContentPlanner';
+
+// Duvardaki insan gölgesi için birim ölçekli (1m × 1m, merkezi [0,0]) gerçekçi insan silüeti geometrisi
+const HUMAN_SHADOW_UNIT_GEO = (() => {
+  const shape = new THREE.Shape();
+  HUMAN_SILHOUETTE_NORM.forEach(([u, v], idx) => {
+    const x = u;
+    const y = v - 0.5;
+    if (idx === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  });
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+})();
+const HUMAN_SHADOW_UNIT_LOOP: [number, number, number][] = [
+  ...HUMAN_SILHOUETTE_NORM.map(([u, v]) => [u, v - 0.5, 0.003] as [number, number, number]),
+  [HUMAN_SILHOUETTE_NORM[0][0], HUMAN_SILHOUETTE_NORM[0][1] - 0.5, 0.003],
+];
 
 interface PlannerRoom3DProps {
   surfaces: CalculatedSurface[];
@@ -655,6 +673,8 @@ function ProjectorFrustum3D({
     const wShadows: {
       actorId: string;
       actorName: string;
+      actorIdx: number;
+      distToWall: number;
       pos: [number, number, number];
       quat: THREE.Quaternion;
       shadowW: number;
@@ -688,7 +708,8 @@ function ProjectorFrustum3D({
       };
     }
 
-    for (const actor of humans) {
+    for (let actorIdx = 0; actorIdx < humans.length; actorIdx++) {
+      const actor = humans[actorIdx];
       const cfg = HUMAN_VARIANT_CATALOG[actor.variant] || HUMAN_VARIANT_CATALOG.male_casual;
       const hBase = new THREE.Vector3(actor.x, 0.02, actor.z);
       const hCenter = new THREE.Vector3(actor.x, cfg.heightM * 0.5, actor.z);
@@ -739,6 +760,8 @@ function ProjectorFrustum3D({
                 wShadows.push({
                   actorId: actor.id,
                   actorName: actor.name,
+                  actorIdx,
+                  distToWall: hitPt.distanceTo(hCenter),
                   pos: [shadowWorldPos.x, shadowWorldPos.y, shadowWorldPos.z],
                   quat: qPlane,
                   shadowW: sW,
@@ -1102,18 +1125,18 @@ function ProjectorFrustum3D({
               lineWidth={1.5}
             />
 
-            {/* Mühendislik Uyarı Metni */}
+            {/* Mühendislik Uyarı Metni — Hangi Cihazın Hangi Projektör Işığını Kestiğini Açıklar */}
             {showShadowLabels && (
               <Text
-                position={[0, -sh.shadowH / 2 - 0.22, 0.015]}
-                fontSize={Math.max(0.18, Math.min(0.26, sh.shadowW * 0.16))}
+                position={[0, -sh.shadowH / 2 - 0.24, 0.015]}
+                fontSize={Math.max(0.16, Math.min(0.23, sh.shadowW * 0.14))}
                 color="#f87171"
                 anchorX="center"
                 anchorY="top"
                 outlineWidth={0.026}
                 outlineColor="#020617"
               >
-                {`⚠ DİKKAT: ${sh.deviceName.toUpperCase()} IŞIK YOLUNDA! DUVARDA GÖLGE OLUŞUYOR (${sh.distToWall.toFixed(2)}m)`}
+                {`⚠ CİHAZ GÖLGESİ: [${sh.deviceName}] → [${label}] Işığını Kesiyor\nGölge: ${sh.shadowW.toFixed(2)}m×${sh.shadowH.toFixed(2)}m · Duvara: ${sh.distToWall.toFixed(2)}m`}
               </Text>
             )}
           </group>
@@ -1130,63 +1153,65 @@ function ProjectorFrustum3D({
         </group>
       ))}
 
-      {/* 1. DUVARDA OLUŞAN GERÇEK ZAMANLI İNSAN GÖLGELERİ (Silüet + Kırmızı Uyarı + Gölge Işını) */}
-      {showShadows && wallShadows.map(sh => (
-        <group key={`wsh-${sh.actorId}`}>
-          <group position={sh.pos} quaternion={sh.quat}>
-            {/* Gölge Gövde Silüeti */}
-            <mesh position={[0, -sh.shadowH * 0.08, 0]}>
-              <planeGeometry args={[sh.shadowW * 0.85, sh.shadowH * 0.82]} />
-              <meshBasicMaterial color="#020617" transparent opacity={0.92} side={THREE.DoubleSide} />
-            </mesh>
-            {/* Gölge Omuz Yuvarlatması */}
-            <mesh position={[0, sh.shadowH * 0.16, 0.001]}>
-              <circleGeometry args={[sh.shadowW * 0.44, 24]} />
-              <meshBasicMaterial color="#020617" transparent opacity={0.92} side={THREE.DoubleSide} />
-            </mesh>
-            {/* Gölge Kafa Silüeti */}
-            <mesh position={[0, sh.shadowH * 0.38, 0.002]}>
-              <circleGeometry args={[Math.min(sh.shadowW * 0.28, 0.35), 24]} />
-              <meshBasicMaterial color="#020617" transparent opacity={0.95} side={THREE.DoubleSide} />
-            </mesh>
-            {/* Kırmızı Gölge Uyarı Çerçevesi */}
-            <Line
-              points={[
-                [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
-                [sh.shadowW / 2, -sh.shadowH / 2, 0.005],
-                [sh.shadowW / 2, sh.shadowH / 2, 0.005],
-                [-sh.shadowW / 2, sh.shadowH / 2, 0.005],
-                [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
-              ]}
-              color="#ef4444"
-              lineWidth={2.2}
-            />
-            {showShadowLabels && (
-              <Text
-                position={[0, 0, 0.012]}
-                fontSize={0.18}
+      {/* 1. DUVARDA OLUŞAN GERÇEK ZAMANLI İNSAN GÖLGELERİ (Silüet + Kademeli Açıklayıcı Etiket + Gölge Işını) */}
+      {showShadows && wallShadows.map((sh, sIdx) => {
+        // Çoklu projektör (PJ 1, PJ 2, PJ 3) aynı duvara gölge düşürdüğünde yazıların üst üste binmesini önlemek için kademeli Y ofseti
+        const pjMatch = label.match(/PJ\s*(\d+)/i);
+        const pjNum = pjMatch ? parseInt(pjMatch[1], 10) : 1;
+        const staggerSlot = ((pjNum - 1 + sh.actorIdx + sIdx) % 3) - 1; // -1, 0, +1
+        const labelOffsetY = staggerSlot * Math.min(0.38, Math.max(0.24, sh.shadowH * 0.26));
+        return (
+          <group key={`wsh-${sh.actorId}`}>
+            <group position={sh.pos} quaternion={sh.quat}>
+              {/* Gerçekçi İnsan Gölgesi Silüeti (Baş, Boyun, Omuz, Kollar, Gövde, Bacaklar) */}
+              <group scale={[sh.shadowW, sh.shadowH, 1]}>
+                <mesh geometry={HUMAN_SHADOW_UNIT_GEO}>
+                  <meshBasicMaterial color="#020617" transparent opacity={0.93} side={THREE.DoubleSide} />
+                </mesh>
+                <Line points={HUMAN_SHADOW_UNIT_LOOP} color="#ef4444" lineWidth={2.0} />
+              </group>
+              {/* Kesikli Kırmızı Mühendislik Ölçü Çerçevesi */}
+              <Line
+                points={[
+                  [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
+                  [sh.shadowW / 2, -sh.shadowH / 2, 0.005],
+                  [sh.shadowW / 2, sh.shadowH / 2, 0.005],
+                  [-sh.shadowW / 2, sh.shadowH / 2, 0.005],
+                  [-sh.shadowW / 2, -sh.shadowH / 2, 0.005],
+                ]}
                 color="#f87171"
-                anchorX="center"
-                anchorY="middle"
-                outlineWidth={0.022}
-                outlineColor="#020617"
-              >
-                {`⚠ ${sh.actorName} GÖLGESİ (${sh.shadowH.toFixed(2)}m)`}
-              </Text>
-            )}
-          </group>
+                lineWidth={1.4}
+                dashed
+                dashSize={0.12}
+                gapSize={0.08}
+              />
+              {showShadowLabels && (
+                <Text
+                  position={[0, labelOffsetY, 0.016]}
+                  fontSize={0.155}
+                  color="#fecaca"
+                  anchorX="center"
+                  anchorY="middle"
+                  outlineWidth={0.024}
+                  outlineColor="#020617"
+                >
+                  {`🌑 [${label} Işığı → ${sh.actorName} Gölgesi]\nBoyut: ${sh.shadowW.toFixed(2)}m×${sh.shadowH.toFixed(2)}m · Duvara: ${sh.distToWall.toFixed(2)}m`}
+                </Text>
+              )}
+            </group>
 
-          {/* İnsanın Başından Duvara Giden Gölge Işını */}
-          <Line
-            points={[sh.rayStart, sh.rayEnd]}
-            color="#ef4444"
-            lineWidth={2}
-            dashed
-            dashSize={0.2}
-            gapSize={0.14}
-          />
-        </group>
-      ))}
+            {/* İnsanın Başından Duvara Giden Gölge Işını */}
+            <Line
+              points={[sh.rayStart, sh.rayEnd]}
+              color="#ef4444"
+              lineWidth={2}
+              dashed
+              dashSize={0.2}
+              gapSize={0.14}
+            />
+          </group>
+        );
+      })}
 
       {/* 2. ZEMİNDE OLUŞAN UZUN PROJEKTÖR GÖLGELERİ */}
       {showShadows && floorShadows.map(fsh => (

@@ -646,7 +646,7 @@ export function electricalSingleLine(
           x,
           y: yBox - 20,
           h: h * 0.9,
-          text: `Toplam Güç: ${Math.round(l.qty * l.powerW)} W (Cos φ ${l.pf || 0.95})`,
+          text: `Toplam Güç: ${Math.round(l.qty * (l.powerW ?? 0))} W (Cos φ ${l.pf || 0.95})`,
           layer: 'METIN',
           anchor: 'middle',
         });

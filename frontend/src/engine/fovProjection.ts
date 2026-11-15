@@ -617,3 +617,415 @@ export function computeSurfaceFov(opts: {
     perspectiveChangePct,
   };
 }
+
+export interface FovShadowInput {
+  /** Cihaz konumu (m): sahne koordinatlarında [posX, posY, posZ] */
+  devicePos: [number, number, number];
+  /** Hedef yüzey genişliği ve yüksekliği (m) */
+  surfaceWidthM: number;
+  surfaceHeightM: number;
+  /** Perde alt kenarının zeminden yüksekliği (m, varsayılan 0) */
+  screenBottomHeightM?: number;
+  /** Aktif izdüşüm 2B köşe noktaları (m) */
+  activeCorners2D: [number, number][];
+  /** İnsan boyu (m, örn. 1.75) */
+  personHeightM: number;
+  /** İnsan omuz genişliği (m, örn. 0.50) */
+  personWidthM?: number;
+  /** İnsanın perdeye olan dik uzaklığı (m, Z ekseni) */
+  personDistFromScreenM: number;
+  /** İnsanın perde merkezine göre yatay konumu (m, X ekseni) */
+  personXM?: number;
+}
+
+export interface FovShadowResult {
+  personHeightM: number;
+  personWidthM: number;
+  personDistFromScreenM: number;
+  personDistFromDeviceM: number;
+  personXM: number;
+  screenBottomHeightM: number;
+  floorSceneY: number;
+  deviceHeightFromFloorM: number;
+  beamBottomAtScreenM: number;
+  beamTopAtScreenM: number;
+  beamBottomAtPersonM: number;
+  beamTopAtPersonM: number;
+  /** Pozitif: ışık insan başının üstünden geçiyor (güvenli boşluk); Negatif: baş ışığın içinde */
+  headClearanceM: number;
+  /** Perdeden itibaren gölgenin başladığı/bittiği kritik sınır mesafesi (m) */
+  shadowEntryDistFromScreenM: number;
+  /** Cihazdan itibaren kritik gölge sınır mesafesi (m) */
+  shadowEntryDistFromDeviceM: number;
+  /** Gölge oluşan Z aralığı [minZ, maxZ] (perdeden metre olarak) */
+  shadowZoneRangeM: [number, number];
+  /** Işık konisi tüm mesafelerde insan boyunun üstünde mi */
+  neverCastsShadow: boolean;
+  /** Mevcut konumda (personDistFromScreenM, personXM) perdeye gölge düşüyor mu */
+  isCastingShadow: boolean;
+  /** Mevcut konumda ışığa giren vücut yüksekliği (m) */
+  intrusionHeightM: number;
+  /** Perde üzerindeki kırpılmış gölge dikdörtgeni (sahne 2B koordinatlarında [x0, y0, x1, y1]) */
+  shadowRect2D: [number, number, number, number] | null;
+  /** Perde üzerindeki kırpılmış gerçekçi insan gölge silüeti poligonu (sahne 2B [x, y] koordinatlarında) */
+  shadowPolygonScene2D: [number, number][];
+  /** Perde üzerindeki kırpılmış gerçekçi insan gölge silüeti poligonu ([x, yerdenYükseklik] koordinatlarında) */
+  shadowPolygonFloor2D: [number, number][];
+  shadowWidthM: number;
+  shadowHeightM: number;
+  shadowAreaM2: number;
+  shadowCoveragePct: number;
+  shadowBottomFromFloorM: number;
+  shadowTopFromFloorM: number;
+  zoneStatusLabel: string;
+  reportSummaryTr: string;
+}
+
+/**
+ * Gerçekçi insan silüeti konturu (normalize edilmiş [u, v]: u ∈ [-0.5, +0.5] omuz/vücut genişliği, v ∈ [0, 1] ayak->baş yüksekliği)
+ * Ayaklar, bacaklar, bel/gövde, yanlarda sarkan kollar ve eller, yuvarlak omuzlar, boyun ve anatomik kafa profilini içerir.
+ */
+export const HUMAN_SILHOUETTE_NORM: [number, number][] = [
+  // Sol ayak dış ve bilek
+  [-0.20, 0.00],
+  [-0.22, 0.025],
+  [-0.17, 0.055],
+  // Sol bacak dış (baldır -> uyluk -> kalça)
+  [-0.19, 0.24],
+  [-0.21, 0.45],
+  [-0.23, 0.53],
+  // Sol bel ve kol altı boşluğundan sol ele iniş
+  [-0.20, 0.62],
+  [-0.23, 0.70],
+  [-0.29, 0.50],
+  [-0.36, 0.47],
+  [-0.41, 0.50],
+  // Sol dış kol ve yuvarlak sol omuz
+  [-0.44, 0.63],
+  [-0.46, 0.74],
+  [-0.42, 0.80],
+  [-0.32, 0.825],
+  [-0.18, 0.838],
+  // Sol boyun
+  [-0.095, 0.848],
+  [-0.085, 0.868],
+  // Kafa konturu (yumuşak oval)
+  [-0.14, 0.888],
+  [-0.165, 0.922],
+  [-0.155, 0.958],
+  [-0.11, 0.985],
+  [-0.045, 0.998],
+  [0.00, 1.00],
+  [0.045, 0.998],
+  [0.11, 0.985],
+  [0.155, 0.958],
+  [0.165, 0.922],
+  [0.14, 0.888],
+  // Sağ boyun
+  [0.085, 0.868],
+  [0.095, 0.848],
+  // Sağ yuvarlak omuz ve sağ dış kol -> sağ el
+  [0.18, 0.838],
+  [0.32, 0.825],
+  [0.42, 0.80],
+  [0.46, 0.74],
+  [0.44, 0.63],
+  [0.41, 0.50],
+  [0.36, 0.47],
+  [0.29, 0.50],
+  [0.23, 0.70],
+  [0.20, 0.62],
+  // Sağ kalça ve sağ dış bacak -> sağ ayak
+  [0.23, 0.53],
+  [0.21, 0.45],
+  [0.19, 0.24],
+  [0.17, 0.055],
+  [0.22, 0.025],
+  [0.20, 0.00],
+  // Sağ iç ayak ve sağ iç bacak -> bacak arası (v=0.45)
+  [0.065, 0.00],
+  [0.065, 0.055],
+  [0.055, 0.24],
+  [0.032, 0.45],
+  // Sol iç bacak -> sol iç ayak
+  [-0.032, 0.45],
+  [-0.055, 0.24],
+  [-0.065, 0.055],
+  [-0.065, 0.00],
+];
+
+/**
+ * Verilen merkez X, taban Y, genişlik ve yükseklik için 2B insan silüeti köşe noktalarını üretir.
+ */
+export function buildHumanSilhouette2D(
+  centerX: number,
+  bottomY: number,
+  widthM: number,
+  heightM: number
+): [number, number][] {
+  return HUMAN_SILHOUETTE_NORM.map(([u, v]) => [
+    centerX + u * widthM,
+    bottomY + v * heightM,
+  ]);
+}
+
+/**
+ * Sutherland-Hodgman 2B dikdörtgen kırpma (clipping) algoritması.
+ * İnsan gölge poligonunu aktif perde sınırları [minX, minY, maxX, maxY] içine kırpar.
+ */
+export function clipPolygonToRect2D(
+  poly: [number, number][],
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number
+): [number, number][] {
+  if (!poly || poly.length < 3) return [];
+
+  const clipEdge = (
+    pts: [number, number][],
+    inside: (p: [number, number]) => boolean,
+    intersect: (a: [number, number], b: [number, number]) => [number, number]
+  ): [number, number][] => {
+    const out: [number, number][] = [];
+    const n = pts.length;
+    if (n === 0) return out;
+    for (let i = 0; i < n; i++) {
+      const cur = pts[i];
+      const prev = pts[(i + n - 1) % n];
+      const curIn = inside(cur);
+      const prevIn = inside(prev);
+      if (curIn) {
+        if (!prevIn) out.push(intersect(prev, cur));
+        out.push(cur);
+      } else if (prevIn) {
+        out.push(intersect(prev, cur));
+      }
+    }
+    return out;
+  };
+
+  let res = poly;
+  // Sol kenar: x >= minX
+  res = clipEdge(
+    res,
+    p => p[0] >= minX,
+    (a, b) => {
+      const dx = b[0] - a[0];
+      const t = Math.abs(dx) > 1e-9 ? (minX - a[0]) / dx : 0;
+      return [minX, a[1] + t * (b[1] - a[1])];
+    }
+  );
+  // Sağ kenar: x <= maxX
+  res = clipEdge(
+    res,
+    p => p[0] <= maxX,
+    (a, b) => {
+      const dx = b[0] - a[0];
+      const t = Math.abs(dx) > 1e-9 ? (maxX - a[0]) / dx : 0;
+      return [maxX, a[1] + t * (b[1] - a[1])];
+    }
+  );
+  // Alt kenar: y >= minY
+  res = clipEdge(
+    res,
+    p => p[1] >= minY,
+    (a, b) => {
+      const dy = b[1] - a[1];
+      const t = Math.abs(dy) > 1e-9 ? (minY - a[1]) / dy : 0;
+      return [a[0] + t * (b[0] - a[0]), minY];
+    }
+  );
+  // Üst kenar: y <= maxY
+  res = clipEdge(
+    res,
+    p => p[1] <= maxY,
+    (a, b) => {
+      const dy = b[1] - a[1];
+      const t = Math.abs(dy) > 1e-9 ? (maxY - a[1]) / dy : 0;
+      return [a[0] + t * (b[0] - a[0]), maxY];
+    }
+  );
+
+  return res.map(([x, y]) => [r2(x), r2(y)]);
+}
+
+/**
+ * 4. İnsan / Engel & Gölge Analizi (FOV Shadow Analysis):
+ * - Cihaz yüksekliği ve aktif ışık konisinin alt sınırından, insan boyunun (örn. 1.75 m)
+ *   perdeye hangi mesafeden itibaren (shadowEntryDistFromScreenM) ışık konisine girdiğini hesaplar.
+ * - İnsanın mevcut konumunda (personDistFromScreenM, personXM) perde üzerinde oluşan
+ *   gölgenin boyutlarını (W × H m, m², %) ve baş üstü güvenli boşluğu (headClearanceM) verir.
+ */
+export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
+  const [px, py, pzRaw] = inp.devicePos;
+  const pz = Math.max(0.2, pzRaw);
+  const surfW = Math.max(0.1, inp.surfaceWidthM);
+  const surfH = Math.max(0.1, inp.surfaceHeightM);
+  const screenBotH = Math.max(0, inp.screenBottomHeightM ?? 0);
+  const floorSceneY = -surfH / 2 - screenBotH;
+
+  const personH = Math.max(0.4, inp.personHeightM || 1.75);
+  const personW = Math.max(0.2, inp.personWidthM ?? 0.5);
+  const personZ = Math.max(0.05, Math.min(pz - 0.05, inp.personDistFromScreenM));
+  const personX = inp.personXM ?? 0;
+
+  const corners = inp.activeCorners2D && inp.activeCorners2D.length >= 4
+    ? inp.activeCorners2D
+    : ([
+        [-surfW / 2, surfH / 2],
+        [surfW / 2, surfH / 2],
+        [surfW / 2, -surfH / 2],
+        [-surfW / 2, -surfH / 2],
+      ] as [number, number][]);
+
+  const xs = corners.map(c => c[0]);
+  const ys = corners.map(c => c[1]);
+  const projMinX = Math.min(...xs);
+  const projMaxX = Math.max(...xs);
+  const projMinY = Math.min(...ys);
+  const projMaxY = Math.max(...ys);
+
+  const deviceHeightFromFloorM = r2(py - floorSceneY);
+  const beamBottomAtScreenM = r2(projMinY - floorSceneY);
+  const beamTopAtScreenM = r2(projMaxY - floorSceneY);
+
+  const tPerson = personZ / pz;
+  const beamBottomAtPersonM = r2(beamBottomAtScreenM + tPerson * (deviceHeightFromFloorM - beamBottomAtScreenM));
+  const beamTopAtPersonM = r2(beamTopAtScreenM + tPerson * (deviceHeightFromFloorM - beamTopAtScreenM));
+  const headClearanceM = r2(beamBottomAtPersonM - personH);
+
+  // Kritik gölge giriş mesafesi (H_bot(z) = personH)
+  let shadowEntryDistFromScreenM = 0;
+  let shadowZoneRangeM: [number, number] = [0, 0];
+  let neverCastsShadow = false;
+
+  if (beamBottomAtScreenM >= personH && deviceHeightFromFloorM >= personH) {
+    neverCastsShadow = true;
+    shadowEntryDistFromScreenM = 0;
+    shadowZoneRangeM = [0, 0];
+  } else if (beamBottomAtScreenM < personH && deviceHeightFromFloorM > personH) {
+    const denom = Math.max(0.001, deviceHeightFromFloorM - beamBottomAtScreenM);
+    const zCrit = pz * ((personH - beamBottomAtScreenM) / denom);
+    shadowEntryDistFromScreenM = r2(Math.max(0, Math.min(pz, zCrit)));
+    shadowZoneRangeM = [0, shadowEntryDistFromScreenM];
+  } else if (beamBottomAtScreenM < personH && deviceHeightFromFloorM <= personH) {
+    shadowEntryDistFromScreenM = r2(pz);
+    shadowZoneRangeM = [0, r2(pz)];
+  } else {
+    // Alçak montaj (cihaz <= personH, ekranda > personH)
+    const denom = Math.max(0.001, beamBottomAtScreenM - deviceHeightFromFloorM);
+    const zCrit = pz * ((beamBottomAtScreenM - personH) / denom);
+    shadowEntryDistFromScreenM = r2(Math.max(0, Math.min(pz, zCrit)));
+    shadowZoneRangeM = [shadowEntryDistFromScreenM, r2(pz)];
+  }
+
+  const shadowEntryDistFromDeviceM = r2(Math.max(0, pz - shadowEntryDistFromScreenM));
+
+  // Merkezi izdüşüm: Cihaz (px, py, pz) -> İnsan [personX ± personW/2, floorSceneY .. floorSceneY + personH] @ z = personZ -> Perde @ z = 0
+  const scale = pz / Math.max(0.05, pz - personZ);
+  const pLeft = personX - personW / 2;
+  const pRight = personX + personW / 2;
+  const pBot = floorSceneY;
+  const pTop = floorSceneY + personH;
+
+  const rawX0 = px + scale * (pLeft - px);
+  const rawX1 = px + scale * (pRight - px);
+  const rawY0 = py + scale * (pBot - py);
+  const rawY1 = py + scale * (pTop - py);
+
+  const shMinX = Math.min(rawX0, rawX1);
+  const shMaxX = Math.max(rawX0, rawX1);
+  const shMinY = Math.min(rawY0, rawY1);
+  const shMaxY = Math.max(rawY0, rawY1);
+
+  // Aktif perde yüzeyi ile kesişim
+  const activeLeft = Math.max(-surfW / 2, projMinX);
+  const activeRight = Math.min(surfW / 2, projMaxX);
+  const activeBot = Math.max(-surfH / 2, projMinY);
+  const activeTop = Math.min(surfH / 2, projMaxY);
+
+  const clipX0 = Math.max(activeLeft, shMinX);
+  const clipX1 = Math.min(activeRight, shMaxX);
+  const clipY0 = Math.max(activeBot, shMinY);
+  const clipY1 = Math.min(activeTop, shMaxY);
+
+  const shadowWidthM = clipX1 > clipX0 + 0.005 && clipY1 > clipY0 + 0.005 ? r2(clipX1 - clipX0) : 0;
+  const shadowHeightM = shadowWidthM > 0 ? r2(clipY1 - clipY0) : 0;
+  const shadowAreaM2 = r2(shadowWidthM * shadowHeightM);
+  const screenAreaM2 = Math.max(0.01, surfW * surfH);
+  const shadowCoveragePct = r1((shadowAreaM2 / screenAreaM2) * 100);
+  const isCastingShadow = shadowAreaM2 > 0;
+  const intrusionHeightM = isCastingShadow ? r2(Math.max(0, personH - beamBottomAtPersonM)) : 0;
+  const shadowRect2D: [number, number, number, number] | null = isCastingShadow
+    ? [r2(clipX0), r2(clipY0), r2(clipX1), r2(clipY1)]
+    : null;
+  const shadowBottomFromFloorM = isCastingShadow ? r2(clipY0 - floorSceneY) : 0;
+  const shadowTopFromFloorM = isCastingShadow ? r2(clipY1 - floorSceneY) : 0;
+
+  // Gerçekçi insan silüeti konturunun perde düzlemine (z = 0) merkezi izdüşümü ve aktif perde alanına kırpılması
+  let shadowPolygonScene2D: [number, number][] = [];
+  let shadowPolygonFloor2D: [number, number][] = [];
+  if (isCastingShadow) {
+    const rawHumanPoly = buildHumanSilhouette2D(personX, floorSceneY, personW, personH);
+    const projectedHumanPoly: [number, number][] = rawHumanPoly.map(([hx, hy]) => [
+      px + scale * (hx - px),
+      py + scale * (hy - py),
+    ]);
+    shadowPolygonScene2D = clipPolygonToRect2D(
+      projectedHumanPoly,
+      activeLeft,
+      activeBot,
+      activeRight,
+      activeTop
+    );
+    shadowPolygonFloor2D = shadowPolygonScene2D.map(([sx, sy]) => [sx, r2(sy - floorSceneY)]);
+  }
+
+  const elevNote = screenBotH > 0.005 ? ` (Perde yerden +${r2(screenBotH)} m yüksekte başlar)` : '';
+
+  const zoneStatusLabel = neverCastsShadow
+    ? `✅ Tamamen Gölgesiz (Işık Konisi İnsan Boyunun Üstünde)${elevNote}`
+    : isCastingShadow
+      ? `⛔ İNSAN GÖLGESİ OLUŞUYOR (Perdede ${shadowWidthM}m × ${shadowHeightM}m · %${shadowCoveragePct})${elevNote}`
+      : `✅ Güvenli Bölge (Baş Üstü Boşluk: +${Math.max(0, headClearanceM)} m)${elevNote}`;
+
+  const reportSummaryTr = neverCastsShadow
+    ? `Perde alt kenarı yerden ${r2(screenBotH)} m yüksekte olup ışık konisinin alt sınırı perdede ${beamBottomAtScreenM} m, cihazda ${deviceHeightFromFloorM} m yüksekliğinde olduğundan ${personH} m boyundaki bir insan hiçbir mesafede gölge oluşturmaz.`
+    : isCastingShadow
+      ? `Perde yerden ${r2(screenBotH)} m yüksekte başlamaktadır. Perdeye ${shadowEntryDistFromScreenM} m (cihaza ${shadowEntryDistFromDeviceM} m) mesafeden itibaren ${personH} m boyundaki insan ışık konisine girer. Mevcut konumda (perdeye ${r2(personZ)} m) ışığın alt sınırı yerden ${beamBottomAtPersonM} m yüksektedir (${intrusionHeightM} m kesişim) ve perde üzerinde ${shadowWidthM} m × ${shadowHeightM} m (${shadowAreaM2} m², %${shadowCoveragePct}) insan gölgesi oluşmaktadır.`
+      : `Perde yerden ${r2(screenBotH)} m yüksekte başlamaktadır. Perdeye 0 – ${shadowEntryDistFromScreenM} m aralığında gölge riski vardır; ancak mevcut konumda (perdeye ${r2(personZ)} m) ışık konisi insan başının ${Math.max(0, headClearanceM)} m üzerinden geçmektedir (yerden ${beamBottomAtPersonM} m) ve perdeye gölge düşmemektedir.`;
+
+  return {
+    personHeightM: r2(personH),
+    personWidthM: r2(personW),
+    personDistFromScreenM: r2(personZ),
+    personDistFromDeviceM: r2(pz - personZ),
+    personXM: r2(personX),
+    screenBottomHeightM: r2(screenBotH),
+    floorSceneY: r2(floorSceneY),
+    deviceHeightFromFloorM,
+    beamBottomAtScreenM,
+    beamTopAtScreenM,
+    beamBottomAtPersonM,
+    beamTopAtPersonM,
+    headClearanceM,
+    shadowEntryDistFromScreenM,
+    shadowEntryDistFromDeviceM,
+    shadowZoneRangeM,
+    neverCastsShadow,
+    isCastingShadow,
+    intrusionHeightM,
+    shadowRect2D,
+    shadowPolygonScene2D,
+    shadowPolygonFloor2D,
+    shadowWidthM,
+    shadowHeightM,
+    shadowAreaM2,
+    shadowCoveragePct,
+    shadowBottomFromFloorM,
+    shadowTopFromFloorM,
+    zoneStatusLabel,
+    reportSummaryTr,
+  };
+}

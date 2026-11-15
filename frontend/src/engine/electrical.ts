@@ -12,7 +12,7 @@ import { assertPositive } from './units';
 
 export const BREAKER_RATINGS_A = [6, 10, 13, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125];
 
-export interface Load { id: string; name: string; qty: number; powerW: number; pf?: number }
+export interface Load { id: string; name: string; qty: number; powerW?: number | null; pf?: number }
 export interface Circuit {
   id: string; name: string; loadIds: string[];
   phase: 'L1' | 'L2' | 'L3' | '3P';        // tek faz hattı veya üç faz devre
@@ -46,14 +46,15 @@ export function voltageDrop(i: number, lengthM: number, mm2: number, rho: number
   return { volts: du, percent: du / voltage * 100 };
 }
 
+export type ElectricalDataStatus = 'OK' | 'UNKNOWN' | 'ZERO_POWER';
 export interface CircuitResult {
   circuit: Circuit; powerW: number; ibA: number; breakerA: number | null; requiredA: number;
-  dropV?: number; dropPct?: number; warnings: string[];
+  dropV?: number; dropPct?: number; warnings: string[]; dataStatus?: ElectricalDataStatus;
 }
 export interface ElectricalResult {
-  circuits: CircuitResult[]; totalW: number; demandW: number; totalIbA: number;
+  circuits: CircuitResult[]; totalW: number; demandW: number; totalIbA: number; effectivePf: number;
   mainBreakerA: number | null; mainBreakerReason?: string; phaseLoadsW: Record<string, number>; imbalancePct: number | null;
-  warnings: string[]; assumptions: string[];
+  warnings: string[]; assumptions: string[]; electricalDataStatus: ElectricalDataStatus; missingPowerLoadNames: string[]; zeroPowerLoadNames: string[];
 }
 
 export function analyze(loads: Load[], circuits: Circuit[], s: Supply): ElectricalResult {
@@ -64,20 +65,46 @@ export function analyze(loads: Load[], circuits: Circuit[], s: Supply): Electric
   const used = new Set<string>();
   const res: CircuitResult[] = [];
   const phaseLoads: Record<string, number> = { L1: 0, L2: 0, L3: 0 };
+  let totalVa = 0;
+  const missingPowerLoadNames: string[] = [];
+  const zeroPowerLoadNames: string[] = [];
   for (const c of circuits) {
     const w: string[] = [];
     let p = 0, ibSum = 0;
+    let cMissing = false;
+    let cZero = false;
     for (const id of c.loadIds) {
       const l = byId.get(id); if (!l) { w.push(`Bilinmeyen yük: ${id}`); continue; }
       if (used.has(id)) w.push(`${l.name} birden fazla devrede.`);
       used.add(id);
+      if (l.powerW === null || l.powerW === undefined || !Number.isFinite(l.powerW)) {
+        cMissing = true;
+        if (!missingPowerLoadNames.includes(l.name)) missingPowerLoadNames.push(l.name);
+        w.push(`${l.name}: Cihaz gücü tanımlanmamış (UNKNOWN).`);
+        continue;
+      }
+      if (l.powerW <= 0) {
+        cZero = true;
+        if (!zeroPowerLoadNames.includes(l.name)) zeroPowerLoadNames.push(l.name);
+        w.push(`⚠ Olağandışı Değer: ${l.name} gücü 0 W girilmiş; cihaz gücü doğrulanmalıdır.`);
+        continue;
+      }
       const lp = l.qty * l.powerW; p += lp;
-      ibSum += loadCurrent(lp, s.voltage, l.pf ?? s.defaultPf, c.phase === '3P');
+      const loadPf = Math.min(1, Math.max(0.1, l.pf ?? s.defaultPf));
+      totalVa += lp / loadPf;
+      ibSum += loadCurrent(lp, s.voltage, loadPf, c.phase === '3P');
     }
-    if (p === 0) { res.push({ circuit: c, powerW: 0, ibA: 0, breakerA: null, requiredA: 0, warnings: [...w, 'Devrede yük yok.'] }); continue; }
+    if (p === 0) {
+      const cStatus: ElectricalDataStatus = cMissing ? 'UNKNOWN' : cZero ? 'ZERO_POWER' : 'UNKNOWN';
+      res.push({
+        circuit: c, powerW: 0, ibA: 0, breakerA: null, requiredA: 0, dataStatus: cStatus,
+        warnings: w.length > 0 ? w : ['Devrede yük yok (UNKNOWN).'],
+      });
+      continue;
+    }
     const ib = ibSum, sel = selectBreaker(ib, s.designMargin);
     if (sel.inA === null) w.push(`Gereken ${sel.required.toFixed(1)} A, tercihli değerlerin (125 A) üstünde; devreyi bölün.`);
-    const r: CircuitResult = { circuit: c, powerW: p, ibA: ib, breakerA: sel.inA, requiredA: sel.required, warnings: w };
+    const r: CircuitResult = { circuit: c, powerW: p, ibA: ib, breakerA: sel.inA, requiredA: sel.required, warnings: w, dataStatus: cMissing ? 'UNKNOWN' : 'OK' };
     if (c.cableMm2 && c.lengthM) {
       const d = voltageDrop(ib, c.lengthM, c.cableMm2, s.rho, s.voltage, c.phase === '3P');
       r.dropV = d.volts; r.dropPct = d.percent;
@@ -92,8 +119,9 @@ export function analyze(loads: Load[], circuits: Circuit[], s: Supply): Electric
   for (const l of loads) if (!used.has(l.id)) warnings.push(`${l.name} hiçbir devreye atanmadı.`);
   const total = res.reduce((a, r) => a + r.powerW, 0), demand = total * s.diversity;
   // Türkiye/IEC 3 fazlı sistemde s.voltage faz-nötr (≤ 260 V, örn. 230 V) girilmişse hatlar arası gerilim √3 × V_LN (~400 V) kullanılır.
+  const effectivePf = total > 0 && totalVa > 0 ? +(total / totalVa).toFixed(4) : s.defaultPf;
   const effectiveLineV = s.phases === 3 && s.voltage <= 260 ? s.voltage * Math.sqrt(3) : s.voltage;
-  const totalIb = s.phases === 3 ? loadCurrent(Math.max(demand, 1e-9), effectiveLineV, s.defaultPf, true) : loadCurrent(Math.max(demand, 1e-9), s.voltage, s.defaultPf, false);
+  const totalIb = s.phases === 3 ? loadCurrent(Math.max(demand, 1e-9), effectiveLineV, effectivePf, true) : loadCurrent(Math.max(demand, 1e-9), s.voltage, effectivePf, false);
   let imb: number | null = null;
   if (s.phases === 3) {
     const v = Object.values(phaseLoads), avg = v.reduce((a, b) => a + b, 0) / 3;
@@ -112,9 +140,17 @@ export function analyze(loads: Load[], circuits: Circuit[], s: Supply): Electric
       ? `Yük akımı minimumu ${main.required.toFixed(2)} A (Ib×${(1 + s.designMargin).toFixed(2)}) olmasına karşın, alt linye min. MCB (${maxCircuitBreakerA} A) için ön-tasarım 1.6× kuralı (${(maxCircuitBreakerA * 1.6).toFixed(1)} A) gereği IEC 60898-1 serisinden ${selectiveMainA} A seçildi (kesin selektivite garantisi için üretici zaman-akım / selektivite tabloları ve Ik gereklidir).`
       : `Yük akımı Ib=${totalIb.toFixed(2)} A × ${(1 + s.designMargin).toFixed(2)} = ${main.required.toFixed(2)} A kriterini sağlayan en küçük IEC 60898-1 standart değeri (${selectiveMainA} A) seçildi.`)
     : undefined;
+  const electricalDataStatus: ElectricalDataStatus =
+    missingPowerLoadNames.length > 0
+      ? 'UNKNOWN'
+      : zeroPowerLoadNames.length > 0 && total === 0
+      ? 'ZERO_POWER'
+      : total === 0
+      ? 'UNKNOWN'
+      : 'OK';
   return {
-    circuits: res, totalW: total, demandW: demand, totalIbA: total > 0 ? totalIb : 0, mainBreakerA: selectiveMainA, mainBreakerReason,
-    phaseLoadsW: phaseLoads, imbalancePct: imb, warnings,
+    circuits: res, totalW: total, demandW: demand, totalIbA: total > 0 ? totalIb : 0, effectivePf, mainBreakerA: selectiveMainA, mainBreakerReason,
+    phaseLoadsW: phaseLoads, imbalancePct: imb, warnings, electricalDataStatus, missingPowerLoadNames, zeroPowerLoadNames,
     assumptions: [
       `Gerilim ${s.voltage} V, ${s.phases} fazlı besleme; güç faktörü yük başına girilmediyse ${s.defaultPf}.`,
       `Koruma seçimi: In ≥ Ib × (1+${s.designMargin}); IEC 60898-1 tercihli değerlerinden en küçüğü.`,
@@ -156,26 +192,45 @@ export function evaluateProtectionCoordination(
     return hasIcu && hasCurve && hasInrush;
   });
   if (!allDefined) {
+    const missingItems: string[] = [];
+    if (!active.every(r => typeof r.circuit.breakerIcuKa === 'number' && r.circuit.breakerIcuKa > 0 && typeof r.circuit.prospectiveFaultKa === 'number' && r.circuit.prospectiveFaultKa > 0)) {
+      missingItems.push('Icu/Ik kısa devre kapasitesi');
+    }
+    if (!active.every(r => r.circuit.tripCurve === 'B' || r.circuit.tripCurve === 'C' || r.circuit.tripCurve === 'D')) {
+      missingItems.push('açma eğrisi (B/C/D)');
+    }
+    if (!active.every(r => (typeof r.circuit.inrushA === 'number' && r.circuit.inrushA > 0) || (typeof r.circuit.inrushMultiplier === 'number' && r.circuit.inrushMultiplier > 0))) {
+      missingItems.push('inrush akımı');
+    }
+    if (active.length > 1 && !active.every(r => r.circuit.selectivityVerified === true)) {
+      missingItems.push('selektivite tablosu');
+    }
     return {
       defined: false,
       passed: false,
       selectivityVerified: false,
       issues: [],
-      summary: 'Yalnızca Ib ve ΔU hesaplandı',
+      summary: `Yalnızca Ib ve ΔU hesaplandı; ${missingItems.join(', ')} girilmedi (UNKNOWN).`,
     };
   }
 
   const issues: string[] = [];
   let selectivityUnknown = false;
+  let minIcu = Infinity;
+  let maxIk = 0;
+  let maxInrush = 0;
   for (const r of active) {
     const c = r.circuit;
     const icu = c.breakerIcuKa!;
     const ik = c.prospectiveFaultKa!;
+    minIcu = Math.min(minIcu, icu);
+    maxIk = Math.max(maxIk, ik);
     if (icu < ik) {
       issues.push(`${c.name}: Kesici Icu (${icu} kA) < Beklenen Ik (${ik} kA)`);
     }
     const curve = c.tripCurve!;
     const inrushA = typeof c.inrushA === 'number' && c.inrushA > 0 ? c.inrushA : r.ibA * (c.inrushMultiplier ?? 1);
+    maxInrush = Math.max(maxInrush, inrushA);
     if (r.breakerA !== null) {
       const magLimit = r.breakerA * CURVE_MAGNETIC_MULT[curve];
       if (inrushA > magLimit) {
@@ -199,7 +254,7 @@ export function evaluateProtectionCoordination(
     summary: issues.length > 0
       ? issues.join('; ')
       : selectivityUnknown
-        ? `Icu ≥ Ik ve inrush doğrulandı; ancak ${active.length} linye için üretici zaman-akım koordinasyon tablosu girilmedi (UNKNOWN – Selektivite doğrulanamadı).`
-        : `${active.length} linyede Icu ≥ Ik, açma eğrisi & selektivite doğrulandı`,
+        ? `Girilen Icu (${minIcu} kA) ≥ Ik (${maxIk} kA) ve inrush (maks. ${maxInrush.toFixed(1)} A) kontrol edildi; ancak ${active.length} linye için üretici selektivite tablosu girilmedi (UNKNOWN – Selektivite doğrulanamadı).`
+        : `${active.length} linyede Icu (${minIcu} kA) ≥ Ik (${maxIk} kA), inrush (${maxInrush.toFixed(1)} A) & selektivite doğrulandı`,
   };
 }
