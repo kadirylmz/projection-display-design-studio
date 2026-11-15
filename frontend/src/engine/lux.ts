@@ -368,6 +368,11 @@ export function computeViewingQualityAnalysis(inp: ViewingQualityInput): Viewing
   const effectiveVFovDeg = Math.max(0.5, verticalFovDeg);
   const ppd = r1(resW / effectiveFovDeg);
   const ppdV = r1(resH / effectiveVFovDeg);
+  // PPD türevi: dP/dθ = (res / Boyut) * (dx/dθ).
+  // x(θ) = D * tan(θ) olduğuna göre dx/dθ = D / cos^2(θ).
+  // Dolayısıyla merkezde (θ=0): PPD_center = (res / Boyut) * D * (π / 180).
+  // Kenara doğru gidildikçe 1 derece görüş açısına düşen ekran mesafesi dx artar;
+  // böylece 1 derece açı içine düşen piksel sayısı (PPD) artar: PPD_edge = PPD_center / cos^2(θ/2).
   const ppdCenterH = r1((resW / Math.max(0.1, widthM)) * viewingDistanceM * (Math.PI / 180));
   const ppdCenterV = r1((resH / Math.max(0.1, heightM)) * viewingDistanceM * (Math.PI / 180));
   const cosHalfH = Math.cos((effectiveFovDeg / 2) * (Math.PI / 180));

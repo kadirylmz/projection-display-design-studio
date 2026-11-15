@@ -11,6 +11,14 @@ import { contentPlannerRoomPlan } from '../engine/drawings';
 import { toSvg } from '../engine/drawing';
 import { computeFovShadowAnalysis } from '../engine/fovProjection';
 import { download } from '../util';
+import { useOpticalDeviceStore, OpticalStudioReportSnapshot } from '../opticalDeviceStore';
+import {
+  calculateProjectorLensOptics,
+  calculateCameraOpticsFov,
+  evaluateOpticalPhysicalCompliance,
+  resolveProjectorWatts,
+  resolveProjectorNativeContrast,
+} from '../engine/opticalDeviceEngine';
 
 import { computeLuxSimulationGrid, sampleNinePointsFromLuxGrid } from '../engine/centralDesignModel';
 
@@ -19,6 +27,7 @@ export default function ReportGenerator() {
   const { surfaces, calculatedSurfaces, physicalRoom } = usePlannerStore();
   const { slots, screens: mappingScreens, updateScreen: updateMappingScreen } = useMapping();
   const surfacePhotometrics = usePhotometricStore(state => state.surfacePhotometrics);
+  const { projectors: opticalProjectors, cameras: opticalCameras, activeProjectorId, activeCameraId, latestStudioReport } = useOpticalDeviceStore();
 
   const [lang, setLang] = useState<ReportLang>('tr');
   const [reportMode, setReportMode] = useState<'design' | 'as_built'>('design');
@@ -224,6 +233,8 @@ export default function ReportGenerator() {
   }, [projectionScreens, projectionSnap?.projectorName, interProjectorAnalysis.projectors]);
 
   const reportPhotometricSurfaces = useMemo(() => {
+    const canonicalWatts = resolveProjectorWatts(canonicalProjectorModel, 450);
+    const canonicalNativeContrast = resolveProjectorNativeContrast(canonicalProjectorModel);
     const buildDistributionRows = (
       surfName: string,
       wM: number,
@@ -337,7 +348,7 @@ export default function ReportGenerator() {
               nativeW,
               nativeH,
               ansiLumensPerUnit: unitNomLm,
-              powerWPerUnit: 450,
+              powerWPerUnit: canonicalWatts,
             },
             lens: { model: 'Lens', throwDistM: dist, throwRatio: tr },
             photometrics: { opticalEfficiencyPct: netEffPct, screenGain: gain, reflectance: refl, ambientLux: ambLuxVal },
@@ -389,6 +400,9 @@ export default function ReportGenerator() {
             idealNits: idealNitsVal,
             luminanceFL: fl,
             ambientContrastRatio: acr,
+            nativeContrast: canonicalNativeContrast ?? (item as any).nativeContrast,
+            powerWPerUnit: canonicalWatts,
+            projectorModel: canonicalProjectorModel,
             luxSource: 'SIMULATED_LUXFIELD' as const,
             distributionRows: buildDistributionRows(item.surfaceName, wM, cols, rows, dist, tr),
           };
@@ -433,7 +447,7 @@ export default function ReportGenerator() {
           nativeW,
           nativeH,
           ansiLumensPerUnit: lumensPerPj,
-          powerWPerUnit: 450,
+          powerWPerUnit: canonicalWatts,
         },
         lens: { model: 'Lens', throwDistM: dist, throwRatio: tr },
         photometrics: { opticalEfficiencyPct: 90, screenGain: gain, reflectance: refl, ambientLux: ambLuxVal },
@@ -491,6 +505,9 @@ export default function ReportGenerator() {
         surfaceReflectance: refl,
         ambientLux: ambLuxVal,
         ambientContrastRatio: acr,
+        nativeContrast: canonicalNativeContrast,
+        powerWPerUnit: canonicalWatts,
+        projectorModel: canonicalProjectorModel,
         luxSource: 'SIMULATED_LUXFIELD' as const,
         isManualLux: false,
         distributionRows: distRows,
@@ -882,7 +899,7 @@ export default function ReportGenerator() {
       const combW = sExt.projNetW || (s.cols * pW - Math.max(0, s.cols - 1) * ovPx);
       const combH = sExt.projNetH || (s.rows * pH);
       return {
-        scenarioId: `SCN-${idx + 1}-${s.id}`,
+        scenarioId: idx === 0 ? 'SCN-01-MAIN-PROJECTION' : `SCN-${String(idx + 1).padStart(2, '0')}-${s.id}`,
         surfaceId: s.id,
         surfaceName: s.name,
         projectorCount: pjCount,
@@ -901,6 +918,63 @@ export default function ReportGenerator() {
       };
     });
   }, [canonicalIpSurfaces, activePhotometricSurfaces, interProjectorAnalysis, canonicalProjection, canonicalProjectorModel, canonicalUnitLumens]);
+
+  const opticalStudioSnapshot = useMemo<OpticalStudioReportSnapshot>(() => {
+    if (latestStudioReport) return latestStudioReport;
+    const pj = opticalProjectors.find(p => p.id === activeProjectorId) ?? opticalProjectors[0];
+    const cam = opticalCameras.find(c => c.id === activeCameraId) ?? opticalCameras[0];
+    const pjOptics = calculateProjectorLensOptics({
+      profile: pj,
+      method: 'DIST_TO_SIZE',
+      throwDistanceM: 5.0,
+      targetImageWidthM: 3.0,
+      targetImageHeightM: 1.875,
+      projectorPositionM: [0, 0.85, 5.0],
+    });
+    const camOptics = calculateCameraOpticsFov({
+      profile: cam,
+      targetDistanceM: 5.0,
+      digitalZoomOverride: 1.0,
+    });
+    const compInput = {
+      roomWidthM: 8.0,
+      roomLengthM: 9.0,
+      roomHeightM: 3.6,
+      surfaceWidthM: 3.2,
+      surfaceHeightM: 2.0,
+      surfaceBottomFromFloorM: 0.85,
+      projectorProfile: pj,
+      projectorPosM: [0, 0.85, 5.0] as [number, number, number],
+      projectorYawDeg: 0,
+      projectorPitchDeg: 0,
+      projectorCalc: pjOptics,
+      cameraProfile: cam,
+      cameraPosM: [0.6, 1.85, 5.0] as [number, number, number],
+      cameraYawDeg: -6,
+      cameraPitchDeg: 0,
+      cameraCalc: camOptics,
+    };
+    return {
+      updatedAt: new Date().toISOString(),
+      projectorProfile: pj,
+      cameraProfile: cam,
+      projectorCalc: pjOptics,
+      cameraCalc: camOptics,
+      compliance: evaluateOpticalPhysicalCompliance(compInput),
+      room: {
+        widthM: 8.0,
+        lengthM: 9.0,
+        heightM: 3.6,
+        surfaceWidthM: 3.2,
+        surfaceHeightM: 2.0,
+        surfaceBottomFromFloorM: 0.85,
+      },
+      projectorPosM: [0, 0.85, 5.0],
+      projectorAnglesDeg: [0, 0, 0],
+      cameraPosM: [0.6, 1.85, 5.0],
+      cameraAnglesDeg: [0, -6, 0],
+    };
+  }, [latestStudioReport, opticalProjectors, opticalCameras, activeProjectorId, activeCameraId]);
 
   const reportPayload: ReportPayload = useMemo(() => ({
     lang,
@@ -935,6 +1009,7 @@ export default function ReportGenerator() {
     plannerSurfaces: canonicalIpSurfaces,
     enabledSurfaceIds,
     fovShadowReport,
+    opticalStudioReport: opticalStudioSnapshot,
   }), [
     lang,
     reportMode,
@@ -955,6 +1030,7 @@ export default function ReportGenerator() {
     canonicalIpSurfaces,
     enabledSurfaceIds,
     fovShadowReport,
+    opticalStudioSnapshot,
   ]);
 
   const validationRes = useMemo(() => validateReportConsistency(reportPayload), [reportPayload]);
@@ -1231,6 +1307,7 @@ export default function ReportGenerator() {
             ['electrical', '8. Elektrik Yük & Tek Hat Dağıtım Şeması'],
             ['assumptionsAndWarnings', '9. Şantiye Standartları & Teknik Uyarılar'],
             ['fovShadow', '10. Kamera/Projektör FOV & İnsan Gölge Raporu'],
+            ['opticalStudio', '11. Profesyonel Optik Cihaz Profili, Lens & FOV Raporu'],
           ] as [keyof ReportSectionFlags, string][]).map(([k, label]) => (
             <div key={k} className="space-y-1">
               <label className="flex items-center gap-2 cursor-pointer hover:text-white transition">
@@ -1429,6 +1506,102 @@ export default function ReportGenerator() {
                         );
                       })}
                     </div>
+                  )}
+                </div>
+              )}
+              {k === 'fovShadow' && sections.fovShadow && fovShadowReport && (
+                <div className="ml-6 mt-1 p-2 space-y-1.5 rounded bg-slate-900 border border-slate-800 text-[11px]">
+                  <span className="text-sky-300 font-bold block text-[10.5px]">Rapordaki Görünümler &amp; Paftalar:</span>
+                  {Array.isArray(fovShadowReport.capturedViews) && fovShadowReport.capturedViews.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="text-slate-400 text-[10px] block font-medium">3B Kamera Açıları:</span>
+                      {fovShadowReport.capturedViews.map(cv => (
+                        <div key={cv.id} className="flex items-center justify-between gap-1 text-slate-300 py-0.5">
+                          <span className="truncate text-slate-200">📸 {cv.label}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = (fovShadowReport.capturedViews || []).filter(v => v.id !== cv.id);
+                              const updated = { ...fovShadowReport, capturedViews: next };
+                              setFovShadowReport(updated);
+                              try {
+                                localStorage.setItem('agy_fov_shadow_report_v1', JSON.stringify(updated));
+                              } catch { /* ignore */ }
+                            }}
+                            className="px-1.5 py-0.2 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 text-[9.5px]"
+                            title="Rapordan Sil"
+                          >
+                            ✕ Rapordan Sil
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="pt-1 border-t border-slate-800/80 space-y-1">
+                    <span className="text-slate-400 text-[10px] block font-medium">2B Pafta Çizimleri:</span>
+                    {[
+                      { k: 'sideSection' as const, label: 'Yandan Kesit Paftası' },
+                      { k: 'frontElevation' as const, label: 'Perde Ön Paftası' },
+                      { k: 'topPlan' as const, label: 'Üstten Plan Paftası' },
+                      { k: 'bottomPlan' as const, label: 'Alttan Görünüm Paftası' },
+                      { k: 'iso3d' as const, label: '3B Vektörel İzometrik' },
+                    ].map(p => {
+                      const cur = fovShadowReport.enabledPaftas ?? { iso3d: true, topPlan: true, bottomPlan: true, sideSection: true, frontElevation: true };
+                      const checked = cur[p.k];
+                      return (
+                        <label key={p.k} className="flex items-center justify-between gap-2 cursor-pointer text-slate-300 hover:text-white">
+                          <span className="flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                const nextP = { ...cur, [p.k]: !checked };
+                                const updated = { ...fovShadowReport, enabledPaftas: nextP };
+                                setFovShadowReport(updated);
+                                try {
+                                  localStorage.setItem('agy_fov_shadow_report_v1', JSON.stringify(updated));
+                                } catch { /* ignore */ }
+                              }}
+                              className="accent-emerald-500"
+                            />
+                            <span className={checked ? 'text-emerald-300' : 'text-slate-500 line-through'}>{p.label}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {k === 'opticalStudio' && sections.opticalStudio && opticalStudioSnapshot && (
+                <div className="ml-6 mt-1 p-2 space-y-1.5 rounded bg-slate-900 border border-slate-800 text-[11px]">
+                  <span className="text-cyan-300 font-bold block text-[10.5px]">Optik Stüdyo Rapordaki Görünümler:</span>
+                  {Array.isArray(opticalStudioSnapshot.capturedViews) && opticalStudioSnapshot.capturedViews.length > 0 ? (
+                    <div className="space-y-1">
+                      <span className="text-slate-400 text-[10px] block font-medium">3B Çoklu Açı Görünümleri:</span>
+                      {opticalStudioSnapshot.capturedViews.map((cv: any) => (
+                        <div key={cv.id} className="flex items-center justify-between gap-1 text-slate-300 py-0.5">
+                          <span className="truncate text-slate-200">📸 {cv.label}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = (opticalStudioSnapshot.capturedViews || []).filter((v: any) => v.id !== cv.id);
+                              useOpticalDeviceStore.getState().setLatestStudioReport({
+                                ...opticalStudioSnapshot,
+                                capturedViews: next,
+                              });
+                            }}
+                            className="px-1.5 py-0.2 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 text-[9.5px]"
+                            title="Rapordan Sil"
+                          >
+                            ✕ Rapordan Sil
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-slate-500 italic block">
+                      Optik Stüdyo sekmesinden dilediğiniz açıları tek tıkla rapora ekleyebilirsiniz.
+                    </span>
                   )}
                 </div>
               )}

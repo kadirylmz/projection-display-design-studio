@@ -131,3 +131,24 @@ class ProjectRevision(Base):
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     note: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OpticalDeviceProfile(Base):
+    """Profesyonel Optik Cihaz Profili (Kategori A: PROJECTOR, Kategori B: CAMERA).
+    Bilinmeyen değerler 0 yerine null/UNKNOWN olarak profile_data JSON içinde saklanır."""
+    __tablename__ = "optical_device_profiles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_uid: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)  # PROJECTOR | CAMERA
+    brand: Mapped[str] = mapped_column(String(120))
+    model: Mapped[str] = mapped_column(String(160))
+    manufacturer: Mapped[str] = mapped_column(String(160))
+    data_source: Mapped[str] = mapped_column(String(80), default="USER_ENTERED")
+    catalog_url: Mapped[str | None] = mapped_column(String(500))
+    entry_date: Mapped[str] = mapped_column(String(40))
+    verification_status: Mapped[str] = mapped_column(String(60), default="USER_DEFINED")
+    profile_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+

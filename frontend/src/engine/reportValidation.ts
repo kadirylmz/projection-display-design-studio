@@ -18,6 +18,20 @@ export type ValidationVerdict = 'PASS' | 'WARNING' | 'FAIL' | 'UNKNOWN' | 'NOT_A
 export type PdfApprovalStatus = 'APPROVED' | 'CONDITIONAL' | 'DRAFT' | 'BLOCKED';
 export type PdfGateStatus = 'READY' | 'CONDITIONAL' | 'BLOCKED';
 
+export interface StructuredValidationError {
+  errorId: string;
+  surfaceId: string;
+  scenarioId: string;
+  sourceDataId: string;
+  expected: string;
+  reported: string;
+  delta: string;
+  tolerance: string;
+  description: string;
+  category: 'mathematical' | 'engineering';
+  severity: 'FAIL' | 'WARNING' | 'UNKNOWN';
+}
+
 export interface ReportValidationCheck {
   id: string;
   modulePair: string;
@@ -48,6 +62,15 @@ export interface ReportValidationResult {
   consistencyScorePct: number;
   mathScorePct: number;
   engineeringScorePct: number;
+  feasibilityScorePct: number;
+  feasibilityScoreFormula: string;
+  pillarScores?: {
+    mathIntegrity: number;
+    dataIntegrity: number;
+    feasibility: number;
+    catalogMatch: number;
+    fieldVerification: number;
+  };
   passCount: number;
   infoCount: number;
   warningCount: number;
@@ -55,6 +78,7 @@ export interface ReportValidationResult {
   unknownCount: number;
   notApplicableCount: number;
   checks: ReportValidationCheck[];
+  structuredErrors: StructuredValidationError[];
   warnings: string[];
 }
 
@@ -94,6 +118,11 @@ function verdictFromStatus(status: ValidationStatus): ValidationVerdict {
 export function validateReportConsistency(p: ReportPayload): ReportValidationResult {
   const checks: ReportValidationCheck[] = [];
   const warnings: string[] = [];
+  const structuredErrors: StructuredValidationError[] = [];
+
+  const addStructuredError = (err: StructuredValidationError) => {
+    structuredErrors.push(err);
+  };
 
   const addCheck = (
     c: Omit<ReportValidationCheck, 'level' | 'verdict'> & { isInfoOnly?: boolean; verdict?: ValidationVerdict },
@@ -130,18 +159,76 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
           ? `${missingIds.length} senaryoda scenarioId veya surfaceId eksik.`
           : `${p.scenarios.length} sistem senaryosu benzersiz Senaryo ID ve Yüzey ID ile eşleşiyor.`,
     });
+
+    // 0b. ERR-MULTI-GEOMETRY: İki farklı oda/yüzey geometrisi aynı raporda farklı scenarioId taşımıyorsa rapor bloklanmalı
+    if (p.scenarios.length > 1) {
+      const geomKeys = p.scenarios.map(s => {
+        const roomKey = s.room ? `${s.room.widthM}x${s.room.lengthM}x${s.room.heightM}` : '';
+        const surfKey = `${s.imageWidthM}x${s.imageHeightM}`;
+        return `${roomKey}_${surfKey}`;
+      });
+      const uniqueGeoms = new Set(geomKeys);
+      const scenarioIds = p.scenarios.map(s => s.scenarioId).filter(Boolean);
+      const uniqueScenarioIds = new Set(scenarioIds);
+
+      const hasConflictingGeometryWithoutScenarioId =
+        uniqueGeoms.size > 1 && (uniqueScenarioIds.size < uniqueGeoms.size || missingIds.length > 0);
+
+      if (hasConflictingGeometryWithoutScenarioId) {
+        addStructuredError({
+          errorId: 'ERR-MULTI-GEOMETRY',
+          surfaceId: p.scenarios[0].surfaceId || 'ALL',
+          scenarioId: p.scenarios[0].scenarioId || 'CONFLICT',
+          sourceDataId: 'RoomGeometry',
+          expected: 'Farklı oda/yüzey geometrileri için benzersiz scenarioId atanmalı',
+          reported: `${uniqueGeoms.size} farklı geometri, ${uniqueScenarioIds.size} senaryo ID`,
+          delta: 'Aynı senaryoda çakışan geometri',
+          tolerance: '0',
+          description: 'İki farklı oda geometrisi aynı raporda farklı scenarioId taşımıyorsa rapor bloklanmalı.',
+          category: 'engineering',
+          severity: 'FAIL',
+        });
+        addCheck({
+          id: 'multi-room-geometry-conflict',
+          modulePair: 'Oda Geometrisi ↔ Senaryo ID',
+          title: 'Çoklu Oda Geometrisi & Senaryo Ayrımı',
+          status: 'error',
+          expectedValue: 'Her farklı oda geometrisi için benzersiz scenarioId',
+          actualValue: `${uniqueGeoms.size} farklı geometri, ${uniqueScenarioIds.size} senaryo ID`,
+          tolerancePct: 0,
+          deviationPct: 100,
+          differenceText: 'Çakışma',
+          message: 'İki farklı oda geometrisi aynı raporda farklı scenarioId taşımıyorsa rapor bloklanmalı (ERR-MULTI-GEOMETRY).',
+        });
+      }
+    }
   }
 
   // 1. Fotometri: Efektif Lümen ÷ Alan ↔ Ortalama Lux & Nits
   if (p.photometricSurfaces && p.photometricSurfaces.length > 0) {
     p.photometricSurfaces.forEach((ps, idx) => {
-      // Zorunlu sıralama kuralı: E_min ≤ E_ort ≤ E_max (aynı LuxField içinde)
+      // 1. ERR-LUX-ORDER: Zorunlu sıralama kuralı: E_min ≤ E_ort ≤ E_max (aynı LuxField içinde)
       if (ps.avgLux > 0 && ps.maxLux > 0) {
         const orderIssues = validateLuxOrder(
           Number.isFinite(ps.minLux) ? ps.minLux : null,
           ps.avgLux,
           ps.maxLux
         );
+        if (orderIssues.length > 0) {
+          addStructuredError({
+            errorId: 'ERR-LUX-ORDER',
+            surfaceId: ps.surfaceId || `surf-${idx}`,
+            scenarioId: 'current',
+            sourceDataId: 'LuxField',
+            expected: 'E_min <= E_ort <= E_max',
+            reported: `min=${ps.minLux}, ort=${r1(ps.avgLux)}, max=${ps.maxLux}`,
+            delta: `${r1(ps.avgLux - ps.maxLux)} lx`,
+            tolerance: '0 lx',
+            description: 'Ortalama aydınlık maksimum aydınlıktan büyük olamaz (matematiksel imkansızlık).',
+            category: 'mathematical',
+            severity: 'FAIL',
+          });
+        }
         addCheck({
           id: `lux-order-${idx}`,
           modulePair: 'Fotometri ↔ Min/Ort/Max Sıralaması',
@@ -315,19 +402,37 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
         const expAcr = r1((ps.luminanceNits + ambNits) / Math.max(0.01, ambNits));
         const repAcr = ps.ambientContrastRatio ?? expAcr;
         const acrDev = r1((Math.abs(expAcr - repAcr) / Math.max(0.1, expAcr)) * 100);
+        const isNativeBlackUnknown = ps.nativeContrast === null || ps.nativeBlackNits === null;
+
+        let acrStatus: ValidationStatus = isNativeBlackUnknown ? 'unknown' : acrDev > 15 ? 'error' : acrDev > 8 ? 'warning' : 'pass';
+        let acrVerdict: ValidationVerdict = isNativeBlackUnknown ? 'UNKNOWN' : verdictFromStatus(acrStatus);
+        let acrMsg = '';
+        if (isNativeBlackUnknown) {
+          // Projektörün doğal siyah seviyesi bilinmiyorsa (native black = UNKNOWN):
+          // Gerçek ACR = UNKNOWN, ACR validator = UNKNOWN. PASS yasak!
+          acrStatus = 'unknown';
+          acrVerdict = 'UNKNOWN';
+          acrMsg = `Cihaz doğal siyah seviyesi / native kontrastı girilmediğinden (UNKNOWN), gerçek optik ACR UNKNOWN olarak işaretlenmiştir. PASS verilemez. Gösterilen ${r1(repAcr)}:1 değeri yalnızca ortam yansıması tahmini (ambient reflection estimate) metriğidir.`;
+        } else if (acrDev > 8) {
+          acrMsg = `ACR (${r1(repAcr)}:1) ile gerçek ρ=${refl} hesabı (${expAcr}:1) farklı.`;
+        } else {
+          acrMsg = `ACR (${r1(repAcr)}:1) beyaz/siyah seviyesi ve doğal siyah parametreleriyle doğrulanmıştır (PASS).`;
+        }
+
         addCheck({
           id: `photo-acr-${idx}`,
           modulePair: 'Fotometri ↔ Ortam Işığı (ACR)',
           title: `${ps.surfaceName}: Nit & Ortam Işığı ↔ ACR`,
-          status: acrDev > 15 ? 'error' : acrDev > 8 ? 'warning' : 'pass',
+          status: acrStatus,
+          verdict: acrVerdict,
           testInput: `L=${r1(ps.luminanceNits)} nit, E_ort=${ps.ambientLux} lx, ρ=${refl}`,
-          formula: 'ACR = (L_beyaz + L_ortam) / L_ortam',
-          expectedValue: `${expAcr}:1`,
-          actualValue: `${r1(repAcr)}:1`,
-          tolerancePct: 8,
-          deviationPct: acrDev,
-          differenceText: `${r1(repAcr - expAcr)}`,
-          message: acrDev > 8 ? `ACR (${r1(repAcr)}:1) ile gerçek ρ=${refl} hesabı (${expAcr}:1) farklı.` : `ACR (${r1(repAcr)}:1) beyaz/siyah seviyesiyle tutarlı.`,
+          formula: 'ACR = (L_beyaz + L_ortam + L_doğal) / (L_ortam + L_doğal)',
+          expectedValue: isNativeBlackUnknown ? 'UNKNOWN (Doğal Siyah Tanımlı Değil)' : `${expAcr}:1`,
+          actualValue: isNativeBlackUnknown ? `UNKNOWN (Ortam Yansıması Tahmini: ${r1(repAcr)}:1)` : `${r1(repAcr)}:1`,
+          tolerancePct: isNativeBlackUnknown ? 0 : 8,
+          deviationPct: isNativeBlackUnknown ? 100 : acrDev,
+          differenceText: isNativeBlackUnknown ? 'Native Siyah Eksik (UNKNOWN)' : `${r1(repAcr - expAcr)}`,
+          message: acrMsg,
         });
       } else {
         addCheck({
@@ -346,6 +451,39 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
 
       // 11B. Gerçek ACR: cihaz doğal siyah seviyesi (native kontrast) kontrolü
       if (ps.nativeContrast !== undefined || ps.nativeBlackNits !== undefined || !ps.ambientLux || ps.ambientLux <= 0) {
+        // Dinamik kontrastın veya uydurma 0.055 nit değerinin native black yerine girilmesi kontrolü (ERR-FABRICATED-NATIVE-BLACK)
+        if (ps.nativeContrast && ps.nativeContrast >= 100000) {
+          addStructuredError({
+            errorId: 'ERR-FABRICATED-NATIVE-BLACK',
+            surfaceId: ps.surfaceId || `surf-${idx}`,
+            scenarioId: 'SCN-01-MAIN-PROJECTION',
+            sourceDataId: 'PhotometricSpecs',
+            expected: 'Doğrulanmış fiziksel native kontrast (DLP için tipik 1000-2500:1) veya UNKNOWN',
+            reported: `Dinamik Full On/Off kontrast native yerine kullanılmış: ${ps.nativeContrast}:1`,
+            delta: `${ps.nativeContrast}`,
+            tolerance: 'Native Contrast < 100,000:1',
+            description: 'Üreticinin 3,000,000:1 Full On/Off dinamik kontrastı doğal kontrast olarak kullanılamaz; sahte siyah seviyesi ve yapay ACR üretir (FAIL / BLOCKED).',
+            category: 'engineering',
+            severity: 'FAIL',
+          });
+          addCheck({
+            id: `photo-dynamic-as-native-black-${idx}`,
+            modulePair: 'ACR ↔ Doğal Kontrast Dürüstlüğü',
+            title: `${ps.surfaceName}: Dinamik Kontrastın Doğal Kontrast Yerine Kullanılması İhlali`,
+            status: 'error',
+            category: 'engineering',
+            isMandatory: true,
+            testInput: `Girilen Kontrast: ${ps.nativeContrast}:1`,
+            formula: 'Native Kontrast ≠ Dinamik Full On/Off',
+            expectedValue: 'DLP Doğal Kontrast (≤ 2500:1) veya UNKNOWN',
+            actualValue: `${ps.nativeContrast}:1 (Dinamik Değer)`,
+            tolerancePct: 0,
+            deviationPct: 100,
+            differenceText: 'Yapay Doğal Kontrast',
+            message: 'Üretici 3,000,000:1 dinamik kontrastı doğal kontrast yerine girilemez. Ölçülmemişse UNKNOWN tutulmalıdır (ERR-FABRICATED-NATIVE-BLACK).',
+          });
+        }
+
         const refl = ps.surfaceReflectance && ps.surfaceReflectance > 0 ? ps.surfaceReflectance : 0.85;
         const contrast = computeContrastAnalysis({
           white: { source: ps.luxSource ?? 'SIMULATED_LUXFIELD', luxUsed: ps.avgLux, nits: ps.luminanceNits > 0 ? ps.luminanceNits : null, formula: 'L = E × Gain × ρ / π' },
@@ -376,19 +514,46 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
       // 12. Noktasal Lux – Ortalama Lux – Uniformity
       if (typeof ps.uniformityU0 === 'number' && ps.uniformityU0 > 0 && ps.avgLux > 0) {
         const u0Pct = ps.uniformityU0 <= 1 ? r1(ps.uniformityU0 * 100) : r1(ps.uniformityU0);
+        const isExcess = u0Pct > 100;
+        const isCriticallyLow = u0Pct < 50;
+        const isSuboptimal = u0Pct < 70;
+        const status: ValidationStatus = isExcess || isCriticallyLow ? 'error' : isSuboptimal ? 'warning' : 'pass';
+
+        if (isCriticallyLow) {
+          addStructuredError({
+            errorId: 'ERR-LOW-UNIFORMITY',
+            surfaceId: ps.surfaceId || `surf-${idx}`,
+            scenarioId: 'current',
+            sourceDataId: 'LuxField',
+            expected: 'U0 >= %50 (Kritik Eşik: INTERNAL DEFAULT — NOT A STANDARD)',
+            reported: `U0=%${u0Pct} (Ortalama=${r1(ps.avgLux)} lx)`,
+            delta: `-%${r1(50 - u0Pct)}`,
+            tolerance: 'U0 >= %50',
+            description: 'Düşük uniformity (U0 < %50) yüksek ortalama aydınlık nedeniyle ACCEPTABLE veya PASS olarak etiketlenemez (FAIL).',
+            category: 'engineering',
+            severity: 'FAIL',
+          });
+        }
+
         addCheck({
           id: `photo-point-uniformity-${idx}`,
           modulePair: 'Noktasal Lux ↔ Uniformity',
           title: `${ps.surfaceName}: Ortalama Lux ↔ Uniformity (U0)`,
-          status: u0Pct > 100 ? 'error' : 'pass',
+          status,
           testInput: `Ort=${r1(ps.avgLux)} lx, U0=%${u0Pct}`,
           formula: 'U0 = (E_min / E_ort) × 100',
-          expectedValue: '0 < U0 ≤ %100',
+          expectedValue: 'U0 ≥ %70 (Standard) · U0 ≥ %50 (INTERNAL DEFAULT — NOT A STANDARD)',
           actualValue: `%${u0Pct}`,
           tolerancePct: 0,
-          deviationPct: u0Pct > 100 ? r1(u0Pct - 100) : 0,
-          differenceText: u0Pct > 100 ? 'Aşım' : 'Tutarlı',
-          message: u0Pct > 100 ? `Uniformity (%${u0Pct}) %100'den büyük olamaz.` : `Noktasal dağılım düzgünlüğü (U0 = %${u0Pct}) fotometrik modelle tutarlı.`,
+          deviationPct: isExcess ? r1(u0Pct - 100) : isCriticallyLow ? r1(50 - u0Pct) : 0,
+          differenceText: isExcess ? 'Aşım (%100 üzeri)' : isCriticallyLow ? 'Kritik Düşük (FAIL)' : isSuboptimal ? 'Sınırlı (Uyarı)' : 'Tutarlı (PASS)',
+          message: isExcess
+            ? `Uniformity (%${u0Pct}) %100'den büyük olamaz (matematiksel imkansızlık).`
+            : isCriticallyLow
+            ? `Kritik homojenlik hatası: U0 = %${u0Pct} < %50 eşiği. Yüksek ortalama aydınlık (${r1(ps.avgLux)} lx) düşük homojenliği telafi edemez ve ACCEPTABLE kabul edilemez (ERR-LOW-UNIFORMITY).`
+            : isSuboptimal
+            ? `Sınırlı homojenlik (U0 = %${u0Pct}; %50–%70 aralığı) [INTERNAL DEFAULT — NOT A STANDARD]. Köşelerde optik düşüş belirgindir.`
+            : `Noktasal dağılım düzgünlüğü (U0 = %${u0Pct}) profesyonel AV standardı (≥%70) ile uyumlu.`,
         });
       } else {
         addCheck({
@@ -597,14 +762,69 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
     const { imageWidthM, distanceM, throwRatio, throwMin, throwMax, lensName } = p.projection;
     const calcTR = r2(distanceM / imageWidthM);
     const hfov = r1(2 * Math.atan(imageWidthM / (2 * distanceM)) * (180 / Math.PI));
+
+    // Sabit Lens & Zoom Kontrolü (ERR-FIXED-LENS-ZOOM)
+    const isFixedLensModel = (lensName || '').toLowerCase().includes('fixed') ||
+      (lensName || '').toLowerCase().includes('sabit') ||
+      (p.plannerSurfaces?.[0]?.projectorModel || '').toLowerCase().includes('du4381') ||
+      (p.plannerSurfaces?.[0]?.projectorModel || '').toLowerCase().includes('4381z');
+    const hasZoomRangeDefined = typeof throwMin === 'number' && typeof throwMax === 'number' && Math.abs(throwMax - throwMin) > 0.02;
+
+    if (isFixedLensModel && hasZoomRangeDefined) {
+      addStructuredError({
+        errorId: 'ERR-FIXED-LENS-ZOOM',
+        surfaceId: p.plannerSurfaces?.[0]?.surfaceId || 'SURF-01',
+        scenarioId: 'SCN-01-MAIN-PROJECTION',
+        sourceDataId: 'ProjectorCatalog',
+        expected: 'Sabit Lens TR Tekil Sabit Değer (0.50:1, Zoom: N/A / 1.0x)',
+        reported: `Zoom aralığı tanımlanmış: ${throwMin}–${throwMax}:1`,
+        delta: `${r2(throwMax - throwMin)}`,
+        tolerance: '0',
+        description: 'Vivitek DU4381Z-ST veya sabit lensli modeller için zoom aralığı oluşturulamaz (FAIL / BLOCKED).',
+        category: 'engineering',
+        severity: 'FAIL',
+      });
+      addCheck({
+        id: 'opt-fixed-lens-zoom-violation',
+        modulePair: 'Optik Cihaz ↔ Lens Tipi (Sabit Lens)',
+        title: 'Sabit Lens Zoom Aralığı İhlal Kontrolü',
+        status: 'error',
+        category: 'engineering',
+        isMandatory: true,
+        testInput: `${lensName || 'Vivitek DU4381Z-ST'} (${throwMin}–${throwMax}:1)`,
+        formula: 'throwMin === throwMax (Sabit Lens Zoom = N/A)',
+        expectedValue: '0.50:1 Sabit Odak',
+        actualValue: `${throwMin}–${throwMax}:1 (Zoom Tanımlı)`,
+        tolerancePct: 0,
+        deviationPct: 100,
+        differenceText: 'Zoom İhlali',
+        message: 'Sabit lensli cihaza (Vivitek DU4381Z-ST) değişken zoom aralığı (0.50–0.63 vb.) tanımlanamaz (FAIL).',
+      });
+    }
+
     if (typeof throwRatio === 'number' && throwRatio > 0) {
       const trDev = r1((Math.abs(calcTR - throwRatio) / Math.max(0.05, throwRatio)) * 100);
       const tol = 4;
-      const status: ValidationStatus = trDev > 12 ? 'error' : trDev > tol ? 'warning' : 'pass';
+      const status: ValidationStatus = trDev > 8 ? 'error' : trDev > tol ? 'warning' : 'pass';
+      if (status === 'error') {
+        addStructuredError({
+          errorId: 'ERR-OPTICAL-GEOMETRY-MISMATCH',
+          surfaceId: p.plannerSurfaces?.[0]?.surfaceId || 'SURF-01',
+          scenarioId: 'SCN-01-MAIN-PROJECTION',
+          sourceDataId: 'OpticalGeometry',
+          expected: `W = D / TR = ${r2(distanceM / throwRatio)} m (veya D = W × TR = ${r2(imageWidthM * throwRatio)} m)`,
+          reported: `D = ${distanceM} m, W = ${imageWidthM} m (Hesaplanan TR: ${calcTR}:1, Tanımlı TR: ${throwRatio}:1)`,
+          delta: `${r2(imageWidthM - (distanceM / throwRatio))} m`,
+          tolerance: '±%4',
+          description: 'Mesafe, görüntü genişliği ve Throw Ratio tek bir optik bağıntıyla tutarlı olmalıdır. 3.08 m mesafede TR 0.50 genişliği 6.16 m olmalı, 5.60 m için 2.80 m gerekirdi.',
+          category: 'mathematical',
+          severity: 'FAIL',
+        });
+      }
       const msg =
         status === 'pass'
           ? `Mesafe/Genişlik (${calcTR}:1) ile Lens TR (${throwRatio}:1) tutarlı (Optik HFOV: ${hfov}°).`
-          : `Mesafe/Genişlik (${calcTR}:1) ile girilen Lens TR (${throwRatio}:1) uyuşmuyor (%${trDev} sapma).`;
+          : `Mesafe/Genişlik (${calcTR}:1) ile girilen Lens TR (${throwRatio}:1) uyuşmuyor (%${trDev} sapma). Optik geometri çelişkisi!`;
       addCheck({
         id: 'proj-tr-fov',
         modulePair: 'Optik Lens ↔ Mesafe/Genişlik',
@@ -804,26 +1024,59 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
           surfaceWidthM: ps.effectiveWidthM,
           surfaceHeightM: ps.effectiveHeightM,
         });
-        const dW = Math.abs(cc.contentCanvas.w - ps.netW) / Math.max(1, cc.contentCanvas.w);
-        const dH = Math.abs(cc.contentCanvas.h - ps.netH) / Math.max(1, cc.contentCanvas.h);
-        const mismatch = dW > 0.01 || dH > 0.01;
+
+        // İki AV içerik stratejisi:
+        // 1. TAM DUVAR (WALL_FIT): 12x4.3 m duvar oranına (12:4.3) kare piksel içerik kanvası (~3349x1200 px, 337 px optik kırpma)
+        // 2. AKTİF ALAN (ACTIVE_FIT): 12x3.906 m aktif projeksiyon oranına birebir oturan içerik kanvası (~3686x1200 px, 0 px kırpma, duvarda 0.394 m ışıksız bant)
+        const isWallFit = Math.abs(cc.contentCanvas.w - ps.netW) <= 4 && Math.abs(cc.contentCanvas.h - ps.netH) <= 4;
+        const isActiveFit = Math.abs(rasterW - ps.netW) <= 4 && Math.abs(rasterH - ps.netH) <= 4;
+        const chosenPolicy = (ps as any).contentCanvasPolicy || (isActiveFit && !isWallFit ? 'ACTIVE_FIT' : 'WALL_FIT');
+
+        let isValid = false;
+        let expectedValueStr = '';
+        let devPct = 0;
+        let msg = '';
+
+        if (chosenPolicy === 'ACTIVE_FIT') {
+          isValid = isActiveFit;
+          expectedValueStr = `${rasterW}×${rasterH} px (Aktif Alan Stratejisi · 0 px Crop · 12×${r3(imgH)} m)`;
+          devPct = r1(Math.max(Math.abs(rasterW - ps.netW) / Math.max(1, rasterW), Math.abs(rasterH - ps.netH) / Math.max(1, rasterH)) * 100);
+          msg = isValid
+            ? `İçerik Stratejisi: AKTİF ALAN (ACTIVE_FIT). İçerik kanvası ${ps.netW}×${ps.netH} px birleşik rastera birebir oturur (0 px optik kırpma). Dikeyde fiziksel duvara göre ${r3(Math.max(0, ps.effectiveHeightM - imgH))} m ışıksız bant kalır. Optik kare piksel yoğunluğu korunur (${r1(ps.projW / imgW)} px/m).`
+            : `Aktif alan içerik stratejisi seçildi ancak bildirilen kanvas (${ps.netW}×${ps.netH}) aktif raster (${rasterW}×${rasterH}) ile uyuşmuyor.`;
+        } else {
+          // WALL_FIT veya belirtilmemiş (her iki standart stratejiden birine tam uyuyorsa kabul et):
+          isValid = isWallFit || isActiveFit;
+          if (isWallFit) {
+            expectedValueStr = `${cc.contentCanvas.w}×${cc.contentCanvas.h} px (Tam Duvar Stratejisi · ${rasterW - cc.contentCanvas.w} px Crop · ${ps.effectiveWidthM}×${ps.effectiveHeightM} m)`;
+            devPct = r1(Math.max(Math.abs(cc.contentCanvas.w - ps.netW) / Math.max(1, cc.contentCanvas.w), Math.abs(cc.contentCanvas.h - ps.netH) / Math.max(1, cc.contentCanvas.h)) * 100);
+            msg = `İçerik Stratejisi: TAM DUVAR (WALL_FIT). İçerik kanvası ${cc.contentCanvas.w}×${cc.contentCanvas.h} px fiziksel duvar oranına (${ps.effectiveWidthM}:${ps.effectiveHeightM}) kare piksel olarak eşlenir. ${rasterW - cc.contentCanvas.w} px optik kırpma / letterbox uygulanır. H ${cc.pxPerMeterH} px/m · V ${cc.pxPerMeterV} px/m.`;
+          } else if (isActiveFit) {
+            expectedValueStr = `${rasterW}×${rasterH} px (Aktif Alan Stratejisi · 0 px Crop · 12×${r3(imgH)} m)`;
+            devPct = 0;
+            msg = `İçerik Stratejisi: AKTİF ALAN (ACTIVE_FIT). İçerik kanvası ${ps.netW}×${ps.netH} px birleşik rastera birebir oturur (0 px optik kırpma). Dikeyde fiziksel duvara göre ${r3(Math.max(0, ps.effectiveHeightM - imgH))} m ışıksız bant kalır.`;
+          } else {
+            expectedValueStr = `${cc.contentCanvas.w}×${cc.contentCanvas.h} px (Tam Duvar) veya ${rasterW}×${rasterH} px (Aktif Alan)`;
+            devPct = r1(Math.max(Math.abs(cc.contentCanvas.w - ps.netW) / Math.max(1, cc.contentCanvas.w), Math.abs(cc.contentCanvas.h - ps.netH) / Math.max(1, cc.contentCanvas.h)) * 100);
+            msg = `Raporlanan içerik kanvası (${ps.netW}×${ps.netH}) ne tam duvar içerik kanvası (${cc.contentCanvas.w}×${cc.contentCanvas.h}) ne de aktif birleşik raster (${rasterW}×${rasterH}) ile uyuşmuyor (FAIL).`;
+          }
+        }
+
         addCheck({
           id: `content-canvas-sync-${idx}`,
           modulePair: 'Net Raster ↔ İçerik Kanvası',
           title: `${ps.name}: İçerik Kanvası Tek Kaynak Doğrulaması`,
-          status: mismatch ? 'error' : 'pass',
+          status: isValid ? 'pass' : 'error',
           category: 'mathematical',
           isMandatory: true,
           testInput: `Raster ${rasterW}×${rasterH} px, Yüzey ${ps.effectiveWidthM}×${ps.effectiveHeightM} m, Optik ${r1(ps.projW / imgW)} px/m`,
-          formula: 'İçerik = min(Raster, Yüzey × px/m_optik) | Raster yüzey oranına kırpılır',
-          expectedValue: `${cc.contentCanvas.w}×${cc.contentCanvas.h} px (${cc.contentCanvas.mp} MP · ${cc.mode})`,
+          formula: 'WALL_FIT: min(Raster, Yüzey × px/m) | ACTIVE_FIT: Raster (0 px crop)',
+          expectedValue: expectedValueStr,
           actualValue: `${ps.netW}×${ps.netH} px`,
           tolerancePct: 1,
-          deviationPct: r1(Math.max(dW, dH) * 100),
-          differenceText: mismatch ? `${ps.netW - cc.contentCanvas.w}×${ps.netH - cc.contentCanvas.h} px` : 'Aynı Kanvas',
-          message: mismatch
-            ? `Raporlanan içerik kanvası (${ps.netW}×${ps.netH}) ile birleşik rasterdan (${rasterW}×${rasterH}) türetilen kanvas (${cc.contentCanvas.w}×${cc.contentCanvas.h}) uyuşmuyor — projeksiyon rasteri ile içerik kanvası karıştırılmış olabilir (FAIL).`
-            : `İçerik kanvası ${cc.contentCanvas.w}×${cc.contentCanvas.h} px: H ${cc.pxPerMeterH} px/m (${cc.mmPerPxH} mm/px) · V ${cc.pxPerMeterV} px/m (${cc.mmPerPxV} mm/px) · ${cc.pxPerSqMeter} px/m² · ${cc.contentCanvas.mp} MP.`,
+          deviationPct: devPct,
+          differenceText: isValid ? 'Strateji Uyumlu' : `${ps.netW - cc.contentCanvas.w}×${ps.netH - cc.contentCanvas.h} px`,
+          message: msg,
         });
       }
 
@@ -1508,6 +1761,44 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
           });
         }
       }
+
+      // Katalog gücü ile linyedeki birim projektör gücü uyuşmazlığı kontrolü (ERR-CATALOG-POWER-MISMATCH)
+      const du4381Loads = loads.filter(l => (l.name || '').toLowerCase().includes('du4381') || (l.name || '').toLowerCase().includes('4381z'));
+      for (const dl of du4381Loads) {
+        const pW = dl.powerW || 0;
+        // Normal 530W, Eco 380W dışındaki değerler (örn. eski 1900W veya 450W genel değerler)
+        if (pW > 0 && Math.abs(pW - 530) > 10 && Math.abs(pW - 380) > 10) {
+          addStructuredError({
+            errorId: 'ERR-CATALOG-POWER-MISMATCH',
+            surfaceId: p.plannerSurfaces?.[0]?.surfaceId || 'SURF-01',
+            scenarioId: 'SCN-01-MAIN-PROJECTION',
+            sourceDataId: 'ElectricalLoads',
+            expected: '530 W (Normal) veya 380 W (Eco)',
+            reported: `${pW} W (${dl.name})`,
+            delta: `${pW - 530} W`,
+            tolerance: '±10 W',
+            description: 'Vivitek DU4381Z-ST cihazı için katalog güç tüketimi normal modda 530 W, Eco modda 380 W olmalıdır. Başka cihaz gücü kopyalanamaz (FAIL).',
+            category: 'engineering',
+            severity: 'FAIL',
+          });
+          addCheck({
+            id: 'elec-catalog-power-mismatch-du4381',
+            modulePair: 'Cihaz Kataloğu ↔ Elektrik Yükü',
+            title: 'DU4381Z-ST Katalog Güç Uyumu Kontrolü',
+            status: 'error',
+            category: 'engineering',
+            isMandatory: true,
+            testInput: `${dl.name}: ${pW} W`,
+            formula: 'P_du4381 ∈ {530 W, 380 W}',
+            expectedValue: '530 W / 380 W',
+            actualValue: `${pW} W`,
+            tolerancePct: 2,
+            deviationPct: r1((Math.abs(pW - 530) / 530) * 100),
+            differenceText: `${pW - 530} W`,
+            message: `Vivitek DU4381Z-ST üretici verisinde 530 W (Normal) / 380 W (Eco) tüketir. Raporlanan ${pW} W katalog verisiyle uyuşmuyor (ERR-CATALOG-POWER-MISMATCH).`,
+          });
+        }
+      }
     }
   } else if (p.sections.electrical === false) {
     addCheck({
@@ -1587,9 +1878,28 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
   const mandatoryUnknownChecks = activeChecks.filter(c => c.status === 'unknown' && c.isMandatory !== false);
   const optionalUnknownChecks = activeChecks.filter(c => c.status === 'unknown' && c.isMandatory === false);
 
+  // Uygulanabilirlik (Feasibility) Skoru Formülü:
+  // S = 0.35·S_cov + 0.25·S_lux + 0.25·S_uni + 0.15·S_el - 35·N_crit
+  const hasCovFail = activeChecks.some(c => c.id.includes('vertical-surface-coverage') && c.status === 'error');
+  const hasLuxFail = activeChecks.some(c => c.id.includes('photo') && c.status === 'error');
+  const hasUniFail = activeChecks.some(c => c.id.includes('uniformity') && c.status === 'error');
+  const hasElFail = activeChecks.some(c => c.id.includes('electrical') && c.status === 'error');
+
+  const sCov = hasCovFail ? 50 : 100;
+  const sLux = hasLuxFail ? 50 : 95;
+  const sUni = hasUniFail ? 40 : 90;
+  const sEl = hasElFail ? 40 : 95;
+  const critPenalty = activeChecks.filter(c => c.status === 'error' && c.isMandatory).length * 35;
+  const rawFeasibility = (0.35 * sCov + 0.25 * sLux + 0.25 * sUni + 0.15 * sEl) - critPenalty;
+  const feasibilityScorePct = Math.max(0, Math.min(100, Math.round(rawFeasibility)));
+  const feasibilityScoreFormula = 'S = 0.35·S_cov + 0.25·S_lux + 0.25·S_uni + 0.15·S_el - 35·N_crit';
+
   const approvalBlockReasons: string[] = [];
   if (hasCriticalErrors) {
     approvalBlockReasons.push(`${errorCount} adet kritik mühendislik/matematik hatası (FAIL)`);
+  }
+  if (hasCovFail) {
+    approvalBlockReasons.push('Fiziksel optik yüzey kaplaması eksik veya optik geometri uyuşmuyor.');
   }
   if (activeChecks.length === 0) {
     approvalBlockReasons.push('Hiçbir aktif doğrulama kontrolü yürütülemedi (eksik veya boş proje verisi).');
@@ -1599,7 +1909,7 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
   }
 
   let pdfApprovalStatus: PdfApprovalStatus;
-  if (hasCriticalErrors || activeChecks.length === 0) {
+  if (hasCriticalErrors || hasCovFail || activeChecks.length === 0) {
     pdfApprovalStatus = 'BLOCKED';
   } else if (mandatoryUnknownChecks.length > 0) {
     pdfApprovalStatus = 'DRAFT';
@@ -1618,6 +1928,32 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
   const canExportFinalPdf = pdfApprovalStatus === 'APPROVED' || pdfApprovalStatus === 'CONDITIONAL';
   const draftRequired = pdfApprovalStatus === 'BLOCKED' || pdfApprovalStatus === 'DRAFT';
 
+  const mathScore = mathScorePct;
+  const dataScore = calcCatScore(activeChecks.filter(c => c.id.includes('sync') || c.id.includes('single-source') || c.id.includes('canvas') || c.id.includes('scenario') || c.id.includes('geom')));
+  const feasScore = feasibilityScorePct;
+
+  // 8. Doğrulama skorları kuralı:
+  // - Manuel/genel cihaz profili kullanılmışsa veya katalog TR aralığı tanımsızsa katalog skoru UNKNOWN (0 / UNKNOWN)
+  // - Saha ölçümü girilmemişse saha skoru NOT_TESTED / UNKNOWN (0)
+  // Bilinmeyen veri tam puanla telafi edilemez.
+  const hasManualOrUnknownCatalog = activeChecks.some(c => (c.id.includes('catalog') || c.id.includes('lens')) && c.status === 'unknown');
+  const catalogScore = hasManualOrUnknownCatalog
+    ? 0
+    : calcCatScore(activeChecks.filter(c => c.id.includes('catalog') || c.id.includes('lens') || c.id.includes('watt') || c.id.includes('contrast') || c.id.includes('manufacturer')));
+
+  const hasFieldMeasurement = activeChecks.some(c => (c.id.includes('measured') || c.id.includes('field')) && c.status === 'pass');
+  const fieldScore = !hasFieldMeasurement
+    ? 0
+    : calcCatScore(activeChecks.filter(c => c.id.includes('measured') || c.id.includes('field') || c.id.includes('sample') || c.id.includes('delta') || c.id.includes('cct')));
+
+  const pillarScores = {
+    mathIntegrity: mathScore,
+    dataIntegrity: dataScore,
+    feasibility: feasScore,
+    catalogMatch: catalogScore,
+    fieldVerification: fieldScore,
+  };
+
   return {
     isConsistent: errorCount === 0 && warningCount === 0 && unknownCount === 0 && activeChecks.length > 0,
     hasCriticalErrors,
@@ -1626,9 +1962,12 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
     pdfApprovalStatus,
     pdfGateStatus,
     approvalBlockReasons,
-    consistencyScorePct: hasCriticalErrors ? Math.min(89, consistencyScorePct) : consistencyScorePct,
+    consistencyScorePct: hasCriticalErrors ? 0 : consistencyScorePct,
     mathScorePct,
     engineeringScorePct,
+    feasibilityScorePct,
+    feasibilityScoreFormula,
+    pillarScores,
     passCount,
     infoCount,
     warningCount,
@@ -1636,6 +1975,7 @@ export function validateReportConsistency(p: ReportPayload): ReportValidationRes
     unknownCount,
     notApplicableCount,
     checks: categorizedChecks,
+    structuredErrors,
     warnings,
   };
 }
@@ -1665,7 +2005,10 @@ export function renderValidationEngineA4Html(res: ReportValidationResult): strin
       : res.pdfApprovalStatus === 'DRAFT'
       ? 'TASLAK (Zorunlu Veri Eksik)'
       : 'BLOKLU (Hata Mevcut)';
-  const catSummaryLine = `Matematiksel Tutarlılık: %${res.mathScorePct} · Mühendislik Uygulanabilirliği: %${res.engineeringScorePct} · Nihai PDF Onayı: ${approvalText}`;
+  const approvalScoreLabel = res.hasCriticalErrors
+    ? 'Mühendislik Onay Puanı: %0 (BLOKLU / REDDEDİLDİ)'
+    : `Tutarlılık Skoru: %${res.consistencyScorePct} (${res.passCount}/${activeCount} Pass${res.warningCount > 0 ? ` + ${res.warningCount}×0.5 Uyarı` : ''})`;
+  const catSummaryLine = `Matematiksel: %${res.pillarScores?.mathIntegrity ?? res.mathScorePct} · Veri: %${res.pillarScores?.dataIntegrity ?? 100} · Uygulanabilirlik: %${res.pillarScores?.feasibility ?? res.feasibilityScorePct} · Katalog: %${res.pillarScores?.catalogMatch ?? 100} · Saha: %${res.pillarScores?.fieldVerification ?? 100} · Onay Durumu: ${approvalText}`;
 
   const rows = res.checks
     .map(c => {
@@ -1694,9 +2037,31 @@ export function renderValidationEngineA4Html(res: ReportValidationResult): strin
   return `
   <section class="report-section" style="break-inside:avoid; page-break-inside:avoid;">
     <h2>🛡️ Mühendislik Çapraz Doğrulama Motoru</h2>
-    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border:1px solid; border-radius:6px; margin-bottom:4px; font-size:11px; font-weight:700; ${badgeColor}">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border:1px solid; border-radius:6px; margin-bottom:6px; font-size:11px; font-weight:700; ${badgeColor}">
       <span>${badgeLabel}</span>
-      <span style="font-family:monospace;">Tutarlılık Skoru: %${res.consistencyScorePct} (${res.passCount}/${activeCount} Pass${res.warningCount > 0 ? ` + ${res.warningCount}×0.5 Uyarı` : ''})</span>
+      <span style="font-family:monospace;">${approvalScoreLabel}</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; margin-bottom:8px; font-size:9.5px; text-align:center;">
+      <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; padding:4px;">
+        <div style="font-weight:700; color:#475569;">1. Matematik</div>
+        <div style="font-size:11.5px; font-weight:800; font-family:monospace; color:#0f172a;">%${res.pillarScores?.mathIntegrity ?? res.mathScorePct}</div>
+      </div>
+      <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; padding:4px;">
+        <div style="font-weight:700; color:#475569;">2. Veri Mimarisi</div>
+        <div style="font-size:11.5px; font-weight:800; font-family:monospace; color:#0f172a;">%${res.pillarScores?.dataIntegrity ?? 100}</div>
+      </div>
+      <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; padding:4px;">
+        <div style="font-weight:700; color:#475569;">3. Uygulanabilirlik</div>
+        <div style="font-size:11.5px; font-weight:800; font-family:monospace; color:#0f172a;">%${res.pillarScores?.feasibility ?? res.feasibilityScorePct}</div>
+      </div>
+      <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; padding:4px;">
+        <div style="font-weight:700; color:#475569;">4. Katalog Uyumu</div>
+        <div style="font-size:11.5px; font-weight:800; font-family:monospace; color:#0f172a;">%${res.pillarScores?.catalogMatch ?? 100}</div>
+      </div>
+      <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; padding:4px;">
+        <div style="font-weight:700; color:#475569;">5. Saha Doğrulama</div>
+        <div style="font-size:11.5px; font-weight:800; font-family:monospace; color:#0f172a;">%${res.pillarScores?.fieldVerification ?? 100}</div>
+      </div>
     </div>
     <div style="font-size:9.5px; color:#475569; font-family:monospace; margin-bottom:8px; padding:4px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;">${esc(catSummaryLine)}</div>
     ${res.approvalBlockReasons.length > 0 ? `<div style="margin-bottom:8px; padding:6px 8px; background:#fef2f2; border:1px solid #fecaca; border-radius:4px; font-size:9px; color:#991b1b;">

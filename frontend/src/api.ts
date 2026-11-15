@@ -55,3 +55,37 @@ export const api = {
     fetch('/api/database/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(r => j<{ projectors: number; lenses: number; skipped: number }>(r)),
 };
+
+export interface OpticalDeviceProfileDto {
+  id?: number;
+  profile_uid: string;
+  category: 'PROJECTOR' | 'CAMERA';
+  brand: string;
+  model: string;
+  manufacturer: string;
+  data_source: string;
+  catalog_url?: string | null;
+  entry_date: string;
+  verification_status: string;
+  profile_data: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+}
+
+export const deviceProfileApi = {
+  list: (category?: 'PROJECTOR' | 'CAMERA') =>
+    fetch('/api/device-profiles' + (category ? `?category=${category}` : '')).then(r => j<OpticalDeviceProfileDto[]>(r)),
+  upsert: (body: OpticalDeviceProfileDto) =>
+    fetch('/api/device-profiles', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(body) }).then(r => j<OpticalDeviceProfileDto>(r)),
+  duplicate: (profileUid: string, newUid?: string) =>
+    fetch(`/api/device-profiles/${encodeURIComponent(profileUid)}/duplicate` + (newUid ? `?new_uid=${encodeURIComponent(newUid)}` : ''), { method: 'POST' })
+      .then(r => j<OpticalDeviceProfileDto>(r)),
+  remove: (profileUid: string) =>
+    fetch(`/api/device-profiles/${encodeURIComponent(profileUid)}`, { method: 'DELETE' }).then(r => {
+      if (!r.ok) throw new Error(`API hatası ${r.status}`);
+    }),
+  exportJson: () => fetch('/api/device-profiles/export/json').then(r => j<Record<string, unknown>>(r)),
+  importJson: (body: unknown) =>
+    fetch('/api/device-profiles/import/json', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(body) })
+      .then(r => j<{ importedProjectors: number; importedCameras: number }>(r)),
+};
+

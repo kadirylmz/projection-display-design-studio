@@ -760,30 +760,46 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
   const [surfaceCurvatureDeg, setSurfaceCurvatureDeg] = useState<number>(0);
   const [viewMode, setViewMode] = useState<'3d' | '2d'>('3d');
   const [showSceneLabels, setShowSceneLabels] = useState<boolean>(true);
+  const [is3DFullscreen, setIs3DFullscreen] = useState<boolean>(false);
   const glRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<any>(null);
 
-  const set3DCameraPreset = (preset: 'iso' | 'side' | 'front' | 'top') => {
-    const cam = cameraRef.current;
-    const ctrl = controlsRef.current;
-    if (!cam) return;
-    const zMid = Math.max(1.5, dist * 0.45);
-    if (preset === 'iso') {
-      cam.position.set(Math.max(4.2, subW * 0.95), Math.max(2.6, subH * 1.15), Math.max(6.5, dist * 1.45));
-    } else if (preset === 'side') {
-      cam.position.set(Math.max(6.5, dist * 1.6), 0.3, zMid);
-    } else if (preset === 'front') {
-      cam.position.set(0, 0.2, Math.max(5.5, dist * 1.35));
-    } else if (preset === 'top') {
-      cam.position.set(0, Math.max(7.5, dist * 1.75), zMid);
+  // Rapora eklenen çoklu açı görünümleri ve pafta seçimleri
+  const [capturedViews, setCapturedViews] = useState<
+    Array<{ id: string; angle: 'iso' | 'top' | 'bottom' | 'side' | 'left' | 'front' | 'custom'; label: string; dataUrl: string }>
+  >(() => {
+    try {
+      const raw = localStorage.getItem('agy_fov_shadow_report_v1');
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (Array.isArray(p.capturedViews)) return p.capturedViews;
+      }
+    } catch {
+      /* ignore */
     }
-    if (ctrl) {
-      ctrl.target.set(0, 0, preset === 'front' ? 0 : zMid * 0.65);
-      ctrl.update();
+    return [];
+  });
+
+  const [enabledPaftas, setEnabledPaftas] = useState<{
+    iso3d: boolean;
+    topPlan: boolean;
+    bottomPlan: boolean;
+    sideSection: boolean;
+    frontElevation: boolean;
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('agy_fov_shadow_report_v1');
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (p.enabledPaftas) return p.enabledPaftas;
+      }
+    } catch {
+      /* ignore */
     }
-  };
+    return { iso3d: true, topPlan: true, bottomPlan: true, sideSection: true, frontElevation: true };
+  });
 
   // İnsan & Gölge Analizi (Shadow Analysis) parametreleri
   const [showPerson, setShowPerson] = useState<boolean>(true);
@@ -953,17 +969,123 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
     unit,
   ]);
 
-  const sendShadowReportToPdf = () => {
-    if (!r || r.err || !r.shadow) return;
-    let snapshot3dDataUrl: string | undefined;
+  // 3B Sahne Bounding Box, Merkez Noktası ve Dinamik Ekrana Sığdırma (Fit-to-View)
+  const sceneFraming = useMemo(() => {
+    const sW = r && !r.err ? r.surfW : Math.max(0.5, toMeters(subW, unit));
+    const sH = r && !r.err ? r.surfH : Math.max(0.5, toMeters(subH, unit));
+    const scrBotM = Math.max(0, toMeters(screenBottomH, unit));
+    const devPos =
+      r && !r.err && r.posM
+        ? r.posM
+        : ([toMeters(posX, unit), toMeters(posY, unit), Math.max(0.5, toMeters(dist, unit))] as [
+            number,
+            number,
+            number,
+          ]);
+    const pDist = Math.max(0.1, toMeters(personDist, unit));
+
+    const floorY = -sH / 2 - scrBotM;
+    const topY = Math.max(sH / 2, devPos[1]);
+    const minX = Math.min(-sW / 2, devPos[0]) - 0.4;
+    const maxX = Math.max(sW / 2, devPos[0]) + 0.4;
+    const maxZ = Math.max(devPos[2], pDist) + 0.4;
+
+    const targetX = (minX + maxX) / 2;
+    const targetY = (floorY + topY) / 2;
+    const targetZ = maxZ / 2;
+
+    const spanX = maxX - minX;
+    const spanY = topY - floorY;
+    const spanZ = maxZ;
+
+    const radius = Math.sqrt((spanX / 2) ** 2 + (spanY / 2) ** 2 + (spanZ / 2) ** 2);
+    const fovDeg = 36;
+    const fovRad = (fovDeg * Math.PI) / 180;
+    // Bounding radius nesneleri ekrana tam oturur (~84% alan doluluğu, boş siyah alan bırakmaz)
+    const camDist = Math.max(2.8, (radius / Math.sin(fovRad / 2)) * 0.92);
+
+    const cos24 = Math.cos((24 * Math.PI) / 180);
+    const sin24 = Math.sin((24 * Math.PI) / 180);
+    const cos38 = Math.cos((38 * Math.PI) / 180);
+    const sin38 = Math.sin((38 * Math.PI) / 180);
+
+    const isoPos: [number, number, number] = [
+      targetX + camDist * cos24 * sin38,
+      targetY + camDist * sin24,
+      targetZ + camDist * cos24 * cos38,
+    ];
+
+    return {
+      target: [targetX, targetY, targetZ] as [number, number, number],
+      camPos: isoPos,
+      camDist,
+      fovDeg,
+      radius,
+      floorY,
+      topY,
+      maxZ,
+    };
+  }, [r, subW, subH, screenBottomH, posX, posY, dist, personDist, unit]);
+
+  const set3DCameraPreset = (preset: 'iso' | 'side' | 'left' | 'front' | 'top' | 'bottom' | 'fit') => {
+    const cam = cameraRef.current;
+    const ctrl = controlsRef.current;
+    if (!cam) return;
+    const { target, camDist, fovDeg } = sceneFraming;
+
+    cam.fov = fovDeg;
+    if (preset === 'iso' || preset === 'fit') {
+      const cos24 = Math.cos((24 * Math.PI) / 180);
+      const sin24 = Math.sin((24 * Math.PI) / 180);
+      const cos38 = Math.cos((38 * Math.PI) / 180);
+      const sin38 = Math.sin((38 * Math.PI) / 180);
+      cam.position.set(
+        target[0] + camDist * cos24 * sin38,
+        target[1] + camDist * sin24,
+        target[2] + camDist * cos24 * cos38
+      );
+    } else if (preset === 'side') {
+      cam.position.set(target[0] + camDist * 1.05, target[1], target[2]);
+    } else if (preset === 'left') {
+      cam.position.set(target[0] - camDist * 1.05, target[1], target[2]);
+    } else if (preset === 'front') {
+      cam.position.set(target[0], target[1] + 0.05, -camDist * 0.95);
+    } else if (preset === 'top') {
+      cam.position.set(target[0], target[1] + camDist * 1.2, target[2] + 0.001);
+    } else if (preset === 'bottom') {
+      cam.position.set(target[0], target[1] - camDist * 1.2, target[2] + 0.001);
+    }
+    cam.updateProjectionMatrix();
+
+    if (ctrl) {
+      if (preset === 'front') {
+        ctrl.target.set(target[0], target[1], 0);
+      } else {
+        ctrl.target.set(...target);
+      }
+      ctrl.update();
+    }
+  };
+
+  const captureCurrentAngleSnapshot = (): string | undefined => {
     try {
       if (glRef.current && sceneRef.current && cameraRef.current) {
+        glRef.current.setClearColor(new THREE.Color('#070b14'), 1);
         glRef.current.render(sceneRef.current, cameraRef.current);
-        snapshot3dDataUrl = glRef.current.domElement.toDataURL('image/png');
+        return glRef.current.domElement.toDataURL('image/png');
       }
     } catch {
-      /* ignore WebGL capture error */
+      /* ignore */
     }
+    return undefined;
+  };
+
+  const syncShadowReportToStorage = (
+    nextViews: typeof capturedViews = capturedViews,
+    nextPaftas: typeof enabledPaftas = enabledPaftas
+  ) => {
+    if (!r || r.err || !r.shadow) return;
+    const snap = nextViews[0]?.dataUrl || captureCurrentAngleSnapshot();
     const payload = {
       updatedAt: new Date().toISOString(),
       deviceKind,
@@ -975,7 +1097,9 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
       dfovDeg: r.proj.dfovDeg,
       incidenceAngleDeg: r.proj.incidenceAngleDeg,
       coveragePct: r.proj.coveragePct,
-      snapshot3dDataUrl,
+      snapshot3dDataUrl: snap,
+      capturedViews: nextViews,
+      enabledPaftas: nextPaftas,
       shadow: r.shadow,
     };
     try {
@@ -986,6 +1110,74 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
     } catch {
       /* ignore */
     }
+  };
+
+  const addSpecificViewToReport = (
+    angle: 'iso' | 'top' | 'bottom' | 'side' | 'left' | 'front',
+    label: string
+  ) => {
+    set3DCameraPreset(angle);
+    setTimeout(() => {
+      const snap = captureCurrentAngleSnapshot();
+      if (!snap) return;
+      const next = [
+        ...capturedViews.filter(v => v.angle !== angle),
+        { id: `view-${angle}-${Date.now()}`, angle, label, dataUrl: snap },
+      ];
+      setCapturedViews(next);
+      syncShadowReportToStorage(next, enabledPaftas);
+    }, 120);
+  };
+
+  const removeViewFromReport = (id: string) => {
+    const next = capturedViews.filter(v => v.id !== id);
+    setCapturedViews(next);
+    syncShadowReportToStorage(next, enabledPaftas);
+  };
+
+  const togglePafta = (k: keyof typeof enabledPaftas) => {
+    const next = { ...enabledPaftas, [k]: !enabledPaftas[k] };
+    setEnabledPaftas(next);
+    syncShadowReportToStorage(capturedViews, next);
+  };
+
+  const addAllAnglesToReport = () => {
+    const sequence: Array<{ angle: 'top' | 'bottom' | 'side' | 'left' | 'front' | 'iso'; label: string }> = [
+      { angle: 'iso', label: '3B İzometrik Perspektif' },
+      { angle: 'top', label: 'Üstten Bakış Açısı' },
+      { angle: 'bottom', label: 'Alttan Bakış Açısı' },
+      { angle: 'side', label: 'Yandan Sağ Kesit' },
+      { angle: 'left', label: 'Yandan Sol Kesit' },
+      { angle: 'front', label: 'Perde Önü / Karşıdan' },
+    ];
+    let i = 0;
+    const accumulated = [...capturedViews];
+    const runNext = () => {
+      if (i >= sequence.length) {
+        setCapturedViews(accumulated);
+        syncShadowReportToStorage(accumulated, enabledPaftas);
+        set3DCameraPreset('iso');
+        return;
+      }
+      const item = sequence[i];
+      set3DCameraPreset(item.angle);
+      setTimeout(() => {
+        const snap = captureCurrentAngleSnapshot();
+        if (snap) {
+          const idx = accumulated.findIndex(v => v.angle === item.angle);
+          const entry = { id: `view-${item.angle}-${Date.now()}`, angle: item.angle, label: item.label, dataUrl: snap };
+          if (idx >= 0) accumulated[idx] = entry;
+          else accumulated.push(entry);
+        }
+        i++;
+        runNext();
+      }, 140);
+    };
+    runNext();
+  };
+
+  const sendShadowReportToPdf = () => {
+    syncShadowReportToStorage(capturedViews, enabledPaftas);
   };
 
   const u = (m: number) => `${round(fromMeters(m, unit), 2)} ${unit}`;
@@ -1707,19 +1899,35 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
 
                 {viewMode === '3d' && (
-                  <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-[10.5px]">
-                    <span className="text-slate-400">3B Kamera:</span>
+                  <div className="flex flex-wrap items-center gap-1 bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-[10.5px]">
+                    <span className="text-slate-400">3B Bakış:</span>
+                    <button type="button" onClick={() => set3DCameraPreset('fit')} className="px-1.5 py-0.5 rounded bg-sky-950 border border-sky-600 text-sky-200 font-bold hover:bg-sky-900" title="Sahneyi ve frustumu ekrana tam sığdır">
+                      🎯 Ekrana Tam Oturt
+                    </button>
                     <button type="button" onClick={() => set3DCameraPreset('iso')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200">
                       Perspektif
                     </button>
+                    <button type="button" onClick={() => set3DCameraPreset('top')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300">
+                      Üstten
+                    </button>
+                    <button type="button" onClick={() => set3DCameraPreset('bottom')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300">
+                      Alttan
+                    </button>
                     <button type="button" onClick={() => set3DCameraPreset('side')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300">
-                      Yan Kesit
+                      Yandan (Sağ)
+                    </button>
+                    <button type="button" onClick={() => set3DCameraPreset('left')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-200">
+                      Yandan (Sol)
                     </button>
                     <button type="button" onClick={() => set3DCameraPreset('front')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300">
                       Perde Önü
                     </button>
-                    <button type="button" onClick={() => set3DCameraPreset('top')} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300">
-                      Üstten
+                    <button
+                      type="button"
+                      onClick={() => setIs3DFullscreen(v => !v)}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold"
+                    >
+                      {is3DFullscreen ? '🗗 Küçült' : '⛶ Tam Ekran'}
                     </button>
                   </div>
                 )}
@@ -1739,15 +1947,159 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               </span>
             </div>
 
+            {/* RAPORA AÇILARI AYRI AYRI EKLEME & SİLME ARAÇ ÇUBUĞU */}
+            <div className="p-2 rounded bg-slate-900/90 border border-slate-700 space-y-1.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 font-bold text-sky-300">
+                  <span>📸 3B Görünümleri Rapora Ayrı Ayrı Ekle / Sil:</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => addSpecificViewToReport('top', 'Üstten Plan Görünümü')}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 font-semibold text-[11px]"
+                  >
+                    + ⬆️ Üstten Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addSpecificViewToReport('bottom', 'Alttan Tavan Görünümü')}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700 font-semibold text-[11px]"
+                  >
+                    + ⬇️ Alttan Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addSpecificViewToReport('side', 'Yandan Sağ Kesit')}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-semibold text-[11px]"
+                  >
+                    + ➡️ Yandan Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addSpecificViewToReport('front', 'Perde Önü / Karşı')}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-semibold text-[11px]"
+                  >
+                    + 🖥️ Önden Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addSpecificViewToReport('iso', '3B İzometrik Perspektif')}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold text-[11px]"
+                  >
+                    + 🧊 3B Perspektif Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const snap = captureCurrentAngleSnapshot();
+                      if (snap) {
+                        const next = [...capturedViews, { id: `view-custom-${Date.now()}`, angle: 'custom' as const, label: `Kamera Açısı #${capturedViews.length + 1}`, dataUrl: snap }];
+                        setCapturedViews(next);
+                        syncShadowReportToStorage(next, enabledPaftas);
+                      }
+                    }}
+                    className="px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-semibold text-[11px] shadow"
+                  >
+                    + 📸 Aktif Açıyı Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addAllAnglesToReport}
+                    className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow"
+                  >
+                    ⚡ Tüm Açıları Ekle
+                  </button>
+                </div>
+              </div>
+
+              {/* Eklenen Görünümler Şeridi & Silme Butonları */}
+              {capturedViews.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-slate-800">
+                  <span className="text-[10.5px] text-slate-400 font-medium">Rapordaki 3B Görünümler:</span>
+                  {capturedViews.map(v => (
+                    <div
+                      key={v.id}
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-[10.5px]"
+                    >
+                      <span className="text-slate-200 font-medium">{v.label}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeViewFromReport(v.id)}
+                        className="text-rose-400 hover:text-rose-300 font-bold px-1 hover:bg-rose-950/60 rounded"
+                        title="Rapordan Sil"
+                      >
+                        ✕ Sil
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapturedViews([]);
+                      syncShadowReportToStorage([], enabledPaftas);
+                    }}
+                    className="text-[10px] text-rose-400 underline hover:text-rose-300 ml-auto"
+                  >
+                    Tümünü Temizle
+                  </button>
+                </div>
+              )}
+
+              {/* Vektörel Paftaların Raporda Gösterimi / Silinmesi */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800 text-[10.5px]">
+                <span className="text-slate-400">Rapordaki 2B Paftalar:</span>
+                {[
+                  { k: 'sideSection' as const, label: 'Yandan Kesit Paftası' },
+                  { k: 'frontElevation' as const, label: 'Perde Ön Paftası' },
+                  { k: 'iso3d' as const, label: '🧊 3B İzometrik (Pafta 1)' },
+                  { k: 'sideSection' as const, label: '📐 Yan Kesit (Pafta 2)' },
+                  { k: 'frontElevation' as const, label: '🖼️ Perde Önü (Pafta 3)' },
+                  { k: 'topPlan' as const, label: '⬆️ Üstten Plan (Pafta 4)' },
+                ].map(p => (
+                  <label key={p.k} className="flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white">
+                    <input
+                      type="checkbox"
+                      checked={enabledPaftas[p.k]}
+                      onChange={() => togglePafta(p.k)}
+                      className="accent-emerald-500"
+                    />
+                    <span className={enabledPaftas[p.k] ? 'text-emerald-300 font-medium' : 'text-slate-500 line-through'}>
+                      {p.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
             {viewMode === '3d' ? (
-              <div className="flex-1 min-h-[420px] rounded-lg border border-slate-700 bg-slate-950 overflow-hidden relative">
+              <div
+                className={`rounded-lg border border-slate-700 bg-slate-950 overflow-hidden relative transition-all ${
+                  is3DFullscreen
+                    ? 'fixed inset-4 z-50 flex flex-col shadow-2xl'
+                    : 'flex-1 min-h-[540px] h-[64vh]'
+                }`}
+              >
+                {is3DFullscreen && (
+                  <div className="p-2 bg-slate-900 border-b border-slate-800 flex justify-between items-center text-xs">
+                    <span className="font-bold text-sky-400">Tam Ekran 3B Görünüm</span>
+                    <button
+                      type="button"
+                      onClick={() => setIs3DFullscreen(false)}
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                    >
+                      ✕ Kapat
+                    </button>
+                  </div>
+                )}
                 <Canvas
-                  camera={{ position: [4.8, 3.1, 7.6], fov: 48 }}
+                  camera={{ position: sceneFraming.camPos, fov: sceneFraming.fovDeg }}
                   gl={{ preserveDrawingBuffer: true, antialias: true }}
                   onCreated={({ gl, scene, camera }) => {
                     glRef.current = gl;
                     sceneRef.current = scene;
                     cameraRef.current = camera as THREE.PerspectiveCamera;
+                    gl.setClearColor(new THREE.Color('#070b14'), 1);
                   }}
                 >
                   <Suspense fallback={null}>
@@ -1769,7 +2121,11 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                       showLabels={showSceneLabels}
                       shadow={r.shadow}
                     />
-                    <OrbitControls ref={controlsRef} makeDefault />
+                    <OrbitControls
+                      ref={controlsRef}
+                      target={sceneFraming.target}
+                      makeDefault
+                    />
                   </Suspense>
                 </Canvas>
               </div>

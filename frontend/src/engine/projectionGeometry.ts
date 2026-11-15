@@ -1,18 +1,121 @@
 /**
- * Merkezi Projeksiyon Geometrisi & Fotometri Kaynak Modeli (Rev.1)
+ * Merkezi Projeksiyon Geometrisi & Fotometri Kaynak Modeli (Rev. 2.0)
  *
- * - Projektör ayak izi poligonları (eksen hizalı dikdörtgenler) ve TÜM kesişimleri
- *   (komşu olmayan PJ1∩PJ3 dahil, üçlü/çoklu overlap) → inclusion–exclusion + doğrudan
- *   geometrik birleşim (elementer hücre süpürmesi) ile çift doğrulama.
- * - Tek kanvas geometrisinden içerik kanvası & piksel yoğunluğu (H/V px/m, mm/px, px/m², MP).
- * - Teorik / Simüle LuxField / Ölçülen aydınlık kayıtlarının ayrıştırılması ve kaynak etiketli nit/ACR.
+ * 1. Tek Kaynaklı Geometri Mimarisi:
+ *    - targetSurface: fiziksel hedef duvar/zemin ölçüleri
+ *    - projectedFootprint: projektörlerin fiziksel ışık ayak izleri
+ *    - activeProjectionArea: gerçekten aydınlatılan birleşik alan
+ *    - blendedRaster: overlap sonrası birleşik görüntü rasteri
+ *    - contentCanvas: hedef yüzey oranına göre içerik kanvası
+ *    - mappedContentArea: içerik kanvasının fiziksel yüzeye eşlendiği alan
+ *    (Bu nesneler birbirinden ayrıdır ve otomatik olarak eşitlenmez!)
+ *
+ * 2. İki Farklı Çözünürlük ve Piksel Haritası:
+ *    - A: Aktif Projeksiyon Rasteri (ör. 3686×1200 px @ 12×3.906m → ~307.2 px/m, ~3.256 mm/px)
+ *    - B: Tam Duvara Kare Piksel İçerik Kanvası (ör. 3349×1200 px @ 12×4.3m → ~279.1 px/m, ~3.583 mm/px)
+ *
+ * 3. Çoklu Overlap, Elementer Hücre Süpürmesi & Inclusion-Exclusion Doğrulaması
+ * 4. Kaynak Etiketli Fotometri, Nit, Gerçek ACR ve Lens Kataloğu Modeli
  */
 
+const r1 = (v: number) => Math.round(v * 10) / 10;
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const EPS = 1e-9;
 
-// ─────────────────────────────── 1. Ayak izi & çoklu overlap ───────────────────────────────
+// ─────────────────────────────── 1. Tek Kaynaklı Geometri Nesneleri ───────────────────────────────
+
+export interface TargetSurface {
+  surfaceId: string;
+  name: string;
+  widthM: number;
+  heightM: number;
+  areaM2: number;
+  aspectRatio: number;
+}
+
+export interface ProjectedFootprint {
+  projectorId: string;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  widthM: number;
+  heightM: number;
+  areaM2: number;
+}
+
+export interface ActiveProjectionArea {
+  surfaceId: string;
+  widthM: number;
+  heightM: number;
+  areaM2: number;
+  aspectRatio: number;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  topMarginM: number;
+  bottomMarginM: number;
+  leftMarginM: number;
+  rightMarginM: number;
+  verticalCoveragePct: number;
+  horizontalCoveragePct: number;
+  areaCoveragePct: number;
+  uncoveredHeightM: number;
+  uncoveredWidthM: number;
+  uncoveredAreaM2: number;
+}
+
+export interface BlendedRaster {
+  rasterId: string;
+  w: number;
+  h: number;
+  mp: number;
+  aspectRatio: number;
+  pxPerMeterH: number;
+  pxPerMeterV: number;
+  mmPerPxH: number;
+  mmPerPxV: number;
+  pxPerSqMeter: number;
+  ppi: number;
+  anisotropyPct: number;
+}
+
+export interface ContentCanvas {
+  canvasId: string;
+  targetSurfaceId: string;
+  w: number;
+  h: number;
+  mp: number;
+  aspectRatio: number;
+  pxPerMeterH: number;
+  pxPerMeterV: number;
+  mmPerPxH: number;
+  mmPerPxV: number;
+  pxPerSqMeter: number;
+  ppi: number;
+  anisotropyPct: number;
+  mode: 'square-pixel-fit' | 'native-crop' | 'aspect-crop' | 'letterbox';
+  cropFromBlendedPxW: number;
+  cropFromBlendedPxH: number;
+  letterboxPadPxW: number;
+  letterboxPadPxH: number;
+  /** Kırpma işlemi fiziksel optik kaplamayı artırmaz; bu bayrak kaplama artırma yanılsamasını engeller */
+  increasesPhysicalCoverage: false;
+}
+
+export interface MappedContentArea {
+  canvasId: string;
+  surfaceId: string;
+  mappedWidthM: number;
+  mappedHeightM: number;
+  mappedAreaM2: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+// ─────────────────────────────── 2. Ayak izi & çoklu overlap ───────────────────────────────
 
 export interface ProjectorFootprint {
   projectorId: string;
@@ -276,8 +379,7 @@ export function analyzeFootprintOverlaps(
 
 /**
  * Normalize edge-blend maskeleri: her koordinatta kapsayan projektörlerin "feather" ağırlıkları
- * (kendi kenarına uzaklık) toplamı 1 olacak şekilde normalize edilir. Üçlü/çoklu overlap
- * bölgelerinde toplam katkı tek projektör seviyesine eşitlenir (gamma öncesi lineer alan).
+ * toplamı 1 olacak şekilde normalize edilir.
  */
 export function normalizedBlendWeights(footprints: ProjectorFootprint[], xM: number, yM: number): number[] {
   const raw = footprints.map(f => {
@@ -292,7 +394,54 @@ export function normalizedBlendWeights(footprints: ProjectorFootprint[], xM: num
   return raw.map(w => w / sum);
 }
 
-// ─────────────────────────────── 2. İçerik kanvası (tek kaynak) ───────────────────────────────
+// ─────────────────────────────── 3. Piksel Haritası & İçerik Kanvası ───────────────────────────────
+
+export interface DetailedPixelMapMetrics {
+  surfaceId: string;
+  rasterId: string;
+  canvasId: string;
+  surfaceAspect: number;
+  rasterAspect: number;
+  canvasAspect: number;
+  /** A: Aktif Projeksiyon Rasteri (Işığın gerçekten düştüğü alan) */
+  activeRaster: {
+    w: number;
+    h: number;
+    mp: number;
+    widthM: number;
+    heightM: number;
+    pxPerMeterH: number;
+    pxPerMeterV: number;
+    mmPerPxH: number;
+    mmPerPxV: number;
+    pxPerSqMeter: number;
+    ppi: number;
+    anisotropyPct: number;
+  };
+  /** B: Tam Duvar İçerik Kanvası (Kare piksel oranında içerik üretimi) */
+  squarePixelContentCanvas: {
+    w: number;
+    h: number;
+    mp: number;
+    widthM: number;
+    heightM: number;
+    pxPerMeterH: number;
+    pxPerMeterV: number;
+    mmPerPxH: number;
+    mmPerPxV: number;
+    pxPerSqMeter: number;
+    ppi: number;
+    anisotropyPct: number;
+  };
+  /** Aktif raster ile içerik kanvasının çözünürlük farkı */
+  resolutionDelta: {
+    deltaW: number;
+    deltaH: number;
+    deltaMp: number;
+    cropW: number;
+    cropH: number;
+  };
+}
 
 export interface ContentCanvasResult {
   projectionRaster: { w: number; h: number; mp: number };
@@ -304,17 +453,23 @@ export interface ContentCanvasResult {
   mmPerPxH: number;
   mmPerPxV: number;
   pxPerSqMeter: number;
+  ppi: number;
   anisotropyPct: number;
-  /** Yüzey projeksiyon alanına sığıyor → doğal ölçekli kırpma; aksi halde yüzey oranına kırpma */
-  mode: 'native-crop' | 'aspect-crop';
+  mode: 'native-crop' | 'aspect-crop' | 'square-pixel-fit';
+  detailedMetrics?: DetailedPixelMapMetrics;
 }
 
 /**
- * Tek kanvas geometrisi:
- *  optW = round(W_yüzey × px/m_optik_H), optH = round(H_yüzey × px/m_optik_V)
- *  optH ≤ raster_H  → içerik = min(raster_W, optW) × optH          (doğal ölçekli kırpma)
- *  aksi halde        → içerik = raster yüzey en-boy oranına kırpılır (aspect-crop)
- *  px/m_H = içerik_W / W_yüzey, px/m_V = içerik_H / H_yüzey, mm/px = 1000 / (px/m)
+ * Tek kanvas geometrisi ve çift çözünürlük modeli:
+ *
+ * A — Aktif Projeksiyon Rasteri:
+ *     Işığın fiziksel olarak ulaştığı aktif alan (ör. 12 × 3.906 m, 3686 × 1200 px).
+ *     H = 3686 / 12 = 307.2 px/m, V = 1200 / 3.906 = 307.2 px/m, ~3.256 mm/px.
+ *
+ * B — Tam Duvara Kare Piksel İçerik Kanvası:
+ *     Fiziksel duvar oranında (12 × 4.3 m), dikey 1200 px baz alındığında kare piksel:
+ *     px/m = 1200 / 4.3 = 279.07 px/m → W = 12 × 279.07 = 3349 px.
+ *     Kanvas = 3349 × 1200 px, ~279.1 px/m, ~3.583 mm/px.
  */
 export function computeContentCanvas(inp: {
   rasterW: number;
@@ -323,17 +478,87 @@ export function computeContentCanvas(inp: {
   opticalPxPerMeterV: number;
   surfaceWidthM: number;
   surfaceHeightM: number;
+  activeHeightM?: number;
+  activeWidthM?: number;
+  surfaceId?: string;
+  rasterId?: string;
 }): ContentCanvasResult {
   const sW = Math.max(0.01, inp.surfaceWidthM);
   const sH = Math.max(0.01, inp.surfaceHeightM);
-  const aspect = sW / sH;
+  const actW = Math.max(0.01, inp.activeWidthM ?? sW);
+  const actH = Math.max(0.01, inp.activeHeightM ?? sH);
+  const surfaceAspect = sW / sH;
+
   const optW = Math.round(sW * inp.opticalPxPerMeterH);
   const optH = Math.round(sH * inp.opticalPxPerMeterV);
   const nativeFit = optH <= inp.rasterH;
-  const w = nativeFit ? Math.min(inp.rasterW, optW) : Math.min(inp.rasterW, Math.round(inp.rasterH * aspect));
-  const h = nativeFit ? Math.min(inp.rasterH, optH) : Math.min(inp.rasterH, Math.round(w / aspect));
+  const w = nativeFit ? Math.min(inp.rasterW, optW) : Math.min(inp.rasterW, Math.round(inp.rasterH * surfaceAspect));
+  const h = nativeFit ? Math.min(inp.rasterH, optH) : Math.min(inp.rasterH, Math.round(w / surfaceAspect));
   const pxmH = w / sW;
   const pxmV = h / sH;
+
+  // A: Aktif Projeksiyon Metrikleri (Işık düşen alan)
+  const actPxmH = inp.rasterW / actW;
+  const actPxmV = inp.rasterH / actH;
+  const actMmH = 1000 / actPxmH;
+  const actMmV = 1000 / actPxmV;
+  const actPpi = 25.4 / ((actMmH + actMmV) / 2);
+  const actAniso = (Math.abs(actPxmH - actPxmV) / Math.max(0.01, actPxmH, actPxmV)) * 100;
+
+  // B: Kare Piksel Tam Duvar İçerik Kanvası (Dikey raster yüksekliğini sH'ye göre ölçekler)
+  const sqPxmV = inp.rasterH / sH;
+  const sqW = Math.round(sW * sqPxmV);
+  const sqH = inp.rasterH;
+  const sqPxmH = sqW / sW;
+  const sqMmH = 1000 / sqPxmH;
+  const sqMmV = 1000 / sqPxmV;
+  const sqPpi = 25.4 / ((sqMmH + sqMmV) / 2);
+  const sqAniso = (Math.abs(sqPxmH - sqPxmV) / Math.max(0.01, sqPxmH, sqPxmV)) * 100;
+
+  const detailedMetrics: DetailedPixelMapMetrics = {
+    surfaceId: inp.surfaceId || 'SURF-01',
+    rasterId: inp.rasterId || 'RASTER-BLENDED',
+    canvasId: `CANVAS-${inp.surfaceId || 'SURF-01'}-SQ`,
+    surfaceAspect: r3(surfaceAspect),
+    rasterAspect: r3(inp.rasterW / Math.max(1, inp.rasterH)),
+    canvasAspect: r3(sqW / Math.max(1, sqH)),
+    activeRaster: {
+      w: inp.rasterW,
+      h: inp.rasterH,
+      mp: r2((inp.rasterW * inp.rasterH) / 1e6),
+      widthM: r3(actW),
+      heightM: r3(actH),
+      pxPerMeterH: r1(actPxmH),
+      pxPerMeterV: r1(actPxmV),
+      mmPerPxH: r3(actMmH),
+      mmPerPxV: r3(actMmV),
+      pxPerSqMeter: Math.round(actPxmH * actPxmV),
+      ppi: r1(actPpi),
+      anisotropyPct: r2(actAniso),
+    },
+    squarePixelContentCanvas: {
+      w: sqW,
+      h: sqH,
+      mp: r2((sqW * sqH) / 1e6),
+      widthM: r3(sW),
+      heightM: r3(sH),
+      pxPerMeterH: r1(sqPxmH),
+      pxPerMeterV: r1(sqPxmV),
+      mmPerPxH: r3(sqMmH),
+      mmPerPxV: r3(sqMmV),
+      pxPerSqMeter: Math.round(sqPxmH * sqPxmV),
+      ppi: r1(sqPpi),
+      anisotropyPct: r2(sqAniso),
+    },
+    resolutionDelta: {
+      deltaW: inp.rasterW - sqW,
+      deltaH: inp.rasterH - sqH,
+      deltaMp: r2(((inp.rasterW * inp.rasterH) - (sqW * sqH)) / 1e6),
+      cropW: Math.max(0, inp.rasterW - sqW),
+      cropH: Math.max(0, inp.rasterH - sqH),
+    },
+  };
+
   return {
     projectionRaster: { w: inp.rasterW, h: inp.rasterH, mp: r2((inp.rasterW * inp.rasterH) / 1e6) },
     contentCanvas: { w, h, mp: r2((w * h) / 1e6) },
@@ -344,12 +569,14 @@ export function computeContentCanvas(inp: {
     mmPerPxH: r3(1000 / Math.max(0.01, pxmH)),
     mmPerPxV: r3(1000 / Math.max(0.01, pxmV)),
     pxPerSqMeter: Math.round((w * h) / (sW * sH)),
+    ppi: r1(25.4 / Math.max(0.01, ((1000 / pxmH) + (1000 / pxmV)) / 2)),
     anisotropyPct: r2((Math.abs(pxmH - pxmV) / Math.max(0.01, pxmH, pxmV)) * 100),
     mode: nativeFit ? 'native-crop' : 'aspect-crop',
+    detailedMetrics,
   };
 }
 
-/** Raporlanan mm/px değerinin hangi kaynaktan geldiğini belirler (H, V, H/V ortalaması veya kaynaksız). */
+/** Raporlanan mm/px değerinin hangi kaynaktan geldiğini belirler */
 export function identifyMmPerPxSource(
   reported: number,
   mmH: number,
@@ -364,9 +591,17 @@ export function identifyMmPerPxSource(
   return 'unmatched';
 }
 
-// ─────────────────────────────── 3. Aydınlık kaynakları ───────────────────────────────
+// ─────────────────────────────── 4. Aydınlık kaynakları ───────────────────────────────
 
-export type IlluminanceSource = 'THEORETICAL' | 'SIMULATED_LUXFIELD' | 'MEASURED';
+export type IlluminanceSource =
+  | 'NOMINAL_LUMENS'
+  | 'EFFECTIVE_LUMENS'
+  | 'THEORETICAL'
+  | 'THEORETICAL_ACTIVE'
+  | 'THEORETICAL_SURFACE'
+  | 'SIMULATED_9POINT'
+  | 'SIMULATED_LUXFIELD'
+  | 'MEASURED';
 
 export interface IlluminanceRecord {
   source: IlluminanceSource;
@@ -490,7 +725,7 @@ export function buildMeasuredIlluminance(samples: number[] | null | undefined, a
   };
 }
 
-// ─────────────────────────────── 4. Nit & ACR (kaynak etiketli) ───────────────────────────────
+// ─────────────────────────────── 5. Nit & ACR (kaynak etiketli) ───────────────────────────────
 
 export interface LuminanceRecord {
   source: IlluminanceSource;
@@ -558,5 +793,65 @@ export function computeContrastAnalysis(inp: {
       : nativeBlack === null
         ? `Cihaz doğal siyah seviyesi / native kontrast girilmedi; gerçek ACR doğrulanamaz (UNKNOWN). Tahmini ortam kontrastı: ${estimated ?? '—'}:1.`
         : 'Beyaz seviyesi veya ortam ışığı eksik; ACR hesaplanamadı (UNKNOWN).',
+  };
+}
+
+// ─────────────────────────────── 6. Lens Kataloğu & Cihaz Uyumluluğu ───────────────────────────────
+
+export type CatalogVerificationStatus = 'VERIFIED' | 'USER_DEFINED' | 'ESTIMATED' | 'UNKNOWN';
+
+export interface LensCatalogEntry {
+  manufacturer: string;
+  projectorModel: string;
+  lensModel: string;
+  compatibleModels: string[];
+  throwRatioMin: number;
+  throwRatioMax: number;
+  motorizedZoom: boolean;
+  motorizedFocus: boolean;
+  focusRangeMinM?: number;
+  focusRangeMaxM?: number;
+  lensShiftVMinPct?: number;
+  lensShiftVMaxPct?: number;
+  lensShiftHMinPct?: number;
+  lensShiftHMaxPct?: number;
+  sourceUrl?: string;
+  documentRef?: string;
+  verificationStatus: CatalogVerificationStatus;
+}
+
+export function validateLensZoomMargin(throwRatio: number, minTR: number, maxTR: number, marginPct = 5): {
+  isNearLimit: boolean;
+  nearLimitType: 'MIN' | 'MAX' | 'NONE';
+  marginToLimitPct: number;
+  warning?: string;
+} {
+  const range = maxTR - minTR;
+  if (range <= 0) return { isNearLimit: false, nearLimitType: 'NONE', marginToLimitPct: 100 };
+  const distToMin = Math.abs(throwRatio - minTR);
+  const distToMax = Math.abs(maxTR - throwRatio);
+  const marginMinPct = (distToMin / range) * 100;
+  const marginMaxPct = (distToMax / range) * 100;
+
+  if (marginMinPct <= marginPct) {
+    return {
+      isNearLimit: true,
+      nearLimitType: 'MIN',
+      marginToLimitPct: r1(marginMinPct),
+      warning: `Throw ratio (${throwRatio}) minimum zoom sınırına (%${r1(marginMinPct)} marj) çok yakın. Saha toleransı için riskli!`,
+    };
+  }
+  if (marginMaxPct <= marginPct) {
+    return {
+      isNearLimit: true,
+      nearLimitType: 'MAX',
+      marginToLimitPct: r1(marginMaxPct),
+      warning: `Throw ratio (${throwRatio}) maksimum zoom sınırına (%${r1(marginMaxPct)} marj) çok yakın. Saha toleransı için riskli!`,
+    };
+  }
+  return {
+    isNearLimit: false,
+    nearLimitType: 'NONE',
+    marginToLimitPct: r1(Math.min(marginMinPct, marginMaxPct)),
   };
 }

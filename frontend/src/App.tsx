@@ -10,6 +10,7 @@ import CameraCalculator from './modules/CameraCalculator';
 import ReportGenerator from './modules/ReportGenerator';
 import ProjectManager from './modules/ProjectManager';
 import ElectricalDrawingStudio from './modules/ElectricalDrawingStudio';
+import { OpticalDeviceStudio } from './modules/OpticalDeviceStudio';
 import { LengthUnit } from './engine/units';
 
 interface Mod { id: string; name: string; ready: boolean; phase: number }
@@ -46,6 +47,7 @@ class ModuleErrorBoundary extends Component<{ name: string; children: ReactNode 
 }
 const MODULES: Mod[] = [
   { id: 'projector', name: 'Ekran, Projektör & Lens', ready: true, phase: 1 },
+  { id: 'opticalStudio', name: 'Optik Cihaz, Lens & FOV Motoru', ready: true, phase: 1 },
   { id: 'lux', name: 'Lux & Parlaklık', ready: true, phase: 2 },
   { id: 'content', name: 'İçerik Çözünürlüğü Planlayıcı', ready: true, phase: 3 },
   { id: 'pixel', name: 'Çoklu Projektör & Piksel Haritalama', ready: true, phase: 3 },
@@ -120,6 +122,7 @@ export default function App() {
         </aside>
         <main className="flex-1 p-4 overflow-auto print:p-0 print:overflow-visible">
           {visited.has('projector') && <div className={active === 'projector' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Ekran, Projektör & Lens"><ProjectorCalculator unit={unit} /></ModuleErrorBoundary></div>}
+          {visited.has('opticalStudio') && <div className={active === 'opticalStudio' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Optik Cihaz, Lens & FOV Motoru"><OpticalDeviceStudio /></ModuleErrorBoundary></div>}
           {visited.has('lux') && <div className={active === 'lux' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Lux & Parlaklık"><LuxCalculator unit={unit} /></ModuleErrorBoundary></div>}
           {visited.has('content') && <div className={active === 'content' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="İçerik Çözünürlüğü Planlayıcı"><ContentPlanner unit={unit} /></ModuleErrorBoundary></div>}
           {visited.has('pixel') && <div className={active === 'pixel' ? 'h-full' : 'hidden'}><ModuleErrorBoundary name="Çoklu Projektör & Piksel Haritalama"><PixelMappingStudio /></ModuleErrorBoundary></div>}

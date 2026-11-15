@@ -24,6 +24,8 @@ import { round } from './units';
 import { InterProjectorAnalysis } from './interprojector';
 import { validateReportConsistency, renderValidationEngineA4Html } from './reportValidation';
 import { HUMAN_SILHOUETTE_NORM, clipPolygonToRect2D } from './fovProjection';
+import { OpticalStudioReportSnapshot } from '../opticalDeviceStore';
+import { resolveProjectorWatts, resolveProjectorNativeContrast } from './opticalDeviceEngine';
 import {
   recommendProjectorAndLenses,
   computeEffectiveMultiProjectorPixelArea,
@@ -58,6 +60,7 @@ export interface ReportSectionFlags {
   includeFeasibilityAndRecs?: boolean;
   includeValidationEngine?: boolean;
   fovShadow?: boolean;
+  opticalStudio?: boolean;
 }
 
 export const DEFAULT_SECTIONS: ReportSectionFlags = {
@@ -81,6 +84,7 @@ export const DEFAULT_SECTIONS: ReportSectionFlags = {
   includeFeasibilityAndRecs: true,
   includeValidationEngine: true,
   fovShadow: false,
+  opticalStudio: true,
 };
 
 export interface ReportProjectMeta {
@@ -184,6 +188,8 @@ export interface SurfaceScenario {
   combinedH: number;
   canvasW: number;
   canvasH: number;
+  room?: { widthM: number; lengthM: number; heightM: number };
+  coordinateSystemId?: string;
 }
 
 export interface ReportPayload {
@@ -260,6 +266,19 @@ export interface ReportPayload {
     incidenceAngleDeg: number;
     coveragePct: number;
     snapshot3dDataUrl?: string;
+    capturedViews?: Array<{
+      id: string;
+      angle: 'iso' | 'top' | 'bottom' | 'side' | 'left' | 'front' | 'custom';
+      label: string;
+      dataUrl: string;
+    }>;
+    enabledPaftas?: {
+      iso3d: boolean;
+      topPlan: boolean;
+      bottomPlan: boolean;
+      sideSection: boolean;
+      frontElevation: boolean;
+    };
     shadow: {
       personHeightM: number;
       personWidthM: number;
@@ -291,6 +310,7 @@ export interface ReportPayload {
       reportSummaryTr: string;
     };
   };
+  opticalStudioReport?: OpticalStudioReportSnapshot;
 }
 
 const T: Record<ReportLang, Record<string, string>> = {
@@ -515,8 +535,8 @@ function renderViewingQualityA4Html(
     '      <tr><td><b>3. Görüntü Keskinliği (PPD)</b></td><td style="font-family:monospace;">Ort H: <b>' + ppdH + '</b> (' + arcminH + ' arcmin/px) · V: <b>' + ppdV + '</b> (' + arcminV + ' arcmin/px) · Merkez: <b>' + vq.ppdCenterH + '/' + vq.ppdCenterV + ' PPD</b> (' + round(60 / Math.max(0.1, vq.ppdCenterH), 2) + '/' + round(60 / Math.max(0.1, vq.ppdCenterV), 2) + ' arcmin) · Kenar: <b>' + vq.ppdEdgeH + '/' + vq.ppdEdgeV + ' PPD</b> (' + round(60 / Math.max(0.1, vq.ppdEdgeH), 2) + '/' + round(60 / Math.max(0.1, vq.ppdEdgeV), 2) + ' arcmin) [' + vq.resW + '×' + vq.resH + ']</td><td style="text-align:right; font-family:monospace;">%' + vq.sharpnessScorePct + ' · ' + escH(dualSharpnessNote) + '</td></tr>',
     '      <tr><td><b>4. Piksel Görünürlüğü &amp; Retina</b></td><td style="font-family:monospace;">' + vq.mmPerPx + ' mm/px (' + vq.ppi + ' PPI) · Retina ≥ ' + vq.minRetinaDistM + 'm (Referans: 60 PPD kalite eşiği)</td><td style="text-align:right;">İndeks ' + vq.pixelVisibilityIndex + ' · ' + escH(vq.pixelVisibilityLabel) + '</td></tr>',
     '      <tr><td><b>5. Tahmini Ortam Kontrastı (Simüle)</b></td><td style="font-family:monospace;">' + (vq.blackLevelNits > 0 ? 'Tahmini Ortam Kontrastı (Simüle): <b>~' + vq.ambientContrastRatio + ':1</b> (Simüle Beyaz+Ortam: ' + vq.whiteLevelNits + ' Nit · Ortam Yansıması: ' + vq.blackLevelNits + ' Nit · Cihaz doğal siyahı girilmedi → Gerçek ACR: UNKNOWN)' : 'Ekran ACR: UNKNOWN (Ortam ışığı / siyah seviyesi tanımlı değil)') + '</td><td style="text-align:right;">' + (vq.blackLevelNits > 0 ? escH(vq.contrastStandardGrade) : 'UNKNOWN') + '</td></tr>',
-    '      <tr><td><b>6. Renk Uniformitesi</b></td><td style="font-family:monospace;">ΔE2000: ' + vq.deltaE2000 + ' · ΔCCT ±' + vq.deltaCCTKelvin + 'K</td><td style="text-align:right; font-family:monospace;">%' + vq.colorUniformityPct + ' · ' + escH(vq.colorUniformityLabel) + '</td></tr>',
-    '      <tr><td><b>7. Parlaklık Uniformitesi (' + escH(uSrcLabel) + ')</b></td><td style="font-family:monospace;">' + escH(uSrcLabel) + ': U0 %' + vq.luminanceUniformityU0Pct + ' · U1 %' + vq.luminanceUniformityU1Pct + gridUNote + ' · Kenar -%' + vq.centerToCornerDropPct + '</td><td style="text-align:right;">Blend ±%' + vq.blendZoneRipplePct + ' · ' + escH(vq.brightnessUniformityLabel) + '</td></tr>',
+    '      <tr><td><b>6. Renk Uniformitesi</b></td><td style="font-family:monospace;">ΔE2000: ' + vq.deltaE2000 + ' · ΔCCT ±' + vq.deltaCCTKelvin + 'K [Simüle Model · NOT_MEASURED]</td><td style="text-align:right; font-family:monospace;">%' + vq.colorUniformityPct + ' · ' + escH(vq.colorUniformityLabel) + ' (Saha: DOĞRULANMADI)</td></tr>',
+    '      <tr><td><b>7. Parlaklık Uniformitesi (' + escH(uSrcLabel) + ')</b></td><td style="font-family:monospace;">' + escH(uSrcLabel) + ': U0 %' + vq.luminanceUniformityU0Pct + ' · U1 %' + vq.luminanceUniformityU1Pct + gridUNote + ' · Kenar -%' + vq.centerToCornerDropPct + '</td><td style="text-align:right;">Blend ±%' + vq.blendZoneRipplePct + ' · ' + escH(vq.brightnessUniformityLabel) + ' (Saha: DOĞRULANMADI)</td></tr>',
     '      <tr class="highlight-cell"><td><b>8. TOPLAM KALİTE ÖZETİ</b></td><td style="font-family:monospace;">' + escH(vq.overallRecommendation) + ' <span style="color:#64748b; font-size:9px;">[Ağırlıklar: ACR %22 · PPD %18 · U0 %15 · ΔE %15 · Piksel %12 · Mesafe %10 · Açı %8]</span></td><td style="text-align:right; font-family:monospace;"><b>%' + vq.overallQualityScorePct + ' · ' + escH(vq.overallQualityGrade) + '</b></td></tr>',
     '    </tbody>',
     '  </table>',
@@ -1070,19 +1090,40 @@ export function buildReportHtml(p: ReportPayload): string {
         const simRoomW = p.interProjectorAnalysis?.roomDimensions?.widthM || 14;
         const simRoomL = p.interProjectorAnalysis?.roomDimensions?.lengthM || 10;
         const simRoomH = p.interProjectorAnalysis?.roomDimensions?.heightM || 3.5;
+        const cardPhysCov = evaluatePhysicalCoverage({
+          surfaceWidthM: s.widthM,
+          surfaceHeightM: s.heightM,
+          cols: Math.max(1, matchedPlannerCard?.cols || s.projectorCount),
+          rows: Math.max(1, matchedPlannerCard?.rows || 1),
+          projW: cardNativeW,
+          projH: cardNativeH,
+          throwDistM: simDist,
+          throwRatio: simTr,
+          overlapX: cardOvPct,
+          overlapY: 0,
+        });
+        const cardActiveW = (cardPhysCov && cardPhysCov.coveredWidthM > 0.1) ? cardPhysCov.coveredWidthM : s.widthM;
+        const cardActiveH = (cardPhysCov && cardPhysCov.coveredHeightM > 0.1) ? cardPhysCov.coveredHeightM : s.heightM;
+        const cardActiveAreaM2 = round(cardActiveW * cardActiveH, 2);
+        const effTheoActiveL = round(cardEffFlux / Math.max(0.1, cardActiveAreaM2), 1);
+
         const hasSimInputs = simTr > 0 && simDist > 0 && (Boolean(s.nominalLumensPerProj) || Boolean(s.effectiveTotalLumens) || s.luxSource === 'SIMULATED_LUXFIELD');
+        const resolvedPjModel = matchedPlannerCard?.projectorModel || (s as any).projectorModel || p.projection?.projectorName || 'Simülasyon';
+        const resolvedPowerW = (s as any).powerWPerUnit || resolveProjectorWatts(resolvedPjModel, 450);
+        const resolvedNativeContrast = s.nativeContrast || resolveProjectorNativeContrast(resolvedPjModel);
+
         const simGrid = hasSimInputs
           ? computeLuxSimulationGrid({
               room: { widthM: simRoomW, lengthM: simRoomL, heightM: simRoomH },
               surface: { id: s.surfaceId, name: s.surfaceName, widthM: s.widthM, heightM: s.heightM, viewingDistanceM: 3.5 },
               projector: {
-                model: 'Simülasyon',
+                model: resolvedPjModel,
                 cols: Math.max(1, matchedPlannerCard?.cols || s.projectorCount),
                 rows: Math.max(1, matchedPlannerCard?.rows || 1),
                 nativeW: cardNativeW,
                 nativeH: cardNativeH,
                 ansiLumensPerUnit: s.nominalLumensPerProj || Math.round((cardEffFlux / Math.max(0.1, cardNetEff / 100)) / Math.max(1, s.projectorCount)),
-                powerWPerUnit: 450,
+                powerWPerUnit: resolvedPowerW,
               },
               lens: { model: 'Lens', throwDistM: simDist, throwRatio: simTr },
               photometrics: { opticalEfficiencyPct: cardNetEff, screenGain: s.screenGain, reflectance: cardRefl, ambientLux: s.ambientLux ?? 0 },
@@ -1148,14 +1189,28 @@ export function buildReportHtml(p: ReportPayload): string {
         const acr = !useSimField ? Math.round(s.ambientContrastRatio) : (s.ambientLux > 0 ? round((avgL + s.ambientLux) / s.ambientLux, 1) : 0);
         const theoAcr = s.ambientLux > 0 ? round((effTheoL + s.ambientLux) / s.ambientLux, 1) : 0;
         const hasDeviceContrast =
-          (typeof s.nativeContrast === 'number' && s.nativeContrast > 0) ||
+          (typeof resolvedNativeContrast === 'number' && resolvedNativeContrast > 0) ||
           (typeof s.nativeBlackNits === 'number' && s.nativeBlackNits > 0);
 
         const luxStatusColor = avgL >= 300 && avgL <= 600 ? 'background:#dcfce7; color:#166534;' : avgL > 600 ? 'background:#e0f2fe; color:#0369a1;' : 'background:#fee2e2; color:#991b1b;';
         const luxStatusText = avgL >= 300 && avgL <= 500 ? '✓ Sergi Referansı (300–500 lx · Eser Hariç)' : avgL > 500 && avgL <= 600 ? '✓ Yüksek Sergi Aydınlığı (500–600 lx)' : avgL > 600 ? '✓ Çok Yüksek Aydınlık (>600 lx)' : '⚠ Düşük Aydınlık (Karartma Şart)';
 
-        const uStatusColor = +u0 >= 60 ? 'background:#dcfce7; color:#166534;' : +u0 >= 40 ? 'background:#fef3c7; color:#92400e;' : 'background:#fee2e2; color:#991b1b;';
-        const uStatusText = +u0 >= 60 ? '✓ Çok Yüksek Homojenlik' : +u0 >= 40 ? '✓ Kabul Edilebilir Düzgünlük' : '⚠ Köşelerde Kararma Riski';
+        const gridU0 = simGrid ? simGrid.u0Pct : +u0;
+        const gridHasDeficit = simGrid && gridU0 < 50;
+        const uStatusColor = gridHasDeficit
+          ? 'background:#fee2e2; color:#991b1b;'
+          : +u0 >= 70
+          ? 'background:#dcfce7; color:#166534;'
+          : +u0 >= 50
+          ? 'background:#fef3c7; color:#92400e;'
+          : 'background:#fee2e2; color:#991b1b;';
+        const uStatusText = gridHasDeficit
+          ? `❌ Tüm Duvar Homojenliği: %${gridU0} (Kritik Düşük / Dikey Kaplama Boşluğu) · Aktif Alan: %${u0}`
+          : +u0 >= 70
+          ? '✓ Yüksek Homojenlik (U0 ≥ %70 Proje Kabul Kriteri)'
+          : +u0 >= 50
+          ? '⚠ Sınırlı Homojenlik (%50–%70 Kurum İçi Hedef)'
+          : '❌ Yetersiz Homojenlik (FAIL — U0 < %50)';
 
         return `
         <div class="photometric-report-card">
@@ -1195,7 +1250,7 @@ export function buildReportHtml(p: ReportPayload): string {
                 <div class="photometric-mini-title">${s.isManualLux ? 'Ölçülen Aydınlık (Lux)' : 'Simüle Aydınlık (9-Nokta Ort.)'}</div>
                 <div class="photometric-mini-value" style="color: #0284c7;">${avgL} <span style="font-size:11px; font-weight:normal; color:#64748b;">lx</span></div>
                 <div class="photometric-mini-sub">Min: <b>${minL}</b> / Max: <b>${maxL}</b> lx${!s.isManualLux ? ` · Ağırlıklı: <b>${cardWeightedMean}</b> · 288-Grid: <b>${gridAvgL}</b> lx` : ''}</div>
-                ${!s.isManualLux ? `<div style="font-size:9px; color:#475569; margin-top:2px;">Teorik (Φ/A): Efektif <b>${effTheoL} lx</b> · Nominal <b>${nomTheoL} lx</b></div>` : ''}
+                ${!s.isManualLux ? `<div style="font-size:9px; color:#475569; margin-top:2px;">Teorik (Φ/A): Aktif Alan <b>${effTheoActiveL} lx</b> · Tüm Duvar <b>${effTheoL} lx</b> (Nominal <b>${nomTheoL} lx</b>)</div>` : ''}
                 <div class="photometric-mini-badge" style="${luxStatusColor}">${luxStatusText}</div>
               </div>
 
@@ -1324,8 +1379,8 @@ export function buildReportHtml(p: ReportPayload): string {
                   </tr>
                   <tr>
                     <td><b>3. Teorik Ortalama Lux (Φ/A)</b></td>
-                    <td style="font-family:monospace;">Nominal: ${nomFlux.toLocaleString('tr-TR')} ÷ ${areaM2} = <b>${nomTheoL} lx</b> · Efektif: ${effFlux.toLocaleString('tr-TR')} ÷ ${areaM2} = <b>${effTheoL} lx</b></td>
-                    <td style="text-align:right; font-family:monospace;"><b>Efektif Teorik: ${effTheoL} Lux</b> (${theoEffNits} Nit)</td>
+                    <td style="font-family:monospace;">Aktif Alan (${cardActiveAreaM2}m²): ${effFlux.toLocaleString('tr-TR')} ÷ ${cardActiveAreaM2} = <b>${effTheoActiveL} lx</b> · Tüm Duvar (${areaM2}m²): <b>${effTheoL} lx</b> (Nominal ${nomTheoL} lx)</td>
+                    <td style="text-align:right; font-family:monospace;"><b>Aktif Teorik Tavan: ${effTheoActiveL} Lux</b> (${round((effTheoActiveL * s.screenGain * cardRefl) / Math.PI, 1)} Nit)</td>
                   </tr>
                   <tr>
                     <td><b>4. Lens &amp; Optik Kayıplar</b></td>
@@ -1412,14 +1467,16 @@ export function buildReportHtml(p: ReportPayload): string {
           })()}
 
           <!-- Işık Düzgünlüğü (Uniformity) Dinamik Açıklama Kutusu -->
-          <div style="margin-top: 8px; margin-bottom: 8px; padding: 7px 10px; background: #f8fafc; border-left: 3.5px solid ${+u0 >= 75 ? '#059669' : +u0 >= 60 ? '#d97706' : '#dc2626'}; border-radius: 4px; font-size: 10.5px; color: #334155; line-height: 1.4;">
+          <div style="margin-top: 8px; margin-bottom: 8px; padding: 7px 10px; background: #f8fafc; border-left: 3.5px solid ${gridHasDeficit ? '#dc2626' : +u0 >= 75 ? '#059669' : +u0 >= 60 ? '#d97706' : '#dc2626'}; border-radius: 4px; font-size: 10.5px; color: #334155; line-height: 1.4;">
             <b>💡 Işık Düzgünlüğü (Uniformity / Homojenlik) Nedir?</b>
             Projeksiyon görüntüsünün merkezinden 4 köşesine doğru aydınlığın ne kadar dengeli dağıldığını gösterir (U0 = E_min / E_avg). 
-            ${+u0 >= 75 
-              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı yüksek homojenlik sınıfındadır; merkez/köşe parlaklık düşüşü optik ve blend toleransları içindedir.`
-              : +u0 >= 60 
-              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı genel mekanlar için kabul edilebilir toleranstadır; köşelerde standart optik düşüş görülür.`
-              : `⚠ DİKKAT: <b>%${u0}</b> düzgünlük oranı düşüktür; ekranın köşe ve kenarlarında belirgin kararma (vinyet) ve ışık kaybı oluşur. Projektör adedi veya atım mesafesi artırılmalıdır.`}
+            ${gridHasDeficit
+              ? `❌ DİKKAT: 288-nokta tüm duvar simülasyonunda düzgünlük <b>%${gridU0}</b> seviyesine düşmektedir; bunun nedeni dikeyde optik projeksiyonun duvarı tam kaplamaması (${round(Math.max(0, s.heightM - cardActiveH), 2)}m dikey açık) sonucu kenar karanlık bölgeleridir. Aktif projeksiyon alanı içindeki 9-nokta homojenlik ise <b>%${u0}</b> ile yüksektir. Fiziksel kaplama eksikliği giderilmeden tüm yüzey homojenlik onayı verilemez.`
+              : +u0 >= 70 
+              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı yüksek homojenlik sınıfındadır (U0 ≥ %70 Proje Kabul Kriteri).`
+              : +u0 >= 50 
+              ? `Bu kurulumdaki <b>%${u0}</b> düzgünlük oranı sınırlı homojenlik seviyesindedir [Kurum İçi Hedef / Non-Standard]; köşelerde optik düşüş görülür.`
+              : `❌ DİKKAT (FAIL): <b>%${u0}</b> düzgünlük oranı kritik seviyede yetersizdir (U0 < %50). Yüksek ortalama aydınlık bu homojenlik kaybını telafi edemez ve mühendislik standardında ACCEPTABLE kabul edilemez.`}
           </div>
 
           <!-- Projektör Kapsama & Dağılım Cetveli -->
@@ -1497,7 +1554,8 @@ export function buildReportHtml(p: ReportPayload): string {
         const svg = generateSurfaceMultiSvg(s);
         const area = round(s.areaM2 || (s.effectiveWidthM * s.effectiveHeightM), 2);
         const totalPj = s.cols * s.rows;
-        const matchedUnitWatt = p.interProjectorAnalysis?.projectors.find(pj => pj.surfaceId === s.id)?.powerW || 1350;
+        const matchedUnitWatt = p.interProjectorAnalysis?.projectors.find(pj => pj.surfaceId === s.id)?.powerW
+          || resolveProjectorWatts(s.projectorModel || (p.photometricSurfaces?.find(ps => ps.surfaceId === s.id) as any)?.projectorModel || p.projection?.projectorName, 1350);
         const totalPjWatt = totalPj * matchedUnitWatt;
         const matchedScenario = p.scenarios?.find(sc => sc.surfaceId === s.id);
         const matchedSurfacePhoto = p.photometricSurfaces?.find(ps => ps.surfaceId === s.id);
@@ -1594,10 +1652,13 @@ export function buildReportHtml(p: ReportPayload): string {
           .filter((_: any, oi: number) => oi !== sIdx)
           .map((o: any) => o.avgMmPerPx || round((o.effectiveWidthM * 1000) / Math.max(1, o.netW), 2))
           .filter((v: number) => Number.isFinite(v) && v > 0);
+        const actCovW = (physCov && physCov.coveredWidthM > 0.1) ? physCov.coveredWidthM : s.effectiveWidthM;
+        const actCovH = (physCov && physCov.coveredHeightM > 0.1) ? physCov.coveredHeightM : s.effectiveHeightM;
+        const actCovArea = round(actCovW * actCovH, 2);
         const geoSum = computeGeometricMappingSummary({
           slots: geomSlots,
-          wallWidthM: s.effectiveWidthM,
-          wallHeightM: s.effectiveHeightM,
+          wallWidthM: actCovW,
+          wallHeightM: actCovH,
           gamma: 2.2,
           surfaceGeometry: (s.geometry || 'flat') as MappingSurfaceGeometry,
           radiusM: s.radiusM,
@@ -1605,8 +1666,8 @@ export function buildReportHtml(p: ReportPayload): string {
           chordWidthM: s.chordWidthM,
           sagittaM: s.sagittaM,
           throwDistM: s.throwDistM,
-          mmPerPxW: round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 2),
-          mmPerPxH: round((s.effectiveHeightM * 1000) / Math.max(1, combinedH), 2),
+          mmPerPxW: round((actCovW * 1000) / Math.max(1, combinedW), 3),
+          mmPerPxH: round((actCovH * 1000) / Math.max(1, combinedH), 3),
           isCircularMask: s.isCircularMask,
           otherSurfaceMmPerPx: otherMmList,
           keystoneVDeg: tiltVDeg,
@@ -1662,8 +1723,8 @@ export function buildReportHtml(p: ReportPayload): string {
                 '    <table class="compact-table" style="background:#f8fafc; font-size:10px; margin-bottom:6px;">',
                 '      <thead><tr><th>Kanvas Türü</th><th>Çözünürlük &amp; MP</th><th style="text-align:right;">Yatay (H) px/m · mm/px · PPI</th><th style="text-align:right;">Dikey (V) px/m · mm/px · PPI</th><th style="text-align:right;">Yoğunluk (px/m²) &amp; Anizotropi</th></tr></thead>',
                 '      <tbody>',
-                '        <tr><td><b>Tablo A — Birleşik Projeksiyon Rasteri</b></td><td style="font-family:monospace;"><b>' + combinedW + ' × ' + combinedH + ' px</b> (' + round((combinedW * combinedH) / 1e6, 2) + ' MP)</td><td style="text-align:right; font-family:monospace;">' + round(combinedW / Math.max(0.1, s.effectiveWidthM), 2) + ' px/m · <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 3) + ' mm/px</b> · ' + round((combinedW / Math.max(0.1, s.effectiveWidthM)) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;">' + round(combinedH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m · <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, combinedH), 3) + ' mm/px</b> · ' + round((combinedH / Math.max(0.1, s.effectiveHeightM)) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;"><b>' + Math.round((combinedW * combinedH) / Math.max(0.1, area)).toLocaleString('tr-TR') + ' px/m²</b> · Anizotropi %' + round((Math.abs(combinedW / Math.max(0.1, s.effectiveWidthM) - combinedH / Math.max(0.1, s.effectiveHeightM)) / Math.max(0.1, combinedW / Math.max(0.1, s.effectiveWidthM), combinedH / Math.max(0.1, s.effectiveHeightM))) * 100, 1) + '</td></tr>',
-                '        <tr class="highlight-cell"><td><b>Tablo B — Kırpılmış İçerik Kanvası</b></td><td style="font-family:monospace;"><b>' + s.netW + ' × ' + s.netH + ' px</b> (' + round((s.netW * s.netH) / 1e6, 2) + ' MP)</td><td style="text-align:right; font-family:monospace;">' + round(s.netW / Math.max(0.1, s.effectiveWidthM), 2) + ' px/m · <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, s.netW), 3) + ' mm/px</b> · ' + round((s.netW / Math.max(0.1, s.effectiveWidthM)) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;">' + round(s.netH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m · <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, s.netH), 3) + ' mm/px</b> · ' + round((s.netH / Math.max(0.1, s.effectiveHeightM)) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;"><b>' + Math.round((s.netW * s.netH) / Math.max(0.1, area)).toLocaleString('tr-TR') + ' px/m²</b> · Anizotropi %' + round((Math.abs(s.netW / Math.max(0.1, s.effectiveWidthM) - s.netH / Math.max(0.1, s.effectiveHeightM)) / Math.max(0.1, s.netW / Math.max(0.1, s.effectiveWidthM), s.netH / Math.max(0.1, s.effectiveHeightM))) * 100, 2) + '</td></tr>',
+                '        <tr><td><b>Tablo A — Birleşik Projeksiyon Rasteri (Aktif Optik ' + actCovW + '×' + actCovH + 'm)</b></td><td style="font-family:monospace;"><b>' + combinedW + ' × ' + combinedH + ' px</b> (' + round((combinedW * combinedH) / 1e6, 2) + ' MP)</td><td style="text-align:right; font-family:monospace;">' + round(combinedW / actCovW, 2) + ' px/m · <b>' + round((actCovW * 1000) / Math.max(1, combinedW), 3) + ' mm/px</b> · ' + round((combinedW / actCovW) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;">' + round(combinedH / actCovH, 2) + ' px/m · <b>' + round((actCovH * 1000) / Math.max(1, combinedH), 3) + ' mm/px</b> · ' + round((combinedH / actCovH) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;"><b>' + Math.round((combinedW * combinedH) / Math.max(0.1, actCovArea)).toLocaleString('tr-TR') + ' px/m²</b> · Anizotropi %' + round((Math.abs(combinedW / actCovW - combinedH / actCovH) / Math.max(0.1, combinedW / actCovW, combinedH / actCovH)) * 100, 2) + ' (Kare Piksel)</td></tr>',
+                '        <tr class="highlight-cell"><td><b>Tablo B — Kırpılmış İçerik Kanvası (Hedef Duvar Kare Piksel ' + s.effectiveWidthM + '×' + s.effectiveHeightM + 'm)</b></td><td style="font-family:monospace;"><b>' + s.netW + ' × ' + s.netH + ' px</b> (' + round((s.netW * s.netH) / 1e6, 2) + ' MP)</td><td style="text-align:right; font-family:monospace;">' + round(s.netW / Math.max(0.1, s.effectiveWidthM), 2) + ' px/m · <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, s.netW), 3) + ' mm/px</b> · ' + round((s.netW / Math.max(0.1, s.effectiveWidthM)) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;">' + round(s.netH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m · <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, s.netH), 3) + ' mm/px</b> · ' + round((s.netH / Math.max(0.1, s.effectiveHeightM)) * 0.0254, 2) + ' PPI</td><td style="text-align:right; font-family:monospace;"><b>' + Math.round((s.netW * s.netH) / Math.max(0.1, area)).toLocaleString('tr-TR') + ' px/m²</b> · Anizotropi %0.00</td></tr>',
                 '      </tbody>',
                 '    </table>',
                 '    <div style="font-size:11px; font-weight:700; color:#0f172a; margin-bottom:4px;">📐 8 Adımlı Pixel Map &amp; Çözünürlük Hesap Zinciri (Toplam Özet)</div>',
@@ -1671,9 +1732,9 @@ export function buildReportHtml(p: ReportPayload): string {
                 '      <thead><tr><th style="width:30%;">Hesaplama Kalemi</th><th style="width:42%;">Detay / Katsayı</th><th style="width:28%; text-align:right;">Sonuç</th></tr></thead>',
                 '      <tbody>',
                 '        <tr><td><b>1. Native Raster (Tekil Projektör)</b></td><td style="font-family:monospace;">' + totalPj + ' PJ (' + (s.orient === 'portrait' ? 'Dikey' : 'Yatay') + ')</td><td style="text-align:right; font-family:monospace;"><b>' + nativeW + ' × ' + nativeH + ' px</b> (' + round((nativeW * nativeH) / 1000000, 2) + ' MP)</td></tr>',
-                '        <tr><td><b>2. Fiziksel Piksel Yoğunluğu</b></td><td style="font-family:monospace;">Blended Raster (' + combinedW + '×' + combinedH + ' ÷ ' + area + 'm²): <b>' + Math.round((combinedW * combinedH) / Math.max(0.1, area)).toLocaleString('tr-TR') + ' px/m²</b> · Net Kanvas (' + s.netW + '×' + s.netH + ' ÷ ' + area + 'm²): ' + pxPerM2Val.toLocaleString('tr-TR') + ' px/m²</td><td style="text-align:right; font-family:monospace;"><b>H: ' + round((combinedW / Math.max(0.1, s.effectiveWidthM)) * 0.0254, 2) + ' / V: ' + round((combinedH / Math.max(0.1, s.effectiveHeightM)) * 0.0254, 2) + ' PPI</b></td></tr>',
-                '        <tr><td><b>3. Pixel per Meter (px/m)</b></td><td style="font-family:monospace;">Blended (Duvar ' + s.effectiveWidthM + '×' + s.effectiveHeightM + 'm): H <b>' + round(combinedW / Math.max(0.1, s.effectiveWidthM), 2) + '</b> / V <b>' + round(combinedH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m</b>' + (!physCov.isFullyCovered && physCov.coveredHeightM > 0.1 ? ' · Gerçek Projeksiyon (' + physCov.coveredWidthM + '×' + physCov.coveredHeightM + 'm): H <b>' + round(combinedW / Math.max(0.1, physCov.coveredWidthM), 1) + '</b> / V <b>' + round(combinedH / physCov.coveredHeightM, 1) + ' px/m</b>' : '') + ' · Kırpılmış Kanvas (' + s.netW + '×' + s.netH + '): H <b>' + round(s.netW / Math.max(0.1, s.effectiveWidthM), 2) + '</b> / V <b>' + round(s.netH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m</b>' + (geoSum.pixelAnisotropyRatio > 1.05 ? ' <span style="color:#dc2626; font-weight:700;">⚠ Blended Anizotropi %' + round((1 - 1 / geoSum.pixelAnisotropyRatio) * 100, 1) + '!</span>' : '') + '</td><td style="text-align:right; font-family:monospace;">Blended H: <b>' + round(combinedW / Math.max(0.1, s.effectiveWidthM), 2) + ' px/m</b></td></tr>',
-                '        <tr><td><b>4. Piksel Aralığı (mm/px)</b></td><td style="font-family:monospace;">Blended (Duvar): H <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 2) + '</b> / V <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, combinedH), 2) + ' mm/px</b> · Kırpılmış Kanvas: H <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, s.netW), 2) + '</b> / V <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, s.netH), 2) + ' mm/px</b></td><td style="text-align:right; font-family:monospace;">Blended H: <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, combinedW), 2) + ' mm/px</b></td></tr>',
+                '        <tr><td><b>2. Fiziksel Piksel Yoğunluğu</b></td><td style="font-family:monospace;">Aktif Optik Raster (' + combinedW + '×' + combinedH + ' ÷ ' + actCovArea + 'm²): <b>' + Math.round((combinedW * combinedH) / Math.max(0.1, actCovArea)).toLocaleString('tr-TR') + ' px/m²</b> · Net Kanvas (' + s.netW + '×' + s.netH + ' ÷ ' + area + 'm²): ' + pxPerM2Val.toLocaleString('tr-TR') + ' px/m²</td><td style="text-align:right; font-family:monospace;"><b>H: ' + round((combinedW / Math.max(0.1, actCovW)) * 0.0254, 2) + ' / V: ' + round((combinedH / Math.max(0.1, actCovH)) * 0.0254, 2) + ' PPI</b></td></tr>',
+                '        <tr><td><b>3. Pixel per Meter (px/m)</b></td><td style="font-family:monospace;">Aktif Optik Projeksiyon (' + actCovW + '×' + actCovH + 'm): H <b>' + round(combinedW / actCovW, 2) + '</b> / V <b>' + round(combinedH / actCovH, 2) + ' px/m</b> (Anizotropi %' + round((Math.abs(combinedW / actCovW - combinedH / actCovH) / Math.max(0.1, combinedW / actCovW, combinedH / actCovH)) * 100, 2) + ' — Kare Piksel)' + (Math.abs(s.effectiveHeightM - actCovH) > 0.02 ? ' · <span style="color:#64748b;">(Tüm duvara esnetilirse V ' + round(combinedH / s.effectiveHeightM, 1) + ' px/m, %' + round((Math.abs(combinedW / s.effectiveWidthM - combinedH / s.effectiveHeightM) / Math.max(0.1, combinedW / s.effectiveWidthM, combinedH / s.effectiveHeightM)) * 100, 1) + ' stretch)</span>' : '') + ' · Hedef Kanvas (' + s.netW + '×' + s.netH + '): H <b>' + round(s.netW / Math.max(0.1, s.effectiveWidthM), 2) + '</b> / V <b>' + round(s.netH / Math.max(0.1, s.effectiveHeightM), 2) + ' px/m</b></td><td style="text-align:right; font-family:monospace;">Aktif Optik H: <b>' + round(combinedW / actCovW, 2) + ' px/m</b></td></tr>',
+                '        <tr><td><b>4. Piksel Aralığı (mm/px)</b></td><td style="font-family:monospace;">Aktif Projeksiyon: H <b>' + round((actCovW * 1000) / Math.max(1, combinedW), 3) + '</b> / V <b>' + round((actCovH * 1000) / Math.max(1, combinedH), 3) + ' mm/px</b> · Kırpılmış İçerik Kanvası: H <b>' + round((s.effectiveWidthM * 1000) / Math.max(1, s.netW), 3) + '</b> / V <b>' + round((s.effectiveHeightM * 1000) / Math.max(1, s.netH), 3) + ' mm/px</b></td><td style="text-align:right; font-family:monospace;">Aktif H: <b>' + round((actCovW * 1000) / Math.max(1, combinedW), 3) + ' mm/px</b></td></tr>',
                 '        <tr><td><b>5. Duvar Toplam Piksel Karşılığı</b></td><td style="font-family:monospace;">' + s.effectiveWidthM + 'm × ' + s.effectiveHeightM + 'm (Oran ' + (s.aspectPhysical || round(s.effectiveWidthM / Math.max(0.1, s.effectiveHeightM), 2)) + ':1)</td><td style="text-align:right; font-family:monospace;"><b>' + wallPxW + ' × ' + wallPxH + ' px</b></td></tr>',
                 '        <tr><td><b>6. Ham Toplam → Blended Raster</b></td><td style="font-family:monospace;">Ham: ' + rawW + ' × ' + rawH + ' px · Overlap (' + nativeW + ' px bazlı %' + (s.cols > 1 ? s.overlapX : 0) + '): -' + lostOvW + ' px Yatay / -' + lostOvH + ' px Dikey</td><td style="text-align:right; font-family:monospace; color:#0284c7;"><b>Blended: ' + combinedW + ' × ' + combinedH + ' px</b> (-%' + lostPct + ')</td></tr>',
                 '        <tr><td><b>7. Yüzey Oranı Kırpma Farkı &amp; Geometrik Kayıp</b></td><td style="font-family:monospace;">Duvar Oranı Kırpması: -' + Math.max(0, combinedW - s.netW) + ' px (Yatay) · -' + Math.max(0, combinedH - s.netH) + ' px (Dikey)</td><td style="text-align:right; font-family:monospace; color:#b45309;"><b>Keystone/Warp: -%' + geoSum.totalGeometricLossPct + '</b></td></tr>',
@@ -1695,7 +1756,7 @@ export function buildReportHtml(p: ReportPayload): string {
                 '        <tr><td><b>3. Surface Mapping</b></td><td>' + esc(geoSum.surfaceGeometryLabel) + '</td><td style="text-align:right; font-family:monospace;">Kiriş ' + geoSum.chordWidthM + 'm · Kavis ' + geoSum.sagittaM + 'm</td></tr>',
                 '        <tr><td><b>4. Masking (Maskeleme)</b></td><td style="font-family:monospace;">' + (geoSum.circularMaskActive ? 'Dairesel / Kubbe Maske' : 'Tam Çerçeve') + '</td><td style="text-align:right; font-family:monospace;">Maskeli -%' + geoSum.maskedOutPct + ' · <b>Aktif %' + geoSum.visibleActivePct + '</b></td></tr>',
                 '        <tr><td><b>5. Edge Blending</b></td><td style="font-family:monospace;">' + Math.max(0, (s.cols - 1) * s.rows + (s.rows - 1) * s.cols) + ' Bölge · ' + geoSum.blendWidthPxX + 'px (' + geoSum.blendPhysicalWidthM + 'm · Geometrik kayıptan bağımsız parlaklık geçişi)</td><td style="text-align:right; font-family:monospace;">γ=' + geoSum.gamma + ' · Orta: <b>%' + geoSum.midpointDrivePct + '</b></td></tr>',
-                '        <tr><td><b>6. Geometrik Bozulma Analizi</b></td><td style="font-family:monospace;">Blended Raster Anizotropi ' + geoSum.pixelAnisotropyRatio + ':1 (Yatay Fark %' + round((1 - 1 / Math.max(1, geoSum.pixelAnisotropyRatio)) * 100, 1) + ') · Kanvas %0 (Kare Piksel)' + (geoSum.trapezoidShrinkPct > 0 || geoSum.warpPixelLossPct > 0 ? ' · Daralma %' + round(geoSum.trapezoidShrinkPct + geoSum.warpPixelLossPct, 1) : '') + ' · ΔD ' + geoSum.depthOfFieldSpreadM + 'm</td><td style="text-align:right;">' + esc(geoSum.distortionLabel) + '</td></tr>',
+                '        <tr><td><b>6. Geometrik Bozulma Analizi</b></td><td style="font-family:monospace;">Aktif Optik Anizotropi ' + geoSum.pixelAnisotropyRatio + ':1 (Kare Piksel %' + round((1 - 1 / Math.max(1, geoSum.pixelAnisotropyRatio)) * 100, 2) + ')' + (Math.abs(s.effectiveHeightM - actCovH) > 0.02 ? ' · Esnetme (Stretch) Farkı %' + round((Math.abs(combinedW / s.effectiveWidthM - combinedH / s.effectiveHeightM) / Math.max(0.1, combinedW / s.effectiveWidthM, combinedH / s.effectiveHeightM)) * 100, 1) : '') + (geoSum.trapezoidShrinkPct > 0 || geoSum.warpPixelLossPct > 0 ? ' · Daralma %' + round(geoSum.trapezoidShrinkPct + geoSum.warpPixelLossPct, 1) : '') + ' · ΔD ' + geoSum.depthOfFieldSpreadM + 'm</td><td style="text-align:right;">' + esc(geoSum.distortionLabel) + '</td></tr>',
                 '        <tr><td><b>7. Çoklu Yüzey Eşleştirme</b></td><td style="font-family:monospace;">' + geoSum.matchedSurfacesCount + '/' + geoSum.totalSurfacesCount + ' Yüzey · ' + geoSum.seamTransitionCount + ' Geçiş</td><td style="text-align:right; font-family:monospace;">Sapma %' + geoSum.densitySpreadPct + ' (' + esc(geoSum.multiSurfaceStatus) + ')</td></tr>',
                 '        <tr class="highlight-cell"><td><b>8. TOPLAM EFEKTİF ÇÖZÜNÜRLÜK</b></td><td style="font-family:monospace;">Geometrik Verim (Overlap/Kırpma Hariç): <b>%' + geoSum.geometricEfficiencyPct + '</b> (Kayıp -%' + geoSum.totalGeometricLossPct + ')</td><td style="text-align:right; font-family:monospace;"><b>' + geoSum.effectiveResolutionW + ' × ' + geoSum.effectiveResolutionH + ' px (' + geoSum.effectiveUsableMP + ' MP)</b></td></tr>',
                 '      </tbody>',
@@ -1754,8 +1815,9 @@ export function buildReportHtml(p: ReportPayload): string {
                     colorCalibrated: true,
                   });
                   return vqMain + '<div style="margin:6px 0 8px 0; padding:6px 10px; background:#fffbeb; border:1px solid #fcd34d; border-left:3px solid #d97706; border-radius:4px; font-size:9.5px; color:#92400e;">'
-                    + '<b>📐 Hedef Duvar vs Gerçek Projeksiyon Alanı PPD Farkı:</b> Duvar hedefi (' + s.effectiveWidthM + '×' + s.effectiveHeightM + ' m, ' + s.netW + '×' + s.netH + ' px) ile gerçek aktif projeksiyon alanı (' + physCov.coveredWidthM + '×' + physCov.coveredHeightM + ' m, ' + combinedW + '×' + combinedH + ' px) farklıdır. '
-                    + 'Gerçek projeksiyon alanı için Yatay Ort: <b>' + actualVq.ppd + ' PPD</b> (' + actualVq.arcminPerPixelH + ' arcmin/px) · Dikey Ort: <b>' + actualVq.ppdVertical + ' PPD</b> (' + actualVq.arcminPerPixelV + ' arcmin/px) · Merkez: <b>' + actualVq.ppdCenterH + '/' + actualVq.ppdCenterV + ' PPD</b> · Kenar: <b>' + actualVq.ppdEdgeH + '/' + actualVq.ppdEdgeV + ' PPD</b> · Piksel Aralığı: <b>' + actualVq.mmPerPx + ' mm/px</b> (' + esc(actualVq.sharpnessLabel) + ').'
+                    + '<b>📐 Hedef Duvar vs Gerçek Projeksiyon Alanı PPD Farkı (İzleme Mesafesi: ' + (s.viewDistM || 3.5) + 'm):</b><br/>'
+                    + '• <b>Hedef Duvar Geometrisi (' + s.effectiveWidthM + '×' + s.effectiveHeightM + 'm, ' + s.netW + '×' + s.netH + ' px):</b> Görüş Açısı FOV: <b>' + round(2 * Math.atan(s.effectiveWidthM / (2 * (s.viewDistM || 3.5))) * (180 / Math.PI), 1) + '° H × ' + round(2 * Math.atan(s.effectiveHeightM / (2 * (s.viewDistM || 3.5))) * (180 / Math.PI), 1) + '° V</b> → Ortalama: <b>' + round(s.netW / (2 * Math.atan(s.effectiveWidthM / (2 * (s.viewDistM || 3.5))) * (180 / Math.PI)), 1) + ' H × ' + round(s.netH / (2 * Math.atan(s.effectiveHeightM / (2 * (s.viewDistM || 3.5))) * (180 / Math.PI)), 1) + ' V PPD</b>.<br/>'
+                    + '• <b>Aktif Optik Projeksiyon (' + physCov.coveredWidthM + '×' + physCov.coveredHeightM + 'm, ' + combinedW + '×' + combinedH + ' px):</b> Görüş Açısı FOV: <b>' + round(2 * Math.atan(physCov.coveredWidthM / (2 * (s.viewDistM || 3.5))) * (180 / Math.PI), 1) + '° H × ' + round(2 * Math.atan(physCov.coveredHeightM / (2 * (s.viewDistM || 3.5))) * (180 / Math.PI), 1) + '° V</b> → Ortalama: <b>' + actualVq.ppd + ' H × ' + actualVq.ppdVertical + ' V PPD</b> (Merkez On-Axis: ' + actualVq.ppdCenterH + '/' + actualVq.ppdCenterV + ' PPD, Oblik Kenar: ' + actualVq.ppdEdgeH + '/' + actualVq.ppdEdgeV + ' PPD). Optik piksel aralığı: <b>' + actualVq.mmPerPx + ' mm/px</b>.'
                     + '</div>';
                 }
                 return vqMain;
@@ -2032,7 +2094,7 @@ export function buildReportHtml(p: ReportPayload): string {
                   nativeW: pmSum.nativeW,
                   nativeH: pmSum.nativeH,
                   ansiLumensPerUnit: matchedPhoto?.nominalLumensPerProj || p.projectionScreens?.[0]?.ansiLumens || p.projection?.ansiLumens || 10000,
-                  powerWPerUnit: 450,
+                  powerWPerUnit: resolveProjectorWatts((matchedPhoto as any)?.projectorModel || p.projectionScreens?.[0]?.projectorName || p.projection?.projectorName, 450),
                 },
                 lens: {
                   model: 'Karşılaştırma',
@@ -2145,9 +2207,16 @@ export function buildReportHtml(p: ReportPayload): string {
         ? `<div style="padding:8px 10px; margin-bottom:10px; border:1px solid #fca5a5; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:11px; font-weight:700;">⚠ Veri Eksikliği: Besleme gerilimi (${p.electrical.supply.voltage} V) eksik olduğu için kesin akım/yük hesabı yapılamadı.</div>`
         : '';
 
+      const curTotalW = el.totalW > 0 ? el.totalW : 1350;
+      const curPjCount = (p.electrical?.loads || []).reduce((a, l) => a + (l.name.toLowerCase().includes('projektör') ? Math.max(1, l.qty || 1) : 0), 0) || 3;
       blocks.push(`<section class="report-section">
-        <h2>${tr.electrical}</h2>
+        <h2>${tr.electrical} — Ön Tasarım / Preliminary Design</h2>
         ${elecBanner}
+        <div style="padding:6px 10px; margin-bottom:8px; border-radius:5px; background:#f8fafc; border:1px solid #cbd5e1; font-size:10px; font-family:monospace; color:#334155;">
+          <b>Elektrik Akım &amp; Faz Ayrımı (Ön Tasarım / Preliminary Design):</b><br/>
+          • Tek Faz Linye Akımı (230 V L-N · Tek Cihaz ${Math.round(curTotalW / Math.max(1, curPjCount))} W): <b>I<sub>b,1φ</sub> ≈ ${round((curTotalW / Math.max(1, curPjCount)) / (230 * (el.effectivePf || 1)), 2)} A</b> (cosφ=${round(el.effectivePf, 2)}) | 3 Cihaz Toplam: <b>${round(curTotalW / (230 * (el.effectivePf || 1)), 2)} A</b><br/>
+          • 3-Faz Dengeli Hat Akımı (400 V L-L · Toplam ${Math.round(curTotalW)} W): <b>I<sub>hat,3φ</sub> = P / (√3 × U<sub>LL</sub> × cosφ) ≈ ${round(curTotalW / (Math.sqrt(3) * 400 * (el.effectivePf || 1)), 2)} A</b>
+        </div>
         <p><b>${tr.totalPower}:</b> ${isElecUnknown ? '<span style="color:#7c3aed; font-weight:700;">UNKNOWN</span>' : `${Math.round(el.totalW)} W / ${Math.round(el.demandW)} W`} &nbsp;|&nbsp; <b>Toplam ${p.electrical.supply.phases ?? 1}-Faz Hat Akımı (Ib_toplam):</b> ${isElecUnknown ? '<span style="color:#7c3aed; font-weight:700;">UNKNOWN</span>' : `${round(el.totalIbA, 2)} A`} (${p.electrical.supply.phases === 3 && p.electrical.supply.voltage <= 260 ? `400 V L-L / ${p.electrical.supply.voltage} V L-N` : `${p.electrical.supply.voltage} V`} · cosφ=${round(el.effectivePf, 2)}) &nbsp;|&nbsp; <b>${tr.mainBreaker}:</b> ${isElecUnknown ? '<span style="color:#7c3aed; font-weight:700;">UNKNOWN</span>' : `${el.mainBreakerA ?? '—'} A`}</p>
         
         <div class="diagram cad-diagram">${sld}</div>
@@ -2232,18 +2301,34 @@ export function buildReportHtml(p: ReportPayload): string {
     const scrBot = Math.max(0, sh.screenBottomHeightM || 0);
     const maxH = Math.max(sh.deviceHeightFromFloorM, sh.beamTopAtScreenM, sh.personHeightM, scrBot + surfH, 2.5) * 1.18;
 
-    // --- PAFTA 1: 3B İZOMETRİK PERSPEKTİF GÖLGE & IŞIK KONİSİ SİMÜLASYONU (VEKTÖREL SVG) ---
-    const isoW = 680;
-    const isoH = 265;
-    const isoOriginX = 245;
-    const isoOriginY = 172;
-    const scaleX = Math.min(34, 155 / Math.max(1.5, surfW));
-    const scaleY = Math.min(38, 122 / Math.max(2.0, maxH));
-    const scaleZ = Math.min(38, 195 / Math.max(1.5, totalZ));
-    // 3B (x: yanal [-surfW/2..+surfW/2], y: yerden yükseklik [0..maxH], z: perdeden uzaklık [0..totalZ]) -> 2B SVG (px, py)
+    const ep = fs.enabledPaftas ?? {
+      iso3d: true,
+      topPlan: true,
+      bottomPlan: true,
+      sideSection: true,
+      frontElevation: true,
+    };
+
+    // --- PAFTA 1: 3B İZOMETRİK PERSPEKTİF GÖLGE & IŞIK KONİSİ SİMÜLASYONU (MÜHENDİSLİK ÇİZİMİ) ---
+    // Matematiksel olarak sınırlandırılmış, çakışmayan, net ve ferah aksonometrik projeksiyon
+    const isoW = 760;
+    const isoH = 370;
+    const pOriginX = 160;
+    const pOriginY = 325;
+
+    // Ölçekler çizim alanına [40, 720] × [65, 360] tam sığacak şekilde dinamik hesaplanır
+    const scaleX = Math.min(55, 190 / Math.max(1, surfW));
+    const scaleY = 125 / Math.max(1, maxH);
+    const zSpanPx = 360;
+    const zAngleRad = 22 * (Math.PI / 180);
+    const cosZ = Math.cos(zAngleRad);
+    const sinZ = Math.sin(zAngleRad);
+
     const isoPt = (x: number, y: number, z: number): [number, number] => {
-      const sx = isoOriginX + x * scaleX * 0.92 + z * scaleZ * 0.88;
-      const sy = isoOriginY - y * scaleY + x * scaleX * 0.24 + z * scaleZ * 0.34;
+      const zNorm = Math.max(0, Math.min(totalZ, z)) / Math.max(0.1, totalZ);
+      const zDistPx = zNorm * zSpanPx;
+      const sx = pOriginX + x * scaleX + zDistPx * cosZ;
+      const sy = pOriginY - y * scaleY - zDistPx * sinZ * 0.78;
       return [round(sx, 1), round(sy, 1)];
     };
     const polyPts = (pts: [number, number, number][]) => pts.map(([x, y, z]) => isoPt(x, y, z).join(',')).join(' ');
@@ -2292,6 +2377,7 @@ export function buildReportHtml(p: ReportPayload): string {
     ];
     const coneTopFace = polyPts([dev3D, scCorners3D[0], scCorners3D[1]]);
     const coneRightFace = polyPts([dev3D, scCorners3D[1], scCorners3D[2]]);
+    const coneBottomFace = polyPts([dev3D, scCorners3D[2], scCorners3D[3]]);
 
     // İnsan 3B konumu (gerçekçi insan silüeti) ve Perdedeki 3B İnsan Gölgesi Silüeti
     const pX = Math.max(-surfW / 2, Math.min(surfW / 2, sh.personXM || 0));
@@ -2335,90 +2421,116 @@ export function buildReportHtml(p: ReportPayload): string {
     const [shTopMidX, shTopMidY] = isoPt(pX, shTopY, 0);
     const [scrTopMidX, scrTopMidY] = isoPt(0, scrBot + surfH, 0);
 
-    const iso3dSvg = `<svg viewBox="0 0 ${isoW} ${isoH}" width="100%" height="250" style="background:#070b14; border-radius:6px; border:1px solid #334155;">
-      <text x="14" y="18" fill="#38bdf8" font-size="10.5" font-weight="bold">🧊 PAFTA 1 — 3B İZOMETRİK IŞIK KONİSİ, KRİTİK BÖLGE &amp; İNSAN GÖLGE SİMÜLASYONU</text>
-      <!-- 3B Zemin Halısı (Riskli Gölge Bölgesi vs Güvenli Bölge) -->
-      <polygon points="${floorFull}" fill="#0f172a" stroke="#334155" stroke-width="1.2" />
+    const iso3dSvg = `<svg viewBox="0 0 ${isoW} ${isoH}" width="100%" height="340" style="background:#050914; border-radius:8px; border:1px solid #334155;">
+      <defs>
+        <linearGradient id="beamGrad" x1="100%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.32" />
+          <stop offset="100%" stop-color="#0284c7" stop-opacity="0.06" />
+        </linearGradient>
+      </defs>
+
+      <!-- ÜST BAŞLIK BİLGİ ŞERİDİ -->
+      <rect x="0" y="0" width="${isoW}" height="28" fill="#0b1329" />
+      <text x="14" y="19" fill="#38bdf8" font-size="11" font-weight="bold">🧊 PAFTA 1 — 3B İZOMETRİK IŞIK KONİSİ, KRİTİK BÖLGE &amp; İNSAN GÖLGE SİMÜLASYONU</text>
+      <text x="${isoW - 14}" y="19" fill="#94a3b8" font-size="9.5" text-anchor="end" font-family="monospace">Derinlik (Z): ${totalZ.toFixed(2)}m · Tavan/Lens (Y): ${sh.deviceHeightFromFloorM.toFixed(2)}m</text>
+
+      <!-- ÇAKIŞMAYAN ÜST TELEMETRİ ROZETLERİ (SAHNEYİ ASLA ÖRTMEZ) -->
+      <g transform="translate(14, 32)">
+        <!-- ① Perde Rozeti -->
+        <rect x="0" y="0" width="175" height="24" rx="4" fill="#0b1329" stroke="#334155" stroke-width="1" />
+        <text x="8" y="16" fill="#f8fafc" font-size="8.5" font-weight="bold">🖥️ Perde: <tspan fill="#38bdf8">${round(surfW, 2)}×${round(surfH, 2)}m</tspan> <tspan fill="#94a3b8">(+${round(scrBot, 2)}m)</tspan></text>
+
+        <!-- ② Kritik Gölge Sınırı Rozeti -->
+        <rect x="182" y="0" width="180" height="24" rx="4" fill="#0b1329" stroke="#f59e0b" stroke-width="1" />
+        <text x="190" y="16" fill="#fde047" font-size="8.5" font-weight="bold">⚡ Kritik Sınır: <tspan fill="#f59e0b">${sh.neverCastsShadow ? 'Yok (0m)' : `${sh.shadowEntryDistFromScreenM}m`}</tspan></text>
+
+        <!-- ③ İzleyici Durumu Rozeti -->
+        <rect x="369" y="0" width="180" height="24" rx="4" fill="#0b1329" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1" />
+        <text x="377" y="16" fill="${sh.isCastingShadow ? '#fca5a5' : '#a7f3d0'}" font-size="8.5" font-weight="bold">👤 İzleyici: <tspan fill="#e2e8f0">${sh.personDistFromScreenM}m</tspan> <tspan fill="${sh.isCastingShadow ? '#f87171' : '#34d399'}">(${sh.isCastingShadow ? `%${sh.shadowCoveragePct} Gölge` : 'Temiz'})</tspan></text>
+
+        <!-- ④ Cihaz Konumu Rozeti -->
+        <rect x="556" y="0" width="176" height="24" rx="4" fill="#0b1329" stroke="#0284c7" stroke-width="1" />
+        <text x="564" y="16" fill="#38bdf8" font-size="8.5" font-weight="bold">📽️ Cihaz: <tspan fill="#e2e8f0">Z:${round(totalZ, 2)}m</tspan> · <tspan fill="#93c5fd">Y:${round(sh.deviceHeightFromFloorM, 2)}m</tspan></text>
+      </g>
+
+      <!-- 3B Zemin Taban Izgarası (Zeminde Derinlik ve Açı İzdüşümü) -->
+      <polygon points="${floorFull}" fill="#0a0f1d" stroke="#334155" stroke-width="1.3" />
       ${!sh.neverCastsShadow && zCritClamped > 0.02 ? `
-        <polygon points="${floorRiskZone}" fill="#ef4444" fill-opacity="0.16" stroke="#ef4444" stroke-opacity="0.4" stroke-width="1" />
-        <polygon points="${floorSafeZone}" fill="#10b981" fill-opacity="0.12" stroke="#10b981" stroke-opacity="0.35" stroke-width="1" />
+        <polygon points="${floorRiskZone}" fill="#ef4444" fill-opacity="0.16" stroke="#ef4444" stroke-opacity="0.55" stroke-width="1.2" />
+        <polygon points="${floorSafeZone}" fill="#10b981" fill-opacity="0.11" stroke="#10b981" stroke-opacity="0.45" stroke-width="1.2" />
       ` : ''}
+
       <!-- Perde Yerden Yüksekteyse: Perde Altı Duvar / Sahne Eteği -->
       ${underScreenWallPoly ? `
         <polygon points="${underScreenWallPoly}" fill="#0f172a" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4,3" />
       ` : ''}
-      <!-- 3B Hedef Perde Yüzeyi -->
-      <polygon points="${screenPoly}" fill="#1e293b" stroke="#f8fafc" stroke-width="2" />
-      <!-- 3B Yarı Saydam Optik Işık Konisi -->
-      <polygon points="${coneTopFace}" fill="#38bdf8" fill-opacity="0.14" />
-      <polygon points="${coneRightFace}" fill="#38bdf8" fill-opacity="0.1" />
+
+      <!-- 3B Hedef Perde Yüzeyi (Fiziksel Duvar / Projeksiyon Alanı) -->
+      <polygon points="${screenPoly}" fill="#1e293b" stroke="#f8fafc" stroke-width="2.2" />
+      <polygon points="${screenPoly}" fill="#38bdf8" fill-opacity="0.06" />
+
+      <!-- 3B Yarı Saydam Optik Işık Konisi Yüzeyleri -->
+      <polygon points="${coneTopFace}" fill="url(#beamGrad)" />
+      <polygon points="${coneRightFace}" fill="#38bdf8" fill-opacity="0.12" />
+      <polygon points="${coneBottomFace}" fill="#0284c7" fill-opacity="0.07" />
+
+      <!-- Işık Konisi Kenar Çizgileri -->
       ${scCorners3D.map(c => {
         const [cx, cy] = isoPt(...c);
-        return `<line x1="${devPx}" y1="${devPy}" x2="${cx}" y2="${cy}" stroke="#38bdf8" stroke-opacity="0.65" stroke-width="1.1" />`;
+        return `<line x1="${devPx}" y1="${devPy}" x2="${cx}" y2="${cy}" stroke="#38bdf8" stroke-opacity="0.75" stroke-width="1.3" />`;
       }).join('')}
-      <!-- Perde Üzerindeki 3B Gerçekçi İnsan Gölgesi Silüeti ve Ölçü Çerçevesi -->
+
+      <!-- Perde Üzerindeki 3B Gerçekçi İnsan Gölgesi Silüeti ve Işık Çizgisi -->
       ${sh.isCastingShadow && sh.shadowWidthM > 0 ? `
-        <polygon points="${shadow3DBoxPoly}" fill="none" stroke="#f87171" stroke-width="1" stroke-dasharray="3,3" />
-        <polygon points="${shadow3DHumanPoly}" fill="#020617" fill-opacity="0.93" stroke="#ef4444" stroke-width="1.6" />
-        <line x1="${devPx}" y1="${devPy}" x2="${pHeadX}" y2="${pHeadY}" stroke="#ef4444" stroke-width="1.4" stroke-dasharray="4,3" />
-        <line x1="${pHeadX}" y1="${pHeadY}" x2="${shTopMidX}" y2="${shTopMidY}" stroke="#ef4444" stroke-width="1.6" stroke-dasharray="4,3" />
+        <polygon points="${shadow3DBoxPoly}" fill="none" stroke="#f87171" stroke-width="1.2" stroke-dasharray="4,3" />
+        <polygon points="${shadow3DHumanPoly}" fill="#020617" fill-opacity="0.95" stroke="#ef4444" stroke-width="1.8" />
+        <line x1="${devPx}" y1="${devPy}" x2="${pHeadX}" y2="${pHeadY}" stroke="#f87171" stroke-width="1.3" stroke-dasharray="4,3" />
+        <line x1="${pHeadX}" y1="${pHeadY}" x2="${shTopMidX}" y2="${shTopMidY}" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,3" />
       ` : ''}
+
       <!-- Zeminde Kritik Gölge Sınır Çizgisi -->
       ${!sh.neverCastsShadow && zCritClamped > 0.02 ? `
-        <line x1="${critL0[0]}" y1="${critL0[1]}" x2="${critL1[0]}" y2="${critL1[1]}" stroke="#f59e0b" stroke-width="2" stroke-dasharray="5,3" />
+        <line x1="${critL0[0]}" y1="${critL0[1]}" x2="${critL1[0]}" y2="${critL1[1]}" stroke="#f59e0b" stroke-width="2.2" stroke-dasharray="6,4" />
       ` : ''}
-      <!-- 3B Gerçekçi İnsan Silüeti -->
-      <ellipse cx="${pFootX}" cy="${pFootY}" rx="8" ry="3.8" fill="#020617" fill-opacity="0.75" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="0.9" />
-      <polygon points="${isoPersonPoly}" fill="${sh.isCastingShadow ? '#e11d48' : '#059669'}" stroke="${sh.isCastingShadow ? '#fecaca' : '#a7f3d0'}" stroke-width="1.1" />
-      <!-- 3B Cihaz Gövdesi ve Dikmesi -->
-      <line x1="${devFloorPx}" y1="${devFloorPy}" x2="${devPx}" y2="${devPy}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="3,3" />
-      <rect x="${devPx - 11}" y="${devPy - 7}" width="22" height="14" rx="3" fill="#0284c7" stroke="#e0f2fe" stroke-width="1.4" />
 
-      <!-- ÇAKIŞMAYAN NUMARALI BİLGİ KUTULARI (CALLOUT BADGES) -->
-      <!-- ① Perde & Gölge Kutusu (Sol Üst) -->
-      <line x1="${scrTopMidX}" y1="${scrTopMidY}" x2="115" y2="52" stroke="#94a3b8" stroke-width="1" />
-      <rect x="12" y="28" width="228" height="36" rx="4" fill="#0f172a" stroke="#475569" stroke-width="1" />
-      <text x="18" y="42" fill="#f8fafc" font-size="9.2" font-weight="bold">① Perde (${round(surfW, 2)}×${round(surfH, 2)}m · Yerden +${round(scrBot, 2)}m)</text>
-      <text x="18" y="56" fill="${sh.isCastingShadow ? '#fca5a5' : '#86efac'}" font-size="9">
-        ${sh.isCastingShadow ? `⬛ İnsan Gölgesi: ${sh.shadowWidthM}m × ${sh.shadowHeightM}m (%${sh.shadowCoveragePct})` : '✓ Perde Üzerinde Gölge Yok (Temiz)'}
-      </text>
+      <!-- 3B Gerçekçi İnsan Silüeti (İzleyici) -->
+      <ellipse cx="${pFootX}" cy="${pFootY}" rx="9" ry="4" fill="#020617" fill-opacity="0.85" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1" />
+      <polygon points="${isoPersonPoly}" fill="${sh.isCastingShadow ? '#e11d48' : '#059669'}" stroke="${sh.isCastingShadow ? '#fecaca' : '#a7f3d0'}" stroke-width="1.3" />
 
-      <!-- ② Kritik Gölge Sınırı Kutusu (Sol Alt) -->
+      <!-- 3B Cihaz Gövdesi ve Montaj Dikmesi -->
+      <line x1="${devFloorPx}" y1="${devFloorPy}" x2="${devPx}" y2="${devPy}" stroke="#64748b" stroke-width="1.3" stroke-dasharray="3,3" />
+      <circle cx="${devFloorPx}" cy="${devFloorPy}" r="3" fill="#64748b" />
+      <rect x="${devPx - 13}" y="${devPy - 8}" width="26" height="16" rx="3" fill="#0284c7" stroke="#e0f2fe" stroke-width="1.5" />
+      <circle cx="${devPx}" cy="${devPy}" r="3.5" fill="#f8fafc" />
+
+      <!-- 3B MÜHENDİSLİK İŞARETLEYİCİ ETİKETLERİ (SAHNE İÇİ DİREK LİDER ÇİZGİLİ) -->
+      <!-- Perde Etiketi -->
+      <line x1="${isoPt(0, scrBot + surfH, 0)[0]}" y1="${isoPt(0, scrBot + surfH, 0)[1]}" x2="${isoPt(0, scrBot + surfH, 0)[0]}" y2="${isoPt(0, scrBot + surfH, 0)[1] - 16}" stroke="#94a3b8" stroke-width="1.2" />
+      <text x="${isoPt(0, scrBot + surfH, 0)[0]}" y="${isoPt(0, scrBot + surfH, 0)[1] - 19}" fill="#f8fafc" font-size="9.5" font-weight="bold" text-anchor="middle">① HEDEF PERDE (${round(surfW, 2)}m × ${round(surfH, 2)}m)</text>
+
+      <!-- Kritik Sınır Zemin Bayrağı -->
       ${!sh.neverCastsShadow && zCritClamped > 0.02 ? `
-        <line x1="${critL0[0]}" y1="${critL0[1]}" x2="120" y2="218" stroke="#f59e0b" stroke-width="1.1" />
+        <text x="${critL1[0] + 6}" y="${critL1[1] + 3}" fill="#fde047" font-size="8.5" font-weight="bold" text-anchor="start">⚡ ② KRİTİK GÖLGE SINIRI (${sh.shadowEntryDistFromScreenM}m)</text>
       ` : ''}
-      <rect x="12" y="212" width="248" height="40" rx="4" fill="#0f172a" stroke="#f59e0b" stroke-width="1.1" />
-      <text x="18" y="227" fill="#fde047" font-size="9.5" font-weight="bold">
-        ② Kritik Gölge Başlangıç Sınırı: ${sh.neverCastsShadow ? 'Yok (0 m)' : `Perdeden ${sh.shadowEntryDistFromScreenM} m`}
-      </text>
-      <text x="18" y="242" fill="#cbd5e1" font-size="8.8">
-        ${sh.neverCastsShadow ? 'Işık tüm mesafelerde insan boyunun üstünde' : `🔴 0–${sh.shadowEntryDistFromScreenM}m Gölgeli Risk · 🟢 ${sh.shadowEntryDistFromScreenM}–${round(totalZ, 2)}m Güvenli`}
+
+      <!-- İzleyici Etiketi -->
+      <line x1="${pHeadX}" y1="${pHeadY}" x2="${pHeadX}" y2="${pHeadY - 14}" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1" />
+      <text x="${pHeadX}" y="${pHeadY - 17}" fill="${sh.isCastingShadow ? '#fca5a5' : '#a7f3d0'}" font-size="9" font-weight="bold" text-anchor="middle">
+        ③ İZLEYİCİ (${sh.isCastingShadow ? `GÖLGE %${sh.shadowCoveragePct}` : 'TEMİZ'})
       </text>
 
-      <!-- ③ İzleyici Konumu Kutusu (Sağ Alt) -->
-      <line x1="${pHeadX}" y1="${pHeadY}" x2="435" y2="222" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1.1" />
-      <rect x="425" y="212" width="242" height="40" rx="4" fill="#0f172a" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1.2" />
-      <text x="432" y="227" fill="${sh.isCastingShadow ? '#fecaca' : '#a7f3d0'}" font-size="9.5" font-weight="bold">
-        ③ İzleyici Konumu: Perdeye ${sh.personDistFromScreenM} m (Boy: ${sh.personHeightM} m)
-      </text>
-      <text x="432" y="242" fill="#cbd5e1" font-size="8.8">
-        Işık Alt Sınırı: ${sh.beamBottomAtPersonM}m (${sh.isCastingShadow ? `Işığa ${sh.intrusionHeightM}m giriyor` : `+${Math.max(0, sh.headClearanceM)}m baş üstü boşluk`})
-      </text>
-
-      <!-- ④ Cihaz Konumu Kutusu (Sağ Üst) -->
-      <line x1="${devPx}" y1="${devPy}" x2="520" y2="64" stroke="#38bdf8" stroke-width="1.1" />
-      <rect x="435" y="28" width="232" height="36" rx="4" fill="#0f172a" stroke="#0284c7" stroke-width="1.1" />
-      <text x="442" y="42" fill="#38bdf8" font-size="9.5" font-weight="bold">④ Cihaz Konumu (Z: ${round(totalZ, 2)} m · Y: ${sh.deviceHeightFromFloorM} m)</text>
-      <text x="442" y="56" fill="#cbd5e1" font-size="8.8">Optik FOV: ${fs.hfovDeg}° × ${fs.vfovDeg}° (D: ${fs.dfovDeg}°)</text>
+      <!-- Cihaz Etiketi -->
+      <text x="${devPx + 18}" y="${devPy + 4}" fill="#38bdf8" font-size="9.5" font-weight="bold" text-anchor="start">④ PROJEKTÖR (Z:${round(totalZ, 2)}m · Y:${round(sh.deviceHeightFromFloorM, 2)}m)</text>
     </svg>`;
 
-    // --- PAFTA 2: 2B YAN KESİT (ÇAKIŞMAYAN KADEMELİ ETİKETLER & BÖLGE CETVELİ) ---
-    const svgW = 430;
-    const svgH = 240;
-    const padL = 44;
-    const padR = 36;
-    const padT = 46;
-    const padB = 52;
+
+    // --- PAFTA 2: 2B YAN KESİT (ÇAKIŞMAYAN 4 KADEMELİ ETİKETLER & BÖLGE CETVELİ) ---
+    const svgW = 480;
+    const svgH = 270;
+    const padL = 48;
+    const padR = 40;
+    const padT = 72; // Üst kademeler (Tier 1: Perde & Cihaz; Tier 2: Gölge Sınırı) için net dikey boşluk
+    const padB = 62; // Alt kademe (Tier 3: Zemin Şeritleri; Tier 4: İzleyici Rozeti) için net dikey boşluk
     const plotW = svgW - padL - padR;
     const plotH = svgH - padT - padB;
     const xOfZ = (z: number) => padL + (Math.max(0, Math.min(totalZ, z)) / totalZ) * plotW;
@@ -2443,20 +2555,44 @@ export function buildReportHtml(p: ReportPayload): string {
     const pCol = sh.isCastingShadow ? '#e11d48' : '#059669';
     const pStroke = sh.isCastingShadow ? '#fecaca' : '#a7f3d0';
 
-    // Etiketlerin yatayda taşmasını ve çakışmasını önlemek için güvenli X sınırlaması
-    const critLabelX = Math.max(padL + 75, Math.min(svgW - padR - 85, xCrit));
-    const personLabelX = Math.max(padL + 80, Math.min(svgW - padR - 80, xPerson));
+    // Etiketlerin yatayda güvenli sınırlanması (Tier 2: Gölge Sınırı Rozeti)
+    const critBadgeW = 150;
+    const critLabelX = Math.max(14 + critBadgeW / 2, Math.min(svgW - 14 - critBadgeW / 2, xCrit));
 
-    const sideSvg = `<svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="230" style="background:#0f172a; border-radius:6px; border:1px solid #334155;">
-      <text x="12" y="16" fill="#38bdf8" font-size="10" font-weight="bold">📐 PAFTA 2 — 2B YAN KESİT (OPTİK KONİ &amp; MESAFE CETVELİ)</text>
-      <!-- Zemin Bölge Şeritleri -->
+    // Etiketlerin yatayda güvenli sınırlanması (Tier 4: İzleyici Rozeti)
+    const personBadgeW = 230;
+    const personLabelX = Math.max(14 + personBadgeW / 2, Math.min(svgW - 14 - personBadgeW / 2, xPerson));
+
+    const sideSvg = `<svg viewBox="0 0 ${svgW} ${svgH}" width="100%" height="250" style="background:#0f172a; border-radius:6px; border:1px solid #334155;">
+      <!-- Başlık -->
+      <text x="12" y="15" fill="#38bdf8" font-size="10.5" font-weight="bold">📐 PAFTA 2 — 2B YAN KESİT (OPTİK KONİ &amp; MESAFE CETVELİ)</text>
+      
+      <!-- TIER 1 (Y=24..42): Sabit Uç Rozetleri (Sol: Perde · Sağ: Cihaz — Yatayda 150px+ ayrık) -->
+      <!-- ① Perde Rozeti (Sol Üst) -->
+      <rect x="12" y="24" width="138" height="18" rx="3" fill="#1e293b" stroke="#64748b" stroke-width="0.9" />
+      <text x="81" y="36.5" fill="#f8fafc" font-size="8.8" text-anchor="middle" font-weight="bold">① Perde (Yerden +${round(scrBot, 2)}m)</text>
+
+      <!-- ④ Cihaz Rozeti (Sağ Üst) -->
+      <rect x="${svgW - 176}" y="24" width="164" height="18" rx="3" fill="#0c2a4d" stroke="#0284c7" stroke-width="1" />
+      <text x="${svgW - 94}" y="36.5" fill="#38bdf8" font-size="8.8" text-anchor="middle" font-weight="bold">④ Cihaz (Z:${round(totalZ, 2)}m · Y:${sh.deviceHeightFromFloorM}m)</text>
+
+      <!-- TIER 2 (Y=47..65): ② Gölge Sınırı Bağımsız Ara Kademe (Tier 1 ve Tier 4 ile asla çakışmaz) -->
+      ${!sh.neverCastsShadow && sh.shadowEntryDistFromScreenM > 0 ? `
+        <line x1="${xCrit}" y1="65" x2="${xCrit}" y2="${yFloor + 12}" stroke="#f59e0b" stroke-width="1.6" stroke-dasharray="4,3" />
+        <line x1="${critLabelX}" y1="65" x2="${xCrit}" y2="72" stroke="#f59e0b" stroke-width="1" />
+        <rect x="${critLabelX - critBadgeW / 2}" y="47" width="${critBadgeW}" height="18" rx="3" fill="#2d1b03" stroke="#f59e0b" stroke-width="1.2" />
+        <text x="${critLabelX}" y="59.5" fill="#fde047" font-size="8.8" text-anchor="middle" font-weight="bold">② Gölge Sınırı: ${sh.shadowEntryDistFromScreenM} m</text>
+      ` : ''}
+
+      <!-- TIER 3 (Y=72..208): Çizim Alanı (Işık Konisi, Perde, Silüet) -->
+      <!-- Zemin Bölge Şeritleri (Y=yFloor .. yFloor+12) -->
       ${!sh.neverCastsShadow && sh.shadowEntryDistFromScreenM > 0 ? `
         <rect x="${xScreen}" y="${yFloor}" width="${Math.max(0, xCrit - xScreen)}" height="12" fill="#ef4444" fill-opacity="0.32" />
         <rect x="${xCrit}" y="${yFloor}" width="${Math.max(0, xDev - xCrit)}" height="12" fill="#10b981" fill-opacity="0.26" />
       ` : `
         <rect x="${xScreen}" y="${yFloor}" width="${Math.max(0, xDev - xScreen)}" height="12" fill="#10b981" fill-opacity="0.26" />
       `}
-      <line x1="${padL - 10}" y1="${yFloor}" x2="${svgW - padR + 10}" y2="${yFloor}" stroke="#94a3b8" stroke-width="2" />
+      <line x1="${padL - 15}" y1="${yFloor}" x2="${svgW - padR + 15}" y2="${yFloor}" stroke="#94a3b8" stroke-width="2" />
 
       <!-- Işık Konisi -->
       <polygon points="${xDev},${yDev} ${xScreen},${yBeamTop0} ${xScreen},${yBeamBot0}" fill="#38bdf8" fill-opacity="0.16" stroke="#38bdf8" stroke-width="1.4" />
@@ -2471,23 +2607,11 @@ export function buildReportHtml(p: ReportPayload): string {
         <line x1="${xDev}" y1="${yDev}" x2="${xScreen}" y2="${yShTop}" stroke="#ef4444" stroke-width="1.3" stroke-dasharray="4,3" />
       ` : ''}
 
-      <!-- ① Perde Etiketi (Sol Üst Kademe) -->
-      <text x="${xScreen}" y="31" fill="#f8fafc" font-size="8.8" text-anchor="start" font-weight="bold">① Perde (Yerden +${round(scrBot, 2)}m)</text>
-
-      <!-- ② Kritik Gölge Sınırı (Üst Orta Kademe — Kutu İçinde) -->
-      ${!sh.neverCastsShadow && sh.shadowEntryDistFromScreenM > 0 ? `
-        <line x1="${xCrit}" y1="${padT - 4}" x2="${xCrit}" y2="${yFloor + 12}" stroke="#f59e0b" stroke-width="1.6" stroke-dasharray="5,3" />
-        <line x1="${xCrit}" y1="${padT - 4}" x2="${critLabelX}" y2="33" stroke="#f59e0b" stroke-width="1" />
-        <rect x="${critLabelX - 72}" y="21" width="144" height="16" rx="3" fill="#1e293b" stroke="#f59e0b" stroke-width="1" />
-        <text x="${critLabelX}" y="32" fill="#fde047" font-size="8.8" text-anchor="middle" font-weight="bold">② Gölge Sınırı: ${sh.shadowEntryDistFromScreenM} m</text>
-      ` : ''}
-
-      <!-- ④ Cihaz Gövdesi & Etiketi (Sağ Üst Kademe) -->
+      <!-- Cihaz Montaj Çizgisi ve Gövde Kutusu -->
       <line x1="${xDev}" y1="${yFloor}" x2="${xDev}" y2="${yDev}" stroke="#475569" stroke-width="1" stroke-dasharray="3,3" />
       <rect x="${xDev - 9}" y="${yDev - 6}" width="18" height="12" rx="2" fill="#0284c7" stroke="#bae6fd" stroke-width="1.2" />
-      <text x="${svgW - 10}" y="31" fill="#38bdf8" font-size="9" text-anchor="end" font-weight="bold">④ Cihaz (Z:${round(totalZ, 2)}m · Y:${sh.deviceHeightFromFloorM}m)</text>
 
-      <!-- ③ Anatomik Yan Kesit İnsan Silüeti & Alt Kademe Açıklama Kutusu -->
+      <!-- Anatomik Yan Kesit İnsan Silüeti -->
       <!-- Ayakkabı ve Bacaklar -->
       <ellipse cx="${xPerson - 1.5}" cy="${yFloor - 1.5}" rx="4.5" ry="2" fill="#0f172a" stroke="${pStroke}" stroke-width="0.7" />
       <line x1="${xPerson}" y1="${yFloor - 2}" x2="${xPerson}" y2="${yFloor - pPixH * 0.48}" stroke="#334155" stroke-width="4.2" stroke-linecap="round" />
@@ -2496,9 +2620,11 @@ export function buildReportHtml(p: ReportPayload): string {
       <line x1="${xPerson - 1}" y1="${yFloor - pPixH * 0.78}" x2="${xPerson - 3.8}" y2="${yFloor - pPixH * 0.50}" stroke="${pStroke}" stroke-width="2.2" stroke-linecap="round" />
       <!-- Baş -->
       <circle cx="${xPerson}" cy="${yPersonTop + pPixH * 0.08}" r="${Math.max(3.5, pPixH * 0.085)}" fill="#f1c27d" stroke="${pStroke}" stroke-width="1" />
-      <line x1="${xPerson}" y1="${yFloor + 12}" x2="${personLabelX}" y2="${svgH - 24}" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1.1" />
-      <rect x="${personLabelX - 95}" y="${svgH - 24}" width="190" height="18" rx="3" fill="#020617" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1" />
-      <text x="${personLabelX}" y="${svgH - 12}" fill="${sh.isCastingShadow ? '#fecaca' : '#a7f3d0'}" font-size="8.8" text-anchor="middle" font-weight="bold">
+
+      <!-- TIER 4 (Y=240..262): ③ İzleyici Alt Kademe Rozeti (Zemin altında bağımsız) -->
+      <line x1="${xPerson}" y1="${yFloor + 12}" x2="${personLabelX}" y2="240" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1.2" stroke-dasharray="2,2" />
+      <rect x="${personLabelX - personBadgeW / 2}" y="240" width="${personBadgeW}" height="20" rx="3" fill="#020617" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1.2" />
+      <text x="${personLabelX}" y="253.5" fill="${sh.isCastingShadow ? '#fecaca' : '#a7f3d0'}" font-size="8.8" text-anchor="middle" font-weight="bold">
         ③ İzleyici: Perdeye ${sh.personDistFromScreenM}m (Boy:${sh.personHeightM}m · Işık:${sh.beamBottomAtPersonM}m)
       </text>
     </svg>`;
@@ -2562,25 +2688,93 @@ export function buildReportHtml(p: ReportPayload): string {
       `}
     </svg>`;
 
+    // --- PAFTA 4: 2B ÜSTTEN PLAN (TOP VIEW) ---
+    // (PAFTA 5 — Alttan Tavan Görünümü rapordan kaldırıldı)
+    const topSvgW = 460;
+    const topSvgH = 210;
+    const padTopL = 50;
+    const padTopR = 40;
+    const padTopT = 32;
+    const padTopB = 28;
+    const plotTopW = topSvgW - padTopL - padTopR;
+    const plotTopH = topSvgH - padTopT - padTopB;
+    const xOfZTop = (z: number) => padTopL + (Math.max(0, Math.min(totalZ, z)) / totalZ) * plotTopW;
+    const yOfXTop = (x: number) => padTopT + plotTopH / 2 + (x / Math.max(1, surfW)) * plotTopH;
+
+    const topPlanSvg = `<svg viewBox="0 0 ${topSvgW} ${topSvgH}" width="100%" height="210" style="background:#090d16; border-radius:6px; border:1px solid #334155;">
+      <text x="12" y="18" fill="#38bdf8" font-size="10.5" font-weight="bold">⬆️ PAFTA 4 — 2B ÜSTTEN PLAN GÖRÜNÜMÜ</text>
+      <!-- Zemin Bölgesi & Risk Alanı -->
+      <rect x="${padTopL}" y="${padTopT}" width="${plotTopW}" height="${plotTopH}" fill="#0f172a" stroke="#334155" stroke-width="1.2" rx="3" />
+      ${!sh.neverCastsShadow && zCritClamped > 0.02 ? `
+        <rect x="${padTopL}" y="${padTopT}" width="${(zCritClamped / totalZ) * plotTopW}" height="${plotTopH}" fill="#ef4444" fill-opacity="0.22" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,2" />
+        <text x="${padTopL + (zCritClamped / totalZ) * plotTopW / 2}" y="${padTopT + plotTopH - 6}" fill="#fca5a5" font-size="7.5" text-anchor="middle" font-weight="bold">Kritik Gölge Risk Bölgesi (0 - ${zCritClamped.toFixed(2)}m)</text>
+      ` : ''}
+      <!-- Perde Çizgisi ve Etiketi -->
+      <line x1="${padTopL}" y1="${yOfXTop(-surfW / 2)}" x2="${padTopL}" y2="${yOfXTop(surfW / 2)}" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" />
+      <rect x="${padTopL - 38}" y="${padTopT + plotTopH / 2 - 10}" width="34" height="20" rx="3" fill="#0369a1" stroke="#38bdf8" stroke-width="1" />
+      <text x="${padTopL - 21}" y="${padTopT + plotTopH / 2 + 3}" fill="#f0f9ff" font-size="8.5" text-anchor="middle" font-weight="bold">Perde</text>
+      
+      <!-- Işık Konisi (Üstten Üçgen) -->
+      <polygon points="${xOfZTop(totalZ)},${yOfXTop(fs.devicePosM[0] || 0)} ${padTopL},${yOfXTop(-surfW / 2)} ${padTopL},${yOfXTop(surfW / 2)}" fill="#38bdf8" fill-opacity="0.18" stroke="#38bdf8" stroke-width="1.4" />
+      
+      <!-- İzleyici Üstten Dairesi ve Etiketi -->
+      <circle cx="${xOfZTop(pZ)}" cy="${yOfXTop(pX)}" r="${Math.max(6, (pW / surfW) * plotTopH * 0.45)}" fill="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke="#fff" stroke-width="1.5" />
+      <rect x="${xOfZTop(pZ) - 24}" y="${yOfXTop(pX) - 22}" width="48" height="15" rx="3" fill="${sh.isCastingShadow ? '#7f1d1d' : '#064e3b'}" stroke="${sh.isCastingShadow ? '#ef4444' : '#10b981'}" stroke-width="1" />
+      <text x="${xOfZTop(pZ)}" y="${yOfXTop(pX) - 12}" fill="#ffffff" font-size="8" text-anchor="middle" font-weight="bold">İzleyici</text>
+      
+      <!-- Cihaz Kutusu ve Etiketi -->
+      <rect x="${xOfZTop(totalZ) - 8}" y="${yOfXTop(fs.devicePosM[0] || 0) - 7}" width="16" height="14" rx="3" fill="#0284c7" stroke="#bae6fd" stroke-width="1.5" />
+      <rect x="${xOfZTop(totalZ) - 20}" y="${yOfXTop(fs.devicePosM[0] || 0) + 12}" width="40" height="15" rx="3" fill="#0c4a6e" stroke="#38bdf8" stroke-width="1" />
+      <text x="${xOfZTop(totalZ)}" y="${yOfXTop(fs.devicePosM[0] || 0) + 22}" fill="#38bdf8" font-size="8" text-anchor="middle" font-weight="bold">Cihaz</text>
+      
+      <!-- Z Mesafesi Ölçü Çizgisi & Etiketi -->
+      <line x1="${padTopL}" y1="${topSvgH - 14}" x2="${xOfZTop(totalZ)}" y2="${topSvgH - 14}" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3,2" />
+      <polygon points="${padTopL},${topSvgH - 14} ${padTopL + 4},${topSvgH - 16} ${padTopL + 4},${topSvgH - 12}" fill="#94a3b8" />
+      <polygon points="${xOfZTop(totalZ)},${topSvgH - 14} ${xOfZTop(totalZ) - 4},${topSvgH - 16} ${xOfZTop(totalZ) - 4},${topSvgH - 12}" fill="#94a3b8" />
+      <rect x="${(padTopL + xOfZTop(totalZ)) / 2 - 85}" y="${topSvgH - 22}" width="170" height="16" rx="3" fill="#020617" stroke="#475569" stroke-width="0.8" />
+      <text x="${(padTopL + xOfZTop(totalZ)) / 2}" y="${topSvgH - 11}" fill="#f8fafc" font-size="8.5" text-anchor="middle" font-weight="bold">⟷ Z Mesafesi (Perdeden Cihaza: ${totalZ.toFixed(2)}m)</text>
+    </svg>`;
+
     blocks.push(`<section class="report-section" style="break-inside:avoid; page-break-inside:avoid;">
       <h2>🕴️ Kamera / Projektör FOV &amp; İnsan Gölge Analizi Raporu (3B &amp; 2B Paftalı)</h2>
+      <div style="display:inline-block; font-family:monospace; font-size:10px; font-weight:700; background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:4px; margin-bottom:8px; border:1px solid #bae6fd;">Senaryo: SCN-02-SHADOW-SIMULATION · Hedef: Perde (${surfW}×${surfH} m) · Cihaz Atım (Z): ${totalZ.toFixed(2)} m · İzleyici Mesafesi: ${sh.personDistFromScreenM.toFixed(2)} m</div>
       <div style="padding:8px 12px; margin-bottom:10px; border-radius:6px; border:1px solid ${sh.isCastingShadow ? '#fca5a5' : '#86efac'}; background:${sh.isCastingShadow ? '#fef2f2' : '#f0fdf4'}; color:${sh.isCastingShadow ? '#991b1b' : '#166534'}; font-size:11px; font-weight:700;">
         ${esc(sh.zoneStatusLabel)} — ${esc(sh.reportSummaryTr)}
       </div>
-      ${fs.snapshot3dDataUrl ? `
-        <div style=" display:grid; grid-template-columns: 1.35fr 1fr; gap:8px; margin-bottom:8px;">
-          <div class="diagram" style="margin:0;">${iso3dSvg}</div>
-          <div style="background:#070b14; border:1px solid #334155; border-radius:6px; padding:6px; display:flex; flex-direction:column; justify-content:space-between;">
-            <div style="font-size:9.5px; font-weight:700; color:#38bdf8; margin-bottom:4px;">🎥 3B SAHNE GÖRÜNÜMÜ (CANLI WEBGL SİMÜLASYONU)</div>
-            <img src="${fs.snapshot3dDataUrl}" alt="3B FOV ve Gölge Simülasyonu" style="width:100%; height:210px; object-fit:contain; border-radius:4px; background:#020617;" />
+      <!-- 3B İZOMETRİK VEKTÖREL PAFTA (PAFTA 1) -->
+      ${ep.iso3d ? `<div class="diagram" style="margin-bottom:10px;">${iso3dSvg}</div>` : ''}
+
+      <!-- SEÇİLEN VE EKLENEN ÇOKLU AÇI 3B CANLI GÖRÜNÜMLERİ (GENİŞLETİLMİŞ 2-KOLONLU GRID) -->
+      ${Array.isArray(fs.capturedViews) && fs.capturedViews.length > 0 ? `
+        <div style="margin-bottom:12px;">
+          <div style="font-size:10.5px; font-weight:700; color:#38bdf8; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+            <span>📸 RAPORA EKLENEN ÇOKLU AÇI 3B CANLI GÖRÜNÜMLER (${fs.capturedViews.length} Adet Açı)</span>
+            <span style="font-size:9px; color:#94a3b8; font-weight:normal;">Yüksek Çözünürlüklü Canlı WebGL Simülasyon Açıları</span>
+          </div>
+          <div style="display:grid; grid-template-columns: ${fs.capturedViews.length === 1 ? '1fr' : '1fr 1fr'}; gap:10px;">
+            ${fs.capturedViews.map(cv => `
+              <div style="background:#070b14; border:1px solid #334155; border-radius:6px; padding:8px;">
+                <div style="font-size:10px; font-weight:700; color:#93c5fd; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                  <span>🎥 ${esc(cv.label)}</span>
+                  <span style="background:#1e293b; color:#38bdf8; padding:2px 7px; border-radius:4px; font-size:8.5px; font-family:monospace; font-weight:bold; border:1px solid #334155;">${esc(cv.angle.toUpperCase())}</span>
+                </div>
+                <img src="${cv.dataUrl}" alt="${esc(cv.label)}" style="width:100%; height:250px; object-fit:contain; border-radius:4px; background:linear-gradient(180deg, #0b1329 0%, #030712 100%);" />
+              </div>
+            `).join('')}
           </div>
         </div>
-      ` : `
-        <div class="diagram" style="margin-bottom:8px;">${iso3dSvg}</div>
-      `}
-      <div style="display:grid; grid-template-columns: 1.65fr 1fr; gap:8px; margin-bottom:10px;">
-        <div class="diagram" style="margin:0;">${sideSvg}</div>
-        <div class="diagram" style="margin:0;">${frontSvg}</div>
+      ` : fs.snapshot3dDataUrl ? `
+        <div style="margin-bottom:10px; background:#070b14; border:1px solid #334155; border-radius:6px; padding:8px;">
+          <div style="font-size:10px; font-weight:700; color:#38bdf8; margin-bottom:6px;">🎥 3B SAHNE GÖRÜNÜMÜ (CANLI WEBGL SİMÜLASYONU)</div>
+          <img src="${fs.snapshot3dDataUrl}" alt="3B FOV ve Gölge Simülasyonu" style="width:100%; height:250px; object-fit:contain; border-radius:4px; background:linear-gradient(180deg, #0b1329 0%, #030712 100%);" />
+        </div>
+      ` : ''}
+
+      <!-- 2B VEKTÖREL PAFTALAR (YAN KESİT, PERDE ÖN, ÜSTTEN PLAN) -->
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:8px; margin-bottom:10px;">
+        ${ep.sideSection ? `<div class="diagram" style="margin:0;">${sideSvg}</div>` : ''}
+        ${ep.frontElevation ? `<div class="diagram" style="margin:0;">${frontSvg}</div>` : ''}
+        ${ep.topPlan ? `<div class="diagram" style="margin:0;">${topPlanSvg}</div>` : ''}
       </div>
       <table class="compact-table">
         <thead>
@@ -2618,6 +2812,227 @@ export function buildReportHtml(p: ReportPayload): string {
           </tr>
         </tbody>
       </table>
+    </section>`);
+  }
+
+  // 10.4. PROFESYONEL OPTİK CİHAZ PROFİLİ, PROJEKSİYON LENS VE KAMERA FOV MOTORU RAPORU (BÖLÜM 9)
+  if (p.sections.opticalStudio !== false && p.opticalStudioReport) {
+    const os = p.opticalStudioReport;
+    const pj = os.projectorProfile;
+    const po = os.projectorCalc;
+    const cam = os.cameraProfile;
+    const co = os.cameraCalc;
+    const cr = os.compliance;
+
+    const fmtNull = (v: number | string | null | undefined, suffix = ''): string => {
+      if (v === null || v === undefined || v === '') return 'UNKNOWN';
+      return `${v}${suffix ? ` ${suffix}` : ''}`;
+    };
+
+    // 2B Üstten Plan ve Yandan Kesit SVG (PDF uyumlu)
+    const rmW = os.room.widthM;
+    const rmD = os.room.lengthM;
+    const rmH = os.room.heightM;
+    const pjZ = os.projectorPosM[2];
+    const pjX = os.projectorPosM[0];
+    const pjY = os.projectorPosM[1];
+    const camZ = os.cameraPosM[2];
+    const camX = os.cameraPosM[0];
+    const camY = os.cameraPosM[1];
+    const imgW = po.nominalImageWidthM ?? os.room.surfaceWidthM;
+    const imgH = po.nominalImageHeightM ?? os.room.surfaceHeightM;
+    const imgBotY = po.offsetAnalysis.projectedBottomFromFloorM ?? os.room.surfaceBottomFromFloorM;
+    const camW = co.horizontalCoverageM ?? os.room.surfaceWidthM;
+
+    const planSvg = `<svg viewBox="0 0 420 165" width="100%" height="155" style="background:#0f172a; border-radius:6px; border:1px solid #334155;">
+      <text x="10" y="15" fill="#38bdf8" font-size="9.5" font-weight="bold">📐 2B ÜSTTEN PLAN — PROJEKTÖR IŞIK &amp; KAMERA FOV FRUSTUMLARI</text>
+      <rect x="24" y="24" width="372" height="122" fill="#090d16" stroke="#475569" stroke-width="1.2" />
+      <line x1="24" y1="45" x2="24" y2="125" stroke="#f8fafc" stroke-width="4" />
+      <polygon points="${24 + (pjZ / Math.max(1, rmD)) * 372},${24 + ((pjX + rmW / 2) / Math.max(1, rmW)) * 122} 24,${24 + ((pjX - imgW / 2 + rmW / 2) / Math.max(1, rmW)) * 122} 24,${24 + ((pjX + imgW / 2 + rmW / 2) / Math.max(1, rmW)) * 122}" fill="#38bdf8" fill-opacity="0.22" stroke="#38bdf8" stroke-width="1.4" />
+      <polygon points="${24 + (camZ / Math.max(1, rmD)) * 372},${24 + ((camX + rmW / 2) / Math.max(1, rmW)) * 122} 24,${24 + ((camX - camW / 2 + rmW / 2) / Math.max(1, rmW)) * 122} 24,${24 + ((camX + camW / 2 + rmW / 2) / Math.max(1, rmW)) * 122}" fill="#10b981" fill-opacity="0.16" stroke="#10b981" stroke-width="1.3" stroke-dasharray="4,2" />
+      <rect x="${24 + (pjZ / Math.max(1, rmD)) * 372 - 6}" y="${24 + ((pjX + rmW / 2) / Math.max(1, rmW)) * 122 - 5}" width="12" height="10" fill="#0284c7" stroke="#fff" />
+      <circle cx="${24 + (camZ / Math.max(1, rmD)) * 372}" cy="${24 + ((camX + rmW / 2) / Math.max(1, rmW)) * 122}" r="5" fill="#059669" stroke="#fff" />
+    </svg>`;
+
+    const secSvg = `<svg viewBox="0 0 420 165" width="100%" height="155" style="background:#0f172a; border-radius:6px; border:1px solid #334155;">
+      <text x="10" y="15" fill="#a855f7" font-size="9.5" font-weight="bold">📏 2B YAN KESİT — OPTİK OFFSET (%${fmtNull(pj.optics.lensOffsetPct)}) &amp; DİKEY YERLEŞİM</text>
+      <rect x="24" y="24" width="372" height="122" fill="#090d16" stroke="#475569" stroke-width="1.2" />
+      <polygon points="${24 + (pjZ / Math.max(1, rmD)) * 372},${146 - (pjY / Math.max(1, rmH)) * 122} 24,${146 - (imgBotY / Math.max(1, rmH)) * 122} 24,${146 - ((imgBotY + imgH) / Math.max(1, rmH)) * 122}" fill="#38bdf8" fill-opacity="0.22" stroke="#38bdf8" stroke-width="1.4" />
+      <line x1="${24 + (pjZ / Math.max(1, rmD)) * 372}" y1="${146 - (pjY / Math.max(1, rmH)) * 122}" x2="24" y2="${146 - (pjY / Math.max(1, rmH)) * 122}" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3,3" />
+      <rect x="${24 + (pjZ / Math.max(1, rmD)) * 372 - 6}" y="${146 - (pjY / Math.max(1, rmH)) * 122 - 4}" width="12" height="8" fill="#0284c7" stroke="#fff" />
+      <circle cx="${24 + (camZ / Math.max(1, rmD)) * 372}" cy="${146 - (camY / Math.max(1, rmH)) * 122}" r="4.5" fill="#059669" stroke="#fff" />
+    </svg>`;
+
+    const statusBadgeColor = (s: string) =>
+      s === 'PASS' ? '#15803d' : s === 'WARNING' ? '#b45309' : s === 'FAIL' ? '#dc2626' : '#475569';
+
+    // Eksik (UNKNOWN) verilerin özeti
+    const unknownFields: string[] = [];
+    if (pj.general.nativeContrastRatio === null) unknownFields.push('Projektör Native Kontrast Oranı (UNKNOWN — yalnızca Dynamic Contrast tanımlı)');
+    if (pj.optics.lensShiftVerticalMinPct === null && pj.optics.lensShiftVerticalMaxPct === null) unknownFields.push('Projektör Optik Lens Shift Aralığı (UNKNOWN)');
+    if (pj.optics.offsetMeasurementConvention === 'UNSPECIFIED') unknownFields.push('Projektör Offset Ölçüm Konvansiyonu (UNSPECIFIED)');
+    if (cam.sensor.sensorWidthMm === null || cam.sensor.sensorHeightMm === null) unknownFields.push('Kamera Fiziksel Sensör Boyutu (UNKNOWN)');
+
+    blocks.push(`<section class="report-section" style="break-inside:avoid; page-break-inside:avoid;">
+      <h2>🔬 Profesyonel Optik Cihaz Profili, Projeksiyon Lens &amp; FOV Kamera Mühendislik Raporu</h2>
+      <div style="display:inline-block; font-family:monospace; font-size:10px; font-weight:700; background:#f3e8ff; color:#6b21a8; padding:2px 8px; border-radius:4px; margin-bottom:8px; border:1px solid #e9d5ff;">Senaryo: SCN-03-OPTICAL-STUDIO-CALIBRATION · Oda: ${rmW}×${rmD}×${rmH} m · Yüzey: ${os.room.surfaceWidthM}×${os.room.surfaceHeightM} m · Cihaz Atım: ${pjZ.toFixed(2)} m · Kamera: ${camZ.toFixed(2)} m (Sony FX3)</div>
+      <div style="padding:8px 12px; margin-bottom:10px; border-radius:6px; border:1px solid #cbd5e1; background:#f8fafc; font-size:11px;">
+        <b>Veri Kaynağı &amp; Metodoloji Ayrımı:</b> Bu bölümdeki hesaplamalar <b>Teorik Geometrik/Optik Formüller</b> ($TR = D/W$, $FOV = 2\\arctan(S/(2f))$), <b>3B Mekan Simülasyon Modeli</b> ve <b>Cihaz Veri Kaynağı (${esc(pj.dataSource)} / ${esc(pj.verificationStatus)})</b> ayrımları korunarak üretilmiştir. Bilinmeyen hiçbir parametre 0 kabul edilmemiş, <code>UNKNOWN</code> olarak raporlanmıştır.
+      </div>
+
+      <!-- 1. Cihaz Teknik Profilleri Tablosu -->
+      <table class="compact-table" style="margin-bottom:10px;">
+        <thead>
+          <tr>
+            <th colspan="2">🅰️ Projeksiyon Cihazı Teknik Profili (${esc(pj.brand)} ${esc(pj.model)})</th>
+            <th colspan="2">🅱️ Kamera &amp; Görüntüleme Cihazı Profili (${esc(cam.brand)} ${esc(cam.model)})</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Görüntü Teknolojisi / Işık Kaynağı</b></td>
+            <td>${esc(fmtNull(pj.general.displayTechnology))} (${esc(fmtNull(pj.general.chipConfiguration))}) · ${esc(fmtNull(pj.general.lightSource))}</td>
+            <td><b>Sensör Tipi &amp; Fiziksel Boyutu</b></td>
+            <td>${esc(fmtNull(cam.sensor.sensorType))} (${fmtNull(cam.sensor.sensorWidthMm, 'mm')} × ${fmtNull(cam.sensor.sensorHeightMm, 'mm')})</td>
+          </tr>
+          <tr>
+            <td><b>Parlaklık &amp; Doğal Çözünürlük</b></td>
+            <td>${fmtNull(pj.general.brightnessAnsiLumens, 'ANSI lm')} · ${esc(fmtNull(pj.general.nativeResolutionLabel))} (${esc(fmtNull(pj.general.nativeAspectRatio))})</td>
+            <td><b>Kamera Doğal Çözünürlük &amp; Crop</b></td>
+            <td>${fmtNull(cam.sensor.nativeResolutionW)}×${fmtNull(cam.sensor.nativeResolutionH)} px · Crop: ${fmtNull(cam.sensor.cropFactor, 'x')}</td>
+          </tr>
+          <tr>
+            <td><b>Kontrast (Native vs Dynamic Ayrımı)</b></td>
+            <td>Native: <b>${esc(fmtNull(pj.general.nativeContrastRatio))}</b> · Dynamic: <b>${esc(fmtNull(pj.general.dynamicContrastRatio))}</b></td>
+            <td><b>Kamera Lens Odak &amp; Diyafram</b></td>
+            <td>f = ${fmtNull(cam.lens.focalLengthMinMm, 'mm')}–${fmtNull(cam.lens.focalLengthMaxMm, 'mm')} · F/${fmtNull(cam.lens.apertureFNumberMin)}–${fmtNull(cam.lens.apertureFNumberMax)}</td>
+          </tr>
+          <tr>
+            <td><b>Throw Ratio &amp; Optik Zoom</b></td>
+            <td>TR: <b>${fmtNull(pj.optics.throwRatioMin)} – ${fmtNull(pj.optics.throwRatioMax)}:1</b> · Zoom: ${fmtNull(pj.optics.opticalZoomRatio, 'x')} (f=${fmtNull(pj.optics.focalLengthMinMm)}–${fmtNull(pj.optics.focalLengthMaxMm)} mm, F/${fmtNull(pj.optics.fNumberMin)}–${fmtNull(pj.optics.fNumberMax)})</td>
+            <td><b>Kamera İdeal Rektilineer FOV</b></td>
+            <td>HFOV: <b>${fmtNull(co.rectilinearHfovDeg, '°')}</b> · VFOV: <b>${fmtNull(co.rectilinearVfovDeg, '°')}</b> · DFOV: <b>${fmtNull(co.rectilinearDfovDeg, '°')}</b><br/>
+              <span style="font-size:8.5px; color:#475569;">
+                Formül: <code>2×arctan(S/(2f))</code> [Sony FX3: 35.6×23.8 mm FF]<br/>
+                • f=24mm: H 73.1° × V 52.7° (Geniş Uç) | • f=35mm: H 53.9° × V 37.6° (Referans) | • f=70mm: H 28.5° × V 19.3° (Tele Uç)
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td><b>Optik Offset &amp; Konvansiyon</b></td>
+            <td>%${fmtNull(pj.optics.lensOffsetPct)} ±%${fmtNull(pj.optics.lensOffsetTolerancePct)} (<code>${esc(pj.optics.offsetMeasurementConvention ?? 'UNSPECIFIED')}</code>)</td>
+            <td><b>Distorsiyon Kalibreli vs Dijital Zoom</b></td>
+            <td>Distorsiyon (%${fmtNull(co.distortionPct)}): HFOV=${fmtNull(co.calibratedHfovDeg, '°')} · Dijital Zoom (${co.digitalZoomFactor}x): ${co.effectiveResolutionAfterDigitalZoom ? `${co.effectiveResolutionAfterDigitalZoom.w}×${co.effectiveResolutionAfterDigitalZoom.h} px` : 'UNKNOWN'}</td>
+          </tr>
+          <tr>
+            <td><b>Mekanik Boyut, Ağırlık &amp; Güç</b></td>
+            <td>${fmtNull(pj.mechanical.widthMm)}×${fmtNull(pj.mechanical.depthMm)}×${fmtNull(pj.mechanical.heightMm)} mm · ${fmtNull(pj.mechanical.weightKg, 'kg')} · ${fmtNull(pj.electrical.powerConsumptionW, 'W')}</td>
+            <td><b>Veri Kaynağı &amp; Doğrulama</b></td>
+            <td>PJ: <code>${esc(pj.dataSource)}</code> (${esc(pj.verificationStatus)}) · CAM: <code>${esc(cam.dataSource)}</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- 2. Projektör Mesafe & Görüntü Boyutu Referans Matrisi (5m, 7m, 3m) -->
+      <table class="compact-table" style="margin-bottom:10px;">
+        <thead>
+          <tr>
+            <th>Projektör Lens Hesap Senaryosu</th>
+            <th>Min Genişlik (Tele TR=${fmtNull(po.maxThrowRatio)})</th>
+            <th>Max Genişlik (Wide TR=${fmtNull(po.minThrowRatio)})</th>
+            <th>Görüntü Yüksekliği (${esc(po.aspectRatioLabel)})</th>
+            <th>Gereken Atım Mesafesi Penceresi</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>5.00 m Atım Mesafesinde Görüntü Boyutu</b></td>
+            <td>${fmtNull(po.referenceMatrix.at5mDistance.minWidthM, 'm')}</td>
+            <td>${fmtNull(po.referenceMatrix.at5mDistance.maxWidthM, 'm')}</td>
+            <td>${fmtNull(po.referenceMatrix.at5mDistance.minHeightM, 'm')} – ${fmtNull(po.referenceMatrix.at5mDistance.maxHeightM, 'm')}</td>
+            <td>5.000 m (Sabit)</td>
+          </tr>
+          <tr>
+            <td><b>7.00 m Atım Mesafesinde Görüntü Boyutu</b></td>
+            <td>${fmtNull(po.referenceMatrix.at7mDistance.minWidthM, 'm')}</td>
+            <td>${fmtNull(po.referenceMatrix.at7mDistance.maxWidthM, 'm')}</td>
+            <td>${fmtNull(po.referenceMatrix.at7mDistance.minHeightM, 'm')} – ${fmtNull(po.referenceMatrix.at7mDistance.maxHeightM, 'm')}</td>
+            <td>7.000 m (Sabit)</td>
+          </tr>
+          <tr>
+            <td><b>3.00 m Hedef Genişlik İçin Atım Mesafesi</b></td>
+            <td>3.000 m</td>
+            <td>3.000 m</td>
+            <td>${fmtNull(po.referenceMatrix.for3mWidth.imageHeightM, 'm')}</td>
+            <td><b>${fmtNull(po.referenceMatrix.for3mWidth.minDistanceM, 'm')} – ${fmtNull(po.referenceMatrix.for3mWidth.maxDistanceM, 'm')}</b></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- 3. 2B Üstten Plan ve Yandan Kesit Paftaları + Rapora Eklenen Çoklu 3B Açı Görünümleri -->
+      ${Array.isArray(os.capturedViews) && os.capturedViews.length > 0 ? `
+        <div style="margin-bottom:12px;">
+          <div style="font-size:10.5px; font-weight:700; color:#38bdf8; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+            <span>📸 RAPORA EKLENEN ÇOKLU AÇI 3B CANLI GÖRÜNÜMLER (${os.capturedViews.length} Adet Açı)</span>
+            <span style="font-size:9px; color:#94a3b8; font-weight:normal;">Yüksek Çözünürlüklü Canlı WebGL Simülasyon Açıları</span>
+          </div>
+          <div style="display:grid; grid-template-columns: ${os.capturedViews.length === 1 ? '1fr' : '1fr 1fr'}; gap:10px;">
+            ${os.capturedViews.map(cv => `
+              <div style="background:#070b14; border:1px solid #334155; border-radius:6px; padding:8px;">
+                <div style="font-size:10px; font-weight:700; color:#93c5fd; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                  <span>🎥 ${esc(cv.label)}</span>
+                  <span style="background:#1e293b; color:#38bdf8; padding:2px 7px; border-radius:4px; font-size:8.5px; font-family:monospace; font-weight:bold; border:1px solid #334155;">${esc(cv.angle.toUpperCase())}</span>
+                </div>
+                <img src="${cv.dataUrl}" alt="${esc(cv.label)}" style="width:100%; height:250px; object-fit:contain; border-radius:4px; background:linear-gradient(180deg, #0b1329 0%, #030712 100%);" />
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : os.snapshot3dDataUrl ? `
+        <div style="margin-bottom:10px; background:#070b14; border:1px solid #334155; border-radius:6px; padding:8px;">
+          <div style="font-size:10px; font-weight:700; color:#38bdf8; margin-bottom:6px;">🎥 3B SAHNE GÖRÜNÜMÜ (CANLI WEBGL SİMÜLASYONU)</div>
+          <img src="${os.snapshot3dDataUrl}" alt="3B Optik Simülasyon" style="width:100%; height:250px; object-fit:contain; border-radius:4px; background:linear-gradient(180deg, #0b1329 0%, #030712 100%);" />
+        </div>
+      ` : ''}
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
+        ${os.enabledPaftas?.topPlan !== false ? `<div class="diagram" style="margin:0;">${planSvg}</div>` : ''}
+        ${os.enabledPaftas?.sideSection !== false ? `<div class="diagram" style="margin:0;">${secSvg}</div>` : ''}
+      </div>
+
+      <!-- 4. 9-Maddeli Fiziksel Uygunluk Kontrol Tablosu -->
+      <table class="compact-table" style="margin-bottom:8px;">
+        <thead>
+          <tr>
+            <th>Kod</th>
+            <th>Fiziksel &amp; Optik Uygunluk Kontrolü</th>
+            <th>Durum</th>
+            <th>Hesaplanan / Ölçülen</th>
+            <th>Sınır / Kriter</th>
+            <th>Mühendislik Açıklaması</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${cr.checks
+            .map(
+              c => `<tr>
+            <td><code>${esc(c.id)}</code></td>
+            <td><b>${esc(c.titleTr)}</b></td>
+            <td><b style="color:${statusBadgeColor(c.status)};">${esc(c.status)}</b></td>
+            <td>${esc(c.measuredOrCalculatedValue)}</td>
+            <td>${esc(c.limitOrRequirement)}</td>
+            <td>${esc(c.detailTr)}</td>
+          </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>
+
+      <div style="font-size:10.5px; color:#334155; background:#f1f5f9; padding:6px 10px; border-radius:4px;">
+        <b>Offset / Lens Shift / Keystone &amp; Eksik Veri (UNKNOWN) Özeti:</b>
+        ${esc(po.offsetAnalysis.summaryTr)} · ${esc(po.lensShiftAnalysis.summaryTr)} · ${esc(po.keystoneAnalysis.summaryTr)}
+        ${unknownFields.length > 0 ? `<br/><b>Tespit Edilen UNKNOWN Parametreler:</b> ${esc(unknownFields.join(' | '))}` : ''}
+      </div>
     </section>`);
   }
 

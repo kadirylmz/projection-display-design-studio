@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 
 from . import compat as compat_mod
 from .db import SessionLocal, engine, get_db
-from .models import (Base, Customer, Equipment, Lens, Manufacturer, Project, ProjectRevision,
-                     Projector, ProjectorLensCompat)
+from .models import (Base, Customer, Equipment, Lens, Manufacturer, OpticalDeviceProfile,
+                     Project, ProjectRevision, Projector, ProjectorLensCompat)
 from .schemas import (EQUIPMENT_CATEGORIES, CompatIn, EquipmentIn, EquipmentOut, LensIn, LensOut,
-                      ProjectIn, ProjectorIn, ProjectorOut, RevisionIn, RevisionOverwrite)
+                      OpticalDeviceProfileIn, OpticalDeviceProfileOut, ProjectIn, ProjectorIn,
+                      ProjectorOut, RevisionIn, RevisionOverwrite)
 from .seed import seed_default_catalog
 
 
@@ -394,3 +395,139 @@ def archive_project(pid: int, archived: bool = True, db: Session = Depends(get_d
     p.archived = archived
     db.commit()
     return _project_out(p)
+
+
+# ---------- Optik Cihaz Profilleri (Projektör & Kamera Kütüphanesi) ----------
+@app.get("/api/device-profiles", response_model=list[OpticalDeviceProfileOut])
+def list_device_profiles(category: str | None = None, db: Session = Depends(get_db)):
+    stmt = select(OpticalDeviceProfile)
+    if category:
+        stmt = stmt.where(OpticalDeviceProfile.category == category.upper())
+    return db.scalars(stmt).all()
+
+
+@app.post("/api/device-profiles", response_model=OpticalDeviceProfileOut, status_code=201)
+def upsert_device_profile(body: OpticalDeviceProfileIn, db: Session = Depends(get_db)):
+    existing = db.scalar(
+        select(OpticalDeviceProfile).where(OpticalDeviceProfile.profile_uid == body.profile_uid)
+    )
+    if existing:
+        for k, v in body.model_dump().items():
+            setattr(existing, k, v)
+        db.commit()
+        db.refresh(existing)
+        return existing
+    row = OpticalDeviceProfile(**body.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.post("/api/device-profiles/{profile_uid}/duplicate", response_model=OpticalDeviceProfileOut, status_code=201)
+def duplicate_device_profile(profile_uid: str, new_uid: str | None = None, db: Session = Depends(get_db)):
+    existing = db.scalar(
+        select(OpticalDeviceProfile).where(OpticalDeviceProfile.profile_uid == profile_uid)
+    )
+    if not existing:
+        raise HTTPException(404, "Cihaz profili bulunamadı")
+    import uuid
+    uid = new_uid or f"{existing.profile_uid}-COPY-{uuid.uuid4().hex[:6]}"
+    pdata = dict(existing.profile_data or {})
+    if "metadata" in pdata and isinstance(pdata["metadata"], dict):
+        pdata["metadata"] = {
+            **pdata["metadata"],
+            "id": uid,
+            "model": f"{existing.model} (Kopya)",
+            "verificationStatus": "USER_DEFINED",
+        }
+    copy_row = OpticalDeviceProfile(
+        profile_uid=uid,
+        category=existing.category,
+        brand=existing.brand,
+        model=f"{existing.model} (Kopya)",
+        manufacturer=existing.manufacturer,
+        data_source=existing.data_source,
+        catalog_url=existing.catalog_url,
+        entry_date=existing.entry_date,
+        verification_status="USER_DEFINED",
+        profile_data=pdata,
+        provenance=dict(existing.provenance or {}),
+    )
+    db.add(copy_row)
+    db.commit()
+    db.refresh(copy_row)
+    return copy_row
+
+
+@app.delete("/api/device-profiles/{profile_uid}", status_code=204)
+def delete_device_profile(profile_uid: str, db: Session = Depends(get_db)):
+    existing = db.scalar(
+        select(OpticalDeviceProfile).where(OpticalDeviceProfile.profile_uid == profile_uid)
+    )
+    if not existing:
+        raise HTTPException(404, "Cihaz profili bulunamadı")
+    db.delete(existing)
+    db.commit()
+
+
+@app.get("/api/device-profiles/export/json")
+def export_device_profiles_json(db: Session = Depends(get_db)):
+    rows = db.scalars(select(OpticalDeviceProfile)).all()
+    return {
+        "schema": "AV_OPTICAL_DEVICE_LIBRARY_V1",
+        "projectors": [r.profile_data for r in rows if r.category == "PROJECTOR"],
+        "cameras": [r.profile_data for r in rows if r.category == "CAMERA"],
+    }
+
+
+@app.post("/api/device-profiles/import/json")
+def import_device_profiles_json(body: dict, db: Session = Depends(get_db)):
+    added_p = 0
+    added_c = 0
+    for raw in body.get("projectors", []):
+        meta = raw.get("metadata", {})
+        uid = meta.get("id")
+        if not uid:
+            continue
+        upsert_device_profile(
+            OpticalDeviceProfileIn(
+                profile_uid=uid,
+                category="PROJECTOR",
+                brand=meta.get("brand", "UNKNOWN"),
+                model=meta.get("model", "UNKNOWN"),
+                manufacturer=meta.get("manufacturer", meta.get("brand", "UNKNOWN")),
+                data_source=meta.get("dataSource", "USER_ENTERED"),
+                catalog_url=meta.get("catalogUrl"),
+                entry_date=meta.get("entryDate", ""),
+                verification_status=meta.get("verificationStatus", "USER_DEFINED"),
+                profile_data=raw,
+                provenance=raw.get("provenance", {}),
+            ),
+            db,
+        )
+        added_p += 1
+    for raw in body.get("cameras", []):
+        meta = raw.get("metadata", {})
+        uid = meta.get("id")
+        if not uid:
+            continue
+        upsert_device_profile(
+            OpticalDeviceProfileIn(
+                profile_uid=uid,
+                category="CAMERA",
+                brand=meta.get("brand", "UNKNOWN"),
+                model=meta.get("model", "UNKNOWN"),
+                manufacturer=meta.get("manufacturer", meta.get("brand", "UNKNOWN")),
+                data_source=meta.get("dataSource", "USER_ENTERED"),
+                catalog_url=meta.get("catalogUrl"),
+                entry_date=meta.get("entryDate", ""),
+                verification_status=meta.get("verificationStatus", "USER_DEFINED"),
+                profile_data=raw,
+                provenance=raw.get("provenance", {}),
+            ),
+            db,
+        )
+        added_c += 1
+    return {"importedProjectors": added_p, "importedCameras": added_c}
+

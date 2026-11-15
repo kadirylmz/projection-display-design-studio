@@ -124,9 +124,9 @@ export function evaluatePhysicalCoverage(inp: PhysicalCoverageInput): PhysicalCo
   const isVerticalCovered = coveredH >= hM - tolM;
   const isFullyCovered = isHorizontalCovered && isVerticalCovered;
 
-  const hCovPct = r1(Math.min(100, (coveredW / wM) * 100));
-  const vCovPct = r1(Math.min(100, (coveredH / hM) * 100));
-  const areaCovPct = r1(Math.min(100, ((Math.min(wM, coveredW) * Math.min(hM, coveredH)) / (wM * hM)) * 100));
+  const hCovPct = isHorizontalCovered ? 100 : r2(Math.min(100, (coveredW / wM) * 100));
+  const vCovPct = isVerticalCovered ? 100 : r2(Math.min(100, (coveredH / hM) * 100));
+  const areaCovPct = isFullyCovered ? 100 : r2(Math.min(100, ((Math.min(wM, coveredW) * Math.min(hM, coveredH)) / (wM * hM)) * 100));
 
   const singleRowsSpan = rows - Math.max(0, rows - 1) * ovYRatio;
   const reqSingleH = hM / Math.max(0.1, singleRowsSpan);

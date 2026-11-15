@@ -106,3 +106,23 @@ class RevisionIn(BaseModel):
 
 class RevisionOverwrite(RevisionIn):
     confirm_overwrite: bool = False
+
+
+class OpticalDeviceProfileIn(BaseModel):
+    profile_uid: str = Field(min_length=1)
+    category: str = Field(pattern="^(PROJECTOR|CAMERA)$")
+    brand: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    manufacturer: str = Field(min_length=1)
+    data_source: str = "USER_ENTERED"
+    catalog_url: Optional[str] = None
+    entry_date: str = ""
+    verification_status: str = "USER_DEFINED"
+    profile_data: dict[str, Any] = {}
+    provenance: dict[str, Any] = {}
+
+
+class OpticalDeviceProfileOut(OpticalDeviceProfileIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+

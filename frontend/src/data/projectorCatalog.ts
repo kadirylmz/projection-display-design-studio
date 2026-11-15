@@ -9,6 +9,12 @@ export interface CatalogProjector {
   technology: string;
   lensMount: string;
   builtInThrow?: { min: number; max: number };
+  powerW?: number;
+  powerEcoW?: number;
+  nativeContrast?: number;
+  dynamicContrast?: number;
+  verificationStatus?: 'MANUFACTURER_VERIFIED' | 'USER_DEFINED' | 'FIELD_VERIFIED' | 'UNVERIFIED';
+  docUrl?: string;
   notes?: string;
 }
 
@@ -19,6 +25,10 @@ export interface CatalogLens {
   lensMount: string;
   throwMin: number;
   throwMax: number;
+  zoomRatio?: number;
+  shiftVMaxPct?: number;
+  shiftHMaxPct?: number;
+  verificationStatus?: 'MANUFACTURER_VERIFIED' | 'USER_DEFINED' | 'FIELD_VERIFIED' | 'UNVERIFIED';
   notes?: string;
 }
 
@@ -109,7 +119,13 @@ export const CATALOG_PROJECTORS: CatalogProjector[] = [
     aspect: '16:10',
     technology: '1-Chip DLP Laser',
     lensMount: 'Vivitek-D98',
-    notes: '18K lümen yüksek parlaklık D98 serisi',
+    powerW: 1900,
+    powerEcoW: 1100,
+    nativeContrast: 1250,
+    dynamicContrast: 10000,
+    verificationStatus: 'MANUFACTURER_VERIFIED',
+    docUrl: 'https://www.vivitek.eu/products/large-venue-projectors/du9800z',
+    notes: '18K lümen yüksek parlaklık D98 serisi motorize lens uyumlu amiral gemisi',
   },
 
   // ================= SHARP / NEC =================
@@ -156,13 +172,18 @@ export const CATALOG_PROJECTORS: CatalogProjector[] = [
     id: 'panasonic-pt-rz990',
     manufacturer: 'Panasonic',
     model: 'PT-RZ990',
-    ansiLumens: 9400,
+    ansiLumens: 7000,
     nativeW: 1920,
     nativeH: 1200,
     aspect: '16:10',
     technology: '1-Chip DLP Laser',
     lensMount: 'Panasonic-DLE',
-    notes: 'ET-DLE lens ailesi uyumlu 9.4K/10K sınıfı projektör',
+    powerW: 810,
+    powerEcoW: 650,
+    nativeContrast: 10000,
+    verificationStatus: 'MANUFACTURER_VERIFIED',
+    docUrl: 'https://panasonic.net/cns/projector/products/rz990/',
+    notes: '7.000 ANSI lm WUXGA ET-DLE serisi lenslerle uyumlu 1-Chip DLP lazer projektör',
   },
   {
     id: 'panasonic-pt-rz120',
@@ -464,7 +485,12 @@ export const CATALOG_PROJECTORS: CatalogProjector[] = [
     technology: '1-Chip DLP Laser',
     lensMount: 'Dahili',
     builtInThrow: { min: 0.50, max: 0.50 },
-    notes: '6.1K ANSI lümen 0.50:1 sabit kısa atım müze ve simülasyon projektörü',
+    powerW: 530,
+    powerEcoW: 380,
+    dynamicContrast: 3000000,
+    docUrl: 'https://www.vivitek.eu/products/short-throw-projectors/du4381z-st',
+    verificationStatus: 'MANUFACTURER_VERIFIED',
+    notes: '6.1K ANSI lümen 0.50:1 sabit kısa atım müze ve simülasyon projektörü (Fixed lens, no zoom, 530W normal / 380W eco)',
   },
   // ================= SHARP / NEC GENİŞLETİLMİŞ SERİLER =================
   {
@@ -826,7 +852,7 @@ export const CATALOG_LENSES: CatalogLens[] = [
   { id: 'viv-d88-loz201', manufacturer: 'Vivitek', model: 'D88-LOZ201 (Long Zoom 2)', lensMount: 'Vivitek-D88', throwMin: 3.58, throwMax: 5.38, notes: 'Uzun atım 2' },
   { id: 'viv-d88-ulz01', manufacturer: 'Vivitek', model: 'D88-ULZ01 (Ultra Long)', lensMount: 'Vivitek-D88', throwMin: 5.31, throwMax: 8.26, notes: 'Ultra uzun atım' },
 
-  { id: 'viv-d98-0810', manufacturer: 'Vivitek', model: 'D98-0810 (Short Zoom)', lensMount: 'Vivitek-D98', throwMin: 0.84, throwMax: 1.03 },
+  { id: 'viv-d98-0810', manufacturer: 'Vivitek', model: 'D98-0810 (Short Zoom)', lensMount: 'Vivitek-D98', throwMin: 0.84, throwMax: 1.03, zoomRatio: 1.22, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'DU9800Z uyumlu kısa zoom lens (1.22x zoom)' },
   { id: 'viv-d98-1215', manufacturer: 'Vivitek', model: 'D98-1215 (Wide Zoom)', lensMount: 'Vivitek-D98', throwMin: 1.20, throwMax: 1.56 },
   { id: 'viv-d98-1520', manufacturer: 'Vivitek', model: 'D98-1520 (Standard)', lensMount: 'Vivitek-D98', throwMin: 1.50, throwMax: 2.00 },
   { id: 'viv-d98-2040', manufacturer: 'Vivitek', model: 'D98-2040 (Long)', lensMount: 'Vivitek-D98', throwMin: 2.00, throwMax: 4.00 },
@@ -846,7 +872,7 @@ export const CATALOG_LENSES: CatalogLens[] = [
 
   // ================= PANASONIC =================
   { id: 'pan-dle020', manufacturer: 'Panasonic', model: 'ET-DLE020 (UST Zoom)', lensMount: 'Panasonic-DLE', throwMin: 0.28, throwMax: 0.30, notes: 'L-tipi ultra kısa zoom' },
-  { id: 'pan-dle060', manufacturer: 'Panasonic', model: 'ET-DLE060 (Short Zoom)', lensMount: 'Panasonic-DLE', throwMin: 0.60, throwMax: 0.80, notes: 'Kısa atım zoom' },
+  { id: 'pan-dle060', manufacturer: 'Panasonic', model: 'ET-DLE060 (Short Zoom)', lensMount: 'Panasonic-DLE', throwMin: 0.600, throwMax: 0.801, zoomRatio: 1.33, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'PT-RZ990/DLE serisi uyumlu kısa zoom lens (0.600–0.801:1)' },
   { id: 'pan-dle085', manufacturer: 'Panasonic', model: 'ET-DLE085 (Wide Zoom)', lensMount: 'Panasonic-DLE', throwMin: 0.78, throwMax: 0.98, notes: 'Geniş açı zoom' },
   { id: 'pan-dle150', manufacturer: 'Panasonic', model: 'ET-DLE150 (Standard)', lensMount: 'Panasonic-DLE', throwMin: 1.30, throwMax: 1.89, notes: 'Standart zoom' },
   { id: 'pan-dle250', manufacturer: 'Panasonic', model: 'ET-DLE250 (Long Zoom)', lensMount: 'Panasonic-DLE', throwMin: 2.27, throwMax: 3.62, notes: 'Uzun atım zoom' },
@@ -962,17 +988,70 @@ export const CATALOG_BRANDS = Array.from(new Set(CATALOG_PROJECTORS.map(p => p.m
 
 export function getCompatibleCatalogLenses(proj: CatalogProjector): CatalogLens[] {
   if (proj.builtInThrow) {
+    const isFixed = proj.builtInThrow.min === proj.builtInThrow.max;
     return [
       {
         id: `${proj.id}-builtin`,
         manufacturer: proj.manufacturer,
-        model: `Dahili Lens (${proj.builtInThrow.min.toFixed(2)}–${proj.builtInThrow.max.toFixed(2)}:1)`,
+        model: isFixed
+          ? `Dahili Sabit Lens (${proj.builtInThrow.min.toFixed(2)}:1 Fixed)`
+          : `Dahili Lens (${proj.builtInThrow.min.toFixed(2)}–${proj.builtInThrow.max.toFixed(2)}:1)`,
         lensMount: 'Dahili',
         throwMin: proj.builtInThrow.min,
         throwMax: proj.builtInThrow.max,
-        notes: 'Cihaz üzeri sabit/entegre lens',
+        zoomRatio: isFixed ? 1.0 : undefined,
+        verificationStatus: 'MANUFACTURER_VERIFIED',
+        notes: isFixed ? 'Cihaz üzeri sabit odaklı lens (No zoom, fixed TR)' : 'Cihaz üzeri entegre zoom lens',
       },
     ];
   }
-  return CATALOG_LENSES.filter(l => l.lensMount === proj.lensMount);
+
+  const baseLenses = CATALOG_LENSES.filter(l => l.lensMount === proj.lensMount);
+
+  // Model-spesifik Epson üretici TR matrisi (0.76" EB-PU1000 serisi vs 1.0" EB-PU2000 serisi)
+  const isEpsonPu1000 = proj.model.includes('PU1007') || proj.model.includes('PU1008');
+  if (isEpsonPu1000) {
+    return baseLenses.map(l => {
+      if (l.id.includes('elplu03s')) {
+        return { ...l, throwMin: 0.65, throwMax: 0.78, shiftVMaxPct: 67, shiftHMaxPct: 30, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU1000 serisi 0.76" LCD üretici TR aralığı (0.65–0.78:1)' };
+      }
+      if (l.id.includes('elplw05')) {
+        return { ...l, throwMin: 1.04, throwMax: 1.46, shiftVMaxPct: 67, shiftHMaxPct: 30, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU1000 serisi 0.76" LCD üretici TR aralığı (1.04–1.46:1)' };
+      }
+      if (l.id.includes('elplw08')) {
+        return { ...l, throwMin: 1.18, throwMax: 1.66, shiftVMaxPct: 67, shiftHMaxPct: 30, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU1000 serisi 0.76" LCD üretici TR aralığı (1.18–1.66:1)' };
+      }
+      if (l.id.includes('elplm15')) {
+        return { ...l, throwMin: 2.16, throwMax: 3.48, shiftVMaxPct: 67, shiftHMaxPct: 30, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU1000 serisi 0.76" LCD üretici TR aralığı (2.16–3.48:1)' };
+      }
+      if (l.id.includes('elpll08')) {
+        return { ...l, throwMin: 7.21, throwMax: 10.11, shiftVMaxPct: 67, shiftHMaxPct: 30, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU1000 serisi 0.76" LCD üretici TR aralığı (7.21–10.11:1)' };
+      }
+      return l;
+    });
+  }
+
+  const isEpsonPu2000 = proj.model.includes('PU2010') || proj.model.includes('PU2010W');
+  if (isEpsonPu2000) {
+    return baseLenses.map(l => {
+      if (l.id.includes('elplu03s')) {
+        return { ...l, throwMin: 0.48, throwMax: 0.57, shiftVMaxPct: 60, shiftHMaxPct: 18, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU2000 serisi 1.0" LCD üretici TR aralığı (0.48–0.57:1)' };
+      }
+      if (l.id.includes('elplw05')) {
+        return { ...l, throwMin: 0.77, throwMax: 1.07, shiftVMaxPct: 60, shiftHMaxPct: 18, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU2000 serisi 1.0" LCD üretici TR aralığı (0.77–1.07:1)' };
+      }
+      if (l.id.includes('elplw08')) {
+        return { ...l, throwMin: 0.86, throwMax: 1.21, shiftVMaxPct: 60, shiftHMaxPct: 18, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU2000 serisi 1.0" LCD üretici TR aralığı (0.86–1.21:1)' };
+      }
+      if (l.id.includes('elplm15')) {
+        return { ...l, throwMin: 1.57, throwMax: 2.56, shiftVMaxPct: 60, shiftHMaxPct: 18, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU2000 serisi 1.0" LCD üretici TR aralığı (1.57–2.56:1)' };
+      }
+      if (l.id.includes('elpll08')) {
+        return { ...l, throwMin: 5.27, throwMax: 7.41, shiftVMaxPct: 60, shiftHMaxPct: 18, verificationStatus: 'MANUFACTURER_VERIFIED', notes: 'EB-PU2000 serisi 1.0" LCD üretici TR aralığı (5.27–7.41:1)' };
+      }
+      return l;
+    });
+  }
+
+  return baseLenses;
 }
