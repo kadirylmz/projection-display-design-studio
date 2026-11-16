@@ -52,6 +52,19 @@ export interface ProjectionScreenEntry {
   snap: ProjectionSnapData;
 }
 
+export interface MasterDesignConfig {
+  screenWidthM: number;
+  screenHeightM: number;
+  roomWidthM: number;
+  roomLengthM: number;
+  roomHeightM: number;
+  projectorName: string;
+  ansiLumens: number;
+  lensName: string;
+  throwRatio: number;
+  throwDistM: number;
+}
+
 export const createDefaultProjectionScreen = (
   id = 'proj-scr-1',
   name = 'Ekran / Duvar 1'
@@ -60,33 +73,35 @@ export const createDefaultProjectionScreen = (
   name,
   includeInReport: true,
   calcMode: 'size2dist',
-  sizeMode: 'w2h',
+  sizeMode: 'wh2d',
   inUnit: 'm',
   ar: '16:9',
-  cw: 16,
-  ch: 9,
-  dimA: 4,
-  dimB: 2.25,
-  dist: 6,
-  catProjId: '',
-  catLensId: '',
+  cw: 6,
+  ch: 4,
+  dimA: 6,
+  dimB: 4,
+  dist: 4.8,
+  catProjId: 'epson-eb-pu2010b',
+  catLensId: 'epson-elplu03s',
   customLensName: '',
   presetId: 'std-125-160',
-  trMin: 1.25,
-  trMax: 1.6,
-  tr: 1.42,
+  trMin: 0.65,
+  trMax: 0.78,
+  tr: 0.80,
   vOff: 0,
   protr: 0,
   snap: {
     screenName: name,
-    projectorName: '',
-    lensName: '',
-    imageWidthM: 0,
-    distanceM: 0,
-    aspectW: 16,
-    aspectH: 9,
-    throwMin: 0,
-    throwMax: 0,
+    projectorName: 'Epson EB-PU2010B (10.000 lm)',
+    ansiLumens: 10000,
+    lensName: 'ELPLU03S (0.65-0.78:1)',
+    imageWidthM: 6.0,
+    distanceM: 4.8,
+    aspectW: 6,
+    aspectH: 4,
+    throwMin: 0.65,
+    throwMax: 0.78,
+    throwRatio: 0.80,
     lensFrontProtrusionM: 0,
   },
 });
@@ -128,6 +143,8 @@ export interface ProjectState {
   removeProjectionScreen: (id: string) => void;
   setAllProjectionScreensInReport: (include: boolean) => void;
   setLuxSnap: (x: Partial<ProjectState['luxSnap']>) => void;
+  masterDesign: MasterDesignConfig;
+  setMasterDesign: (patch: Partial<MasterDesignConfig>) => void;
   setEquipmentList: (list: ProjectState['equipmentList']) => void;
   serializeAll: () => Record<string, unknown>;
   hydrateAll: (data: Record<string, any>) => void;
@@ -147,15 +164,70 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     notes: '',
     room3dSnapshots: [],
   },
+  masterDesign: {
+    screenWidthM: 6.0,
+    screenHeightM: 4.0,
+    roomWidthM: 10.0,
+    roomLengthM: 8.0,
+    roomHeightM: 5.0,
+    projectorName: 'Epson EB-PU2010B (10.000 lm)',
+    ansiLumens: 10000,
+    lensName: 'ELPLU03S (0.65-0.78:1)',
+    throwRatio: 0.80,
+    throwDistM: 4.8,
+  },
+  setMasterDesign: (patch: Partial<MasterDesignConfig>) => {
+    set(state => {
+      const next: MasterDesignConfig = { ...state.masterDesign, ...patch };
+      try {
+        localStorage.setItem('quick_lux_calculator_persist_v1', JSON.stringify({
+          projectName: state.meta.projectName || 'Sergi Alanı Projeksiyon Parlaklık & Lens Hesabı',
+          preparedBy: 'AV & Projeksiyon Tasarım Ekibi',
+          screenW: next.screenWidthM,
+          screenH: next.screenHeightM,
+          projCount: next.screenWidthM > 5 ? 2 : 1,
+          lumensPerProj: next.ansiLumens,
+          throwDistM: next.throwDistM,
+          throwRatio: next.throwRatio,
+          opticalEfficiency: 90,
+          screenGain: 1.0,
+          ambientLux: 50,
+        }));
+      } catch {}
+      try {
+        window.dispatchEvent(new CustomEvent('master-design-updated', { detail: next }));
+      } catch {}
+      return {
+        masterDesign: next,
+        projectionSnap: {
+          ...state.projectionSnap,
+          projectorName: next.projectorName,
+          ansiLumens: next.ansiLumens,
+          lensName: next.lensName,
+          imageWidthM: next.screenWidthM,
+          distanceM: next.throwDistM,
+          throwRatio: next.throwRatio,
+        },
+        luxSnap: {
+          ...state.luxSnap,
+          widthM: next.screenWidthM,
+          heightM: next.screenHeightM,
+          ansiLumens: [next.ansiLumens],
+        }
+      };
+    });
+  },
   projectionSnap: {
-    projectorName: '',
-    lensName: '',
-    imageWidthM: 0,
-    distanceM: 0,
-    aspectW: 16,
-    aspectH: 9,
-    throwMin: 0,
-    throwMax: 0,
+    projectorName: 'Epson EB-PU2010B (10.000 lm)',
+    ansiLumens: 10000,
+    lensName: 'ELPLU03S (0.65-0.78:1)',
+    imageWidthM: 6.0,
+    distanceM: 4.8,
+    aspectW: 6,
+    aspectH: 4,
+    throwMin: 0.65,
+    throwMax: 0.78,
+    throwRatio: 0.80,
     lensFrontProtrusionM: 0,
   },
   projectionScreens: [createDefaultProjectionScreen()],

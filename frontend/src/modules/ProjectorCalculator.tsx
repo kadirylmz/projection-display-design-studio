@@ -50,7 +50,7 @@ interface UnifiedLens {
 export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   // Ana hesaplama modu
   const [calcMode, setCalcMode] = useState<CalcMode>('size2dist');
-  const [sizeMode, setSizeMode] = useState<SizeInputMode>('w2h');
+  const [sizeMode, setSizeMode] = useState<SizeInputMode>('wh2d');
 
   // Birim ve en-boy oranı
   const [inUnit, setInUnit] = useState<LengthUnit>(unit);
@@ -58,12 +58,20 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const [cw, setCw] = useState(16);
   const [ch, setCh] = useState(9);
 
-  // Ekran boyutu girdileri (inUnit cinsinden)
-  const [dimA, setDimA] = useState(4);
-  const [dimB, setDimB] = useState(2.25);
+  const master = useProjectStore(state => state.masterDesign);
+  const setMaster = useProjectStore(state => state.setMasterDesign);
+
+  // Ekran boyutu girdileri (inUnit cinsinden) - Varsayılan: 6.0m x 4.0m
+  const [dimA, setDimA] = useState(master?.screenWidthM ?? 6);
+  const [dimB, setDimB] = useState(master?.screenHeightM ?? 4);
+
+  // Fiziksel Oda Ölçüleri (Varsayılan: 10m x 8m x 5m)
+  const [roomW, setRoomW] = useState<number>(master?.roomWidthM ?? 10.0);
+  const [roomL, setRoomL] = useState<number>(master?.roomLengthM ?? 8.0);
+  const [roomH, setRoomH] = useState<number>(master?.roomHeightM ?? 5.0);
 
   // Mesafe & Opsiyonel Hedef Mesafe (inUnit cinsinden)
-  const [dist, setDist] = useState(6);
+  const [dist, setDist] = useState(master?.throwDistM ?? 4.8);
   const [targetDistFilter, setTargetDistFilter] = useState('');
 
   // Veritabanı ve Katalog projektör/lens seçimi
@@ -80,9 +88,9 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const [apiConnected, setApiConnected] = useState(true);
 
   // Throw Ratio & Montaj Ofsetleri
-  const [trMin, setTrMin] = useState(1.25);
-  const [trMax, setTrMax] = useState(1.60);
-  const [tr, setTr] = useState(1.42);
+  const [trMin, setTrMin] = useState(0.65);
+  const [trMax, setTrMax] = useState(0.85);
+  const [tr, setTr] = useState(0.80);
   const [vOff, setVOff] = useState(0);
   const [protr, setProtr] = useState(0);
 
@@ -137,6 +145,9 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
   const catProj = CATALOG_PROJECTORS.find(p => p.id === catProjId) ?? null;
   const catCompatLenses = useMemo(() => (catProj ? getCompatibleCatalogLenses(catProj) : []), [catProj]);
 
+
+
+
   const handleCatalogProjectorChange = (newProjId: string, preferredLensId?: string) => {
     setCatProjId(newProjId);
     setPid('');
@@ -184,6 +195,28 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
 
   const dbLens = compat.find(l => l.id === lid) ?? null;
   const proj = projectors.find(p => p.id === pid) ?? null;
+
+  // Otomatik Merkezi Senkronizasyon (Tüm Proje Modüllerine Dağıtılır)
+  useEffect(() => {
+    const wM = toMeters(dimA, inUnit);
+    const hM = sizeMode === 'wh2d' ? toMeters(dimB, inUnit) : (wM / (cw / ch || 1.7778));
+    const currentPjName = catProj?.model ? `${catProj.manufacturer} ${catProj.model}` : (proj?.model ? `${proj.manufacturer} ${proj.model}` : '10.000 ANSI lm Lazer Projektör');
+    const currentLumens = catProj?.ansiLumens || proj?.ansi_lumens || 10000;
+    const currentLens = (catLensId && catCompatLenses.find(l => l.id === catLensId)?.model) || customLensName || `TR ${tr}:1 Sabit/Zoom Lens`;
+
+    setMaster({
+      screenWidthM: +(wM.toFixed(2)),
+      screenHeightM: +(hM.toFixed(2)),
+      roomWidthM: roomW,
+      roomLengthM: roomL,
+      roomHeightM: roomH,
+      projectorName: currentPjName,
+      ansiLumens: currentLumens,
+      lensName: currentLens,
+      throwRatio: tr,
+      throwDistM: toMeters(dist, inUnit),
+    });
+  }, [dimA, dimB, sizeMode, inUnit, cw, ch, catProj, proj, catLensId, customLensName, tr, dist, roomW, roomL, roomH]);
 
   // Standart preset seçildiğinde trMin/trMax/tr güncelle
   const handlePresetChange = (newPresetId: string) => {
@@ -613,6 +646,99 @@ export default function ProjectorCalculator({ unit }: { unit: LengthUnit }) {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* 📐 MERKEZİ EKRAN VE ODA ÖLÇÜLERİ (TEK DOĞRULUK KAYNAĞI) */}
+        <div className="p-3 rounded-xl bg-gradient-to-br from-slate-900 to-sky-950/60 border border-sky-800/80 shadow-xl space-y-2.5">
+          <div className="flex items-center justify-between border-b border-sky-900/60 pb-1.5">
+            <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5">
+              🏛️ Merkezi Ekran &amp; Oda Ölçüleri
+            </span>
+            <span className="text-[10px] bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800 font-mono">
+              Tüm Projeye Otomatik Dağıtılır
+            </span>
+          </div>
+
+          {/* Ekran Ölçüsü */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-200">1. Projeksiyon Ekran Ölçüsü:</span>
+              <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                Alan: {+(toMeters(dimA, inUnit) * (sizeMode === 'wh2d' ? toMeters(dimB, inUnit) : (toMeters(dimA, inUnit) / (cw/ch || 1.7778)))).toFixed(2)} m²
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="text-slate-400">
+                Genişlik ({inUnit})
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.5"
+                  className="inp mt-0.5 font-bold text-sky-300"
+                  value={dimA}
+                  onChange={e => setDimA(Math.max(0.1, parseFloat(e.target.value) || 0))}
+                />
+              </label>
+              <label className="text-slate-400">
+                Yükseklik ({inUnit})
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.5"
+                  className="inp mt-0.5 font-bold text-sky-300"
+                  value={dimB}
+                  onChange={e => {
+                    setSizeMode('wh2d');
+                    setDimB(Math.max(0.1, parseFloat(e.target.value) || 0));
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Oda Ölçüsü */}
+          <div className="space-y-1 pt-1.5 border-t border-slate-800/80">
+            <span className="font-semibold text-slate-200 text-xs block">2. Fiziksel Oda Ölçüleri (m):</span>
+            <div className="grid grid-cols-3 gap-1.5 text-xs">
+              <label className="text-slate-400">
+                Oda Genişlik (W)
+                <input
+                  type="number"
+                  step="0.5"
+                  min="1"
+                  className="inp mt-0.5 font-medium text-slate-200"
+                  value={roomW}
+                  onChange={e => setRoomW(Math.max(1, parseFloat(e.target.value) || 1))}
+                />
+              </label>
+              <label className="text-slate-400">
+                Derinlik (L)
+                <input
+                  type="number"
+                  step="0.5"
+                  min="1"
+                  className="inp mt-0.5 font-medium text-slate-200"
+                  value={roomL}
+                  onChange={e => setRoomL(Math.max(1, parseFloat(e.target.value) || 1))}
+                />
+              </label>
+              <label className="text-slate-400">
+                Yükseklik (H)
+                <input
+                  type="number"
+                  step="0.2"
+                  min="1"
+                  className="inp mt-0.5 font-medium text-slate-200"
+                  value={roomH}
+                  onChange={e => setRoomH(Math.max(1, parseFloat(e.target.value) || 1))}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="text-[10px] text-slate-400 leading-tight bg-slate-950/80 p-2 rounded border border-slate-800/80">
+            💡 <b>Tek Giriş İlkesi:</b> Burada belirlediğiniz <b>{dimA}m × {dimB}m</b> ekran ve oda ölçüleri ile seçtiğiniz projektör/lens; <i>Lux &amp; Parlaklık</i>, <i>İçerik Planlayıcı</i> ve <i>Rapor</i> modüllerine otomatik atanır. Diğer yerlerde tekrar girmeniz gerekmez.
           </div>
         </div>
 

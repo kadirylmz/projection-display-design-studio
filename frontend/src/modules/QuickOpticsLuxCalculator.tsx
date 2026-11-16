@@ -69,18 +69,19 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
   const [projectName, setProjectName] = useState<string>(initial?.projectName ?? 'Sergi Alanı Projeksiyon Parlaklık & Lens Hesabı');
   const [preparedBy, setPreparedBy] = useState<string>(initial?.preparedBy ?? 'AV & Projeksiyon Tasarım Ekibi');
 
-  // 1. Ekran Geometrisi (usePhotometricStore ile senkronize)
-  const [screenW, setScreenWState] = useState<number>(() => (storeScreenW > 0 ? storeScreenW : (initial?.screenW ?? 12.0)));
-  const [screenH, setScreenHState] = useState<number>(() => (storeScreenH > 0 ? storeScreenH : (initial?.screenH ?? 3.0)));
+  const master = useProjectStore(s => s.masterDesign);
+  const setMaster = useProjectStore(s => s.setMasterDesign);
 
-  // 2. Projektör & Lens (usePhotometricStore ile senkronize)
-  const [projCount, setProjCountState] = useState<number>(() => (activeStoreProjs.length > 0 ? activeStoreProjs.length : (initial?.projCount ?? 3)));
-  const [lumensPerProj, setLumensPerProjState] = useState<number>(() => (activeStoreProjs[0]?.ansiLumens ?? initial?.lumensPerProj ?? 10000));
+  // 1. Ekran Geometrisi (Merkezi Master Design ile senkronize - Varsayılan: 6.0m x 4.0m)
+  const [screenW, setScreenWState] = useState<number>(() => (master?.screenWidthM || (storeScreenW > 0 ? storeScreenW : 6.0)));
+  const [screenH, setScreenHState] = useState<number>(() => (master?.screenHeightM || (storeScreenH > 0 ? storeScreenH : 4.0)));
+
+  // 2. Projektör & Lens (Merkezi Master Design ile senkronize)
+  const [projCount, setProjCountState] = useState<number>(() => (activeStoreProjs.length > 0 ? activeStoreProjs.length : (initial?.projCount ?? 2)));
+  const [lumensPerProj, setLumensPerProjState] = useState<number>(() => (master?.ansiLumens || activeStoreProjs[0]?.ansiLumens || 10000));
   const [lumenStandard, setLumenStandard] = useState<'ansi' | 'iso' | 'center'>(initial?.lumenStandard ?? 'ansi');
-  const [throwDistM, setThrowDistMState] = useState<number>(() =>
-    activeStoreProjs[0]?.pos?.[2] ? Math.abs(activeStoreProjs[0].pos[2]) : (initial?.throwDistM ?? 5.0)
-  );
-  const [throwRatio, setThrowRatioState] = useState<number>(() => (activeStoreProjs[0]?.throwRatio ?? initial?.throwRatio ?? 0.80));
+  const [throwDistM, setThrowDistMState] = useState<number>(() => (master?.throwDistM || 4.8));
+  const [throwRatio, setThrowRatioState] = useState<number>(() => (master?.throwRatio || 0.80));
   const [opticalEfficiency, setOpticalEfficiencyState] = useState<number>(() =>
     activeStoreProjs[0]?.efficiency ? Math.round(activeStoreProjs[0].efficiency * 100) : (initial?.opticalEfficiency ?? 90)
   );
@@ -97,6 +98,17 @@ export default function QuickOpticsLuxCalculator({ unit = 'm' }: { unit?: Length
   const [offAxisAngleDeg, setOffAxisAngleDeg] = useState<number>(initial?.offAxisAngleDeg ?? 0);
   const [catProjId, setCatProjId] = useState<string>('');
   const [catLensId, setCatLensId] = useState<string>('');
+
+  // Merkezi Master Design (Ekran & Oda Ölçüleri) Değiştiğinde Otomatik Güncelle
+  useEffect(() => {
+    if (master) {
+      if (master.screenWidthM && master.screenWidthM !== screenW) setScreenWState(master.screenWidthM);
+      if (master.screenHeightM && master.screenHeightM !== screenH) setScreenHState(master.screenHeightM);
+      if (master.ansiLumens && master.ansiLumens !== lumensPerProj) setLumensPerProjState(master.ansiLumens);
+      if (master.throwDistM && master.throwDistM !== throwDistM) setThrowDistMState(master.throwDistM);
+      if (master.throwRatio && master.throwRatio !== throwRatio) setThrowRatioState(master.throwRatio);
+    }
+  }, [master]);
 
   // Detaylı Görünümden veya Proje Yüzeyinden değişim olduğunda Sade Görünümü otomatik senkronize et
   useEffect(() => {

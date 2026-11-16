@@ -1424,6 +1424,7 @@ function SurfaceEngineeringFeasibilityPanel({
 }
 
 export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
+  const master = useProjectStore(state => state.masterDesign);
   const storeSurfaces = usePlannerStore(state => state.surfaces);
   const storePhysicalRoom = usePlannerStore(state => state.physicalRoom);
   const setStoreSurfaces = usePlannerStore(state => state.setSurfaces);
@@ -1449,6 +1450,35 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
   const [selectedPjKey, setSelectedPjKey] = useState<string>('all');
   const [report2dToast, setReport2dToast] = useState(false);
+  // Ana Tasarımdan (Ekran, Projektör & Lens) otomatik senkronizasyon (Varsayılan 6x4m & 10x8x5m Oda)
+  useEffect(() => {
+    if (master && master.screenWidthM > 0 && master.screenHeightM > 0) {
+      setSurfaces(prev => {
+        if (!prev || prev.length === 0) return prev;
+        const first = prev[0];
+        if (first.id === 'surf-1' && (first.widthM === 23.3 || Math.abs(first.widthM - master.screenWidthM) > 0.05 || Math.abs(first.heightM - master.screenHeightM) > 0.05)) {
+          return prev.map((s, idx) => idx === 0 ? {
+            ...s,
+            widthM: master.screenWidthM,
+            heightM: master.screenHeightM,
+            throwDistM: master.throwDistM || s.throwDistM,
+            throwRatio: master.throwRatio || s.throwRatio,
+          } : s);
+        }
+        return prev;
+      });
+      if (master.roomWidthM > 0) {
+        setPhysicalRoom(prev => ({
+          ...prev,
+          enabled: true,
+          widthM: master.roomWidthM,
+          lengthM: master.roomLengthM,
+          heightM: master.roomHeightM,
+        }));
+      }
+    }
+  }, [master]);
+
   const svg2dRef = useRef<SVGSVGElement | null>(null);
 
   const capture2DViewToReport = () => {
@@ -2809,6 +2839,26 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     <span className="text-[10px] text-slate-400">
                       ({activeSurface.geometry === 'flat' ? 'Düz Yüzey' : GEOMETRY_LABELS[activeSurface.geometry] || activeSurface.geometry})
                     </span>
+                    <span className="text-[9.5px] bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-800 font-mono">
+                      🔗 Ana Tasarım: {master?.screenWidthM || 6}m × {master?.screenHeightM || 4}m
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (master) {
+                          updateSurface(activeSurface.id, {
+                            widthM: master.screenWidthM,
+                            heightM: master.screenHeightM,
+                            throwDistM: master.throwDistM,
+                            throwRatio: master.throwRatio,
+                          });
+                        }
+                      }}
+                      className="text-[10px] text-sky-400 hover:text-sky-300 underline font-medium ml-1"
+                      title="Ana Ekran modülünde girilen ölçüyü bu duvara uygula"
+                    >
+                      Ana Ekran Ölçüsüne Eşitle ({master?.screenWidthM || 6}×{master?.screenHeightM || 4}m)
+                    </button>
                   </div>
                 </div>
                 <span className="px-2.5 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono text-xs font-extrabold shadow">
