@@ -1950,7 +1950,9 @@ export function evaluateOpticalPhysicalCompliance(inp: SharedRoomPlacementInput)
         : 'UNKNOWN',
     limitOrRequirement:
       projectorCalc.minDistanceM !== null && projectorCalc.maxDistanceM !== null
-        ? `[${projectorCalc.minDistanceM} m – ${projectorCalc.maxDistanceM} m] (TR ${projectorCalc.minThrowRatio}–${projectorCalc.maxThrowRatio}:1)`
+        ? projectorCalc.minDistanceM === projectorCalc.maxDistanceM
+          ? `${projectorCalc.nominalDistanceM} m (Sabit D, TR ${projectorCalc.minThrowRatio}–${projectorCalc.maxThrowRatio}:1)`
+          : `[${projectorCalc.minDistanceM} m – ${projectorCalc.maxDistanceM} m] (TR ${projectorCalc.minThrowRatio}–${projectorCalc.maxThrowRatio}:1)`
         : 'UNKNOWN',
     detailTr: projectorCalc.lensRangeCheck.summaryTr,
   });

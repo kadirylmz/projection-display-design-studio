@@ -1969,14 +1969,28 @@ export function OpticalDeviceStudio() {
           {/* Nominal / Min / Max Sonuç Kartları */}
           <div className="grid-4" style={{ gap: 12 }}>
             <div className="card" style={{ borderLeft: '4px solid #38bdf8' }}>
-              <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>GÖRÜNTÜ GENİŞLİĞİ (W = D / TR)</div>
+              <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>
+                {projectorResult.minImageWidthM !== null &&
+                projectorResult.maxImageWidthM !== null &&
+                projectorResult.minImageWidthM !== projectorResult.maxImageWidthM
+                  ? 'GÖRÜNTÜ GENİŞLİĞİ ARALIĞI (W = D / TR)'
+                  : 'GÖRÜNTÜ GENİŞLİĞİ (W)'}
+              </div>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#f8fafc', margin: '4px 0' }}>
                 {formatLengthWithUnit(projectorResult.nominalImageWidthM, unit, 3)}
               </div>
               <div style={{ fontSize: 12, color: '#cbd5e1' }}>
-                Min (TR={projectorResult.maxThrowRatio ?? '?'}): <b>{formatLengthWithUnit(projectorResult.minImageWidthM, unit, 3)}</b>
-                <br />
-                Max (TR={projectorResult.minThrowRatio ?? '?'}): <b>{formatLengthWithUnit(projectorResult.maxImageWidthM, unit, 3)}</b>
+                {projectorResult.minImageWidthM !== null &&
+                projectorResult.maxImageWidthM !== null &&
+                projectorResult.minImageWidthM !== projectorResult.maxImageWidthM ? (
+                  <>
+                    Min (TR={projectorResult.maxThrowRatio ?? '?'}): <b>{formatLengthWithUnit(projectorResult.minImageWidthM, unit, 3)}</b>
+                    <br />
+                    Max (TR={projectorResult.minThrowRatio ?? '?'}): <b>{formatLengthWithUnit(projectorResult.maxImageWidthM, unit, 3)}</b>
+                  </>
+                ) : (
+                  <span>Genişlik: <b>{formatLengthWithUnit(projectorResult.nominalImageWidthM, unit, 3)} (Sabit Giriş)</b></span>
+                )}
               </div>
             </div>
 
@@ -1988,9 +2002,17 @@ export function OpticalDeviceStudio() {
                 {formatLengthWithUnit(projectorResult.nominalImageHeightM, unit, 3)}
               </div>
               <div style={{ fontSize: 12, color: '#cbd5e1' }}>
-                Min Yükseklik: <b>{formatLengthWithUnit(projectorResult.minImageHeightM, unit, 3)}</b>
-                <br />
-                Max Yükseklik: <b>{formatLengthWithUnit(projectorResult.maxImageHeightM, unit, 3)}</b>
+                {projectorResult.minImageHeightM !== null &&
+                projectorResult.maxImageHeightM !== null &&
+                projectorResult.minImageHeightM !== projectorResult.maxImageHeightM ? (
+                  <>
+                    Min Yükseklik: <b>{formatLengthWithUnit(projectorResult.minImageHeightM, unit, 3)}</b>
+                    <br />
+                    Max Yükseklik: <b>{formatLengthWithUnit(projectorResult.maxImageHeightM, unit, 3)}</b>
+                  </>
+                ) : (
+                  <span>Yükseklik: <b>{formatLengthWithUnit(projectorResult.nominalImageHeightM, unit, 3)} (Sabit)</b></span>
+                )}
               </div>
             </div>
 
@@ -2000,19 +2022,51 @@ export function OpticalDeviceStudio() {
                 {fmtVal(projectorResult.nominalDiagonalInch, 1, 'inç')} ({fmtVal(projectorResult.nominalDiagonalM, 3, 'm')})
               </div>
               <div style={{ fontSize: 12, color: '#cbd5e1' }}>
-                Diyagonal (m): <b>{fmtVal(projectorResult.minDiagonalM, 3, 'm')} – {fmtVal(projectorResult.maxDiagonalM, 3, 'm')}</b>
+                {projectorResult.minDiagonalM !== null &&
+                projectorResult.maxDiagonalM !== null &&
+                projectorResult.minDiagonalM !== projectorResult.maxDiagonalM ? (
+                  <>Diyagonal (m): <b>{fmtVal(projectorResult.minDiagonalM, 3, 'm')} – {fmtVal(projectorResult.maxDiagonalM, 3, 'm')}</b></>
+                ) : (
+                  <>Diyagonal (m): <b>{fmtVal(projectorResult.nominalDiagonalM, 3, 'm')} (Sabit)</b></>
+                )}
               </div>
             </div>
 
             <div className="card" style={{ borderLeft: '4px solid #f59e0b' }}>
-              <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>ATIM MESAFESİ PENCERESİ (D = W × TR)</div>
+              <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>
+                {projectorResult.minDistanceM !== null &&
+                projectorResult.maxDistanceM !== null &&
+                projectorResult.minDistanceM !== projectorResult.maxDistanceM
+                  ? 'ATIM MESAFESİ PENCERESİ (D = W × TR)'
+                  : 'ATIM MESAFESİ (D)'}
+              </div>
               <div style={{ fontSize: 22, fontWeight: 800, color: '#f8fafc', margin: '4px 0' }}>
-                {formatLengthWithUnit(projectorResult.minDistanceM, unit, 3)} – {formatLengthWithUnit(projectorResult.maxDistanceM, unit, 3)}
+                {projectorResult.minDistanceM !== null && projectorResult.maxDistanceM !== null
+                  ? projectorResult.minDistanceM === projectorResult.maxDistanceM
+                    ? `${formatLengthWithUnit(projectorResult.nominalDistanceM, unit, 3)}`
+                    : `${formatLengthWithUnit(projectorResult.minDistanceM, unit, 3)} – ${formatLengthWithUnit(projectorResult.maxDistanceM, unit, 3)}`
+                  : 'UNKNOWN'}
               </div>
               <div style={{ fontSize: 12, color: '#cbd5e1' }}>
-                Nominal Mesafe: <b>{formatLengthWithUnit(projectorResult.nominalDistanceM, unit, 3)}</b>
+                {projectorResult.minDistanceM === projectorResult.maxDistanceM ? (
+                  <span>Durum: <b>Sabit Giriş Mesafesi</b></span>
+                ) : (
+                  <span>Nominal Mesafe: <b>{formatLengthWithUnit(projectorResult.nominalDistanceM, unit, 3)}</b></span>
+                )}
                 <br />
-                Lens Tipi: <b>{projectorResult.isFixedLens === null ? 'UNKNOWN' : projectorResult.isFixedLens ? 'Sabit (Fixed)' : 'Optik Zoom'}</b>
+                Lens Tipi:{' '}
+                <b>
+                  {projectorResult.isFixedLens === null
+                    ? 'UNKNOWN'
+                    : projectorResult.isFixedLens
+                    ? 'Sabit (Fixed)'
+                    : 'Optik Zoom'}
+                </b>
+                {projectorResult.method === 'DIST_TO_SIZE' && !projectorResult.isFixedLens && (
+                  <span style={{ display: 'block', fontSize: 11, color: '#38bdf8', marginTop: 4 }}>
+                    💡 Mesafe {formatLengthWithUnit(projectorResult.nominalDistanceM, unit, 2)} sabit tutulduğunda optik zoom, duvardaki görüntü genişliğini ({formatLengthWithUnit(projectorResult.minImageWidthM, unit, 2)} – {formatLengthWithUnit(projectorResult.maxImageWidthM, unit, 2)}) ayarlar.
+                  </span>
+                )}
               </div>
             </div>
           </div>
