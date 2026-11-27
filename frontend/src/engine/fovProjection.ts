@@ -37,6 +37,8 @@ export interface FovProjectionInput {
   /** Hedef yüzey genişliği ve yüksekliği (m) */
   surfaceWidthM: number;
   surfaceHeightM: number;
+  /** Opsiyonel hedef yüzey dikey eğim açısı (derece, ±45°) */
+  surfaceTiltDeg?: number;
 }
 
 export interface FovProjectionResult {
@@ -276,24 +278,42 @@ export function computeFovSurfaceProjection(inp: FovProjectionInput): FovProject
   const hOff = (inp.hShift ?? 0) * (2 * tanH);
   const vOff = (inp.vShift ?? 0) * (2 * tanV);
 
-  // Yüzey z = 0 düzlemindedir; yüzey normali (0, 0, +1) cihaz tarafına bakar.
-  // Ray: P(t) = pos + t * dir, z = 0 => pos[2] + t * dir[2] = 0 => t = -pos[2] / dir[2]
-  const intersectPlaneZ0 = (dir: Vec3): { hit: [number, number]; t: number; valid: boolean } => {
-    const denom = dir[2];
+  // Yüzey eğimi (tilt) hesabı: Yüzey X ekseni etrafında döner
+  const tiltDeg = inp.surfaceTiltDeg ?? 0;
+  const tiltRad = tiltDeg * DEG2RAD;
+  const cosTilt = Math.cos(tiltRad);
+  const sinTilt = Math.sin(tiltRad);
+  // Yüzey normali: (0, -sinTilt, cosTilt) cihaz tarafına bakar (+Z).
+  const normY = -sinTilt;
+  const normZ = cosTilt;
+
+  // Ray: P(t) = pos + t * dir
+  // Düzlem denklemi: (P(t) - [0, 0, 0]) . N = 0 => (pos + t*dir) . N = 0
+  const intersectPlane = (dir: Vec3): { hit: [number, number]; t: number; valid: boolean; p3D: Vec3 } => {
+    const denom = dir[1] * normY + dir[2] * normZ;
+    const num = -(pos[1] * normY + pos[2] * normZ);
     if (denom >= -1e-4) {
       // Işın yüzey düzleminden uzaklaşıyor veya paralel: görsel referans için uzak uca kırp
       const safeT = pos[2] / 0.05;
+      const p3D: Vec3 = [pos[0] + dir[0] * safeT, pos[1] + dir[1] * safeT, pos[2] + dir[2] * safeT];
+      const hitX = p3D[0];
+      const hitY = p3D[1] * cosTilt + p3D[2] * sinTilt;
       return {
-        hit: [pos[0] + dir[0] * safeT, pos[1] + dir[1] * safeT],
+        hit: [hitX, hitY],
         t: safeT,
         valid: false,
+        p3D,
       };
     }
-    const t = -pos[2] / denom;
+    const t = num / denom;
+    const p3D: Vec3 = [pos[0] + dir[0] * t, pos[1] + dir[1] * t, pos[2] + dir[2] * t];
+    const hitX = p3D[0];
+    const hitY = p3D[1] * cosTilt + p3D[2] * sinTilt;
     return {
-      hit: [pos[0] + dir[0] * t, pos[1] + dir[1] * t],
+      hit: [hitX, hitY],
       t,
       valid: t > 0,
+      p3D,
     };
   };
 
@@ -311,12 +331,12 @@ export function computeFovSurfaceProjection(inp: FovProjectionInput): FovProject
       basis.forward[1] + basis.right[1] * u + basis.up[1] * v,
       basis.forward[2] + basis.right[2] * u + basis.up[2] * v,
     ]);
-    return intersectPlaneZ0(dir);
+    return intersectPlane(dir);
   });
 
   const allCornersHitPlane = cornerHits.every(h => h.valid);
   const corners2D: [number, number][] = cornerHits.map(h => [r2(h.hit[0]), r2(h.hit[1])]);
-  const corners3D: Vec3[] = cornerHits.map(h => [r2(h.hit[0]), r2(h.hit[1]), 0]);
+  const corners3D: Vec3[] = cornerHits.map(h => [r2(h.p3D[0]), r2(h.p3D[1]), r2(h.p3D[2])]);
 
   // Dijital Keystone (V / H) kırpma ve yamuk telafisi
   const kV = Math.max(-40, Math.min(40, inp.keystoneVDeg ?? 0));
@@ -347,24 +367,25 @@ export function computeFovSurfaceProjection(inp: FovProjectionInput): FovProject
           basis.forward[1] + basis.right[1] * u + basis.up[1] * v,
           basis.forward[2] + basis.right[2] * u + basis.up[2] * v,
         ]);
-        return intersectPlaneZ0(dir);
+        return intersectPlane(dir);
       })
     : cornerHits;
   const activeCorners2D: [number, number][] = activeCornerHits.map(h => [r2(h.hit[0]), r2(h.hit[1])]);
-  const activeCorners3D: Vec3[] = activeCornerHits.map(h => [r2(h.hit[0]), r2(h.hit[1]), 0]);
+  const activeCorners3D: Vec3[] = activeCornerHits.map(h => [r2(h.p3D[0]), r2(h.p3D[1]), r2(h.p3D[2])]);
 
   const centerDir = normalize3([
     basis.forward[0] + basis.right[0] * hOff + basis.up[0] * vOff,
     basis.forward[1] + basis.right[1] * hOff + basis.up[1] * vOff,
     basis.forward[2] + basis.right[2] * hOff + basis.up[2] * vOff,
   ]);
-  const centerRes = intersectPlaneZ0(centerDir);
+  const centerRes = intersectPlane(centerDir);
   const centerHit2D: [number, number] | null = centerRes.valid
     ? [r2(centerRes.hit[0]), r2(centerRes.hit[1])]
     : null;
 
-  // Geliş açısı (optik eksen ile yüzey normali [0, 0, 1] arası)
-  const cosInc = Math.min(1, Math.max(0, Math.abs(dot3(centerDir, [0, 0, 1]))));
+  // Geliş açısı (optik eksen ile yüzey normali [0, normY, normZ] arası)
+  const surfaceNormal: Vec3 = [0, normY, normZ];
+  const cosInc = Math.min(1, Math.max(0, Math.abs(dot3(centerDir, surfaceNormal))));
   const incidenceAngleDeg = r1(Math.acos(cosInc) * RAD2DEG);
 
   // Aktif (keystone sonrası) kenar uzunlukları

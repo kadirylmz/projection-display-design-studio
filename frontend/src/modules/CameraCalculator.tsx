@@ -14,6 +14,7 @@ import {
   OpticalDeviceKind,
   SCANNER_3D_PRESETS,
   VR_SYSTEM_PRESETS,
+  ViewerFovResult,
 } from '../engine/fovProjection';
 import { LengthUnit, fromMeters, toMeters, round } from '../engine/units';
 
@@ -49,6 +50,10 @@ function FovFrustum3DScene({
   showPerson,
   showLabels = true,
   shadow,
+  viewerPos,
+  viewerFov,
+  surfaceTiltDeg = 0,
+  surfaceCurvatureDeg = 0,
 }: {
   pos: [number, number, number];
   surfW: number;
@@ -66,6 +71,10 @@ function FovFrustum3DScene({
   showPerson: boolean;
   showLabels?: boolean;
   shadow: FovShadowResult;
+  viewerPos?: [number, number, number];
+  viewerFov?: ViewerFovResult;
+  surfaceTiltDeg?: number;
+  surfaceCurvatureDeg?: number;
 }) {
   const deviceQuat = useMemo(() => {
     const euler = new THREE.Euler(
@@ -129,6 +138,118 @@ function FovFrustum3DScene({
 
     return { coneGeo: cGeo, footprintGeo: fGeo, edgeLoop: loop, activeEdgeLoop: activeLoop, rayLines: rays };
   }, [pos, corners3D, activeCorners3D]);
+
+  const { curvedScreenGeo, screenBorderSegments } = useMemo(() => {
+    const curvDeg = Math.max(0, Math.min(180, surfaceCurvatureDeg ?? 0));
+    if (curvDeg < 1) {
+      const geo = new THREE.PlaneGeometry(surfW, surfH);
+      const hw = surfW / 2;
+      const hh = surfH / 2;
+      const border: [number, number, number][] = [
+        [-hw, hh, 0.01],
+        [hw, hh, 0.01],
+        [hw, -hh, 0.01],
+        [-hw, -hh, 0.01],
+        [-hw, hh, 0.01],
+      ];
+      return { curvedScreenGeo: geo, screenBorderSegments: [border] };
+    }
+
+    const theta = (curvDeg * Math.PI) / 180;
+    const R = surfW / theta;
+    const segments = 36;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const hh = surfH / 2;
+
+    const topArc: [number, number, number][] = [];
+    const botArc: [number, number, number][] = [];
+
+    for (let i = 0; i <= segments; i++) {
+      const u = i / segments - 0.5;
+      const phi = u * theta;
+      const x = R * Math.sin(phi);
+      const z = R * (1 - Math.cos(phi));
+
+      positions.push(x, hh, z);
+      positions.push(x, -hh, z);
+
+      topArc.push([x, hh, z + 0.01]);
+      botArc.push([x, -hh, z + 0.01]);
+    }
+
+    for (let i = 0; i < segments; i++) {
+      const tl = 2 * i;
+      const bl = 2 * i + 1;
+      const tr = 2 * (i + 1);
+      const br = 2 * (i + 1) + 1;
+      indices.push(tl, bl, tr);
+      indices.push(tr, bl, br);
+      indices.push(tl, tr, bl);
+      indices.push(tr, br, bl);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const leftEdge: [number, number, number][] = [topArc[0], botArc[0]];
+    const rightEdge: [number, number, number][] = [topArc[topArc.length - 1], botArc[botArc.length - 1]];
+
+    return {
+      curvedScreenGeo: geo,
+      screenBorderSegments: [topArc, botArc, leftEdge, rightEdge],
+    };
+  }, [surfW, surfH, surfaceCurvatureDeg]);
+
+  const screenCornersWorld = useMemo((): [number, number, number][] => {
+    const tiltRad = ((surfaceTiltDeg ?? 0) * Math.PI) / 180;
+    const curvDeg = Math.max(0, Math.min(180, surfaceCurvatureDeg ?? 0));
+    const cosT = Math.cos(tiltRad);
+    const sinT = Math.sin(tiltRad);
+
+    let xEdge = surfW / 2;
+    let zEdge = 0;
+    if (curvDeg >= 1) {
+      const theta = (curvDeg * Math.PI) / 180;
+      const R = surfW / theta;
+      xEdge = R * Math.sin(theta / 2);
+      zEdge = R * (1 - Math.cos(theta / 2));
+    }
+    const yTop = surfH / 2;
+    const yBot = -surfH / 2;
+
+    const toWorld = (x: number, y: number, z: number): [number, number, number] => [
+      x,
+      y * cosT - z * sinT,
+      y * sinT + z * cosT,
+    ];
+
+    return [
+      toWorld(-xEdge, yTop, zEdge), // Sol-Üst
+      toWorld(xEdge, yTop, zEdge),  // Sağ-Üst
+      toWorld(xEdge, yBot, zEdge),  // Sağ-Alt
+      toWorld(-xEdge, yBot, zEdge), // Sol-Alt
+    ];
+  }, [surfW, surfH, surfaceTiltDeg, surfaceCurvatureDeg]);
+
+  const viewerConeGeo = useMemo(() => {
+    if (!viewerPos) return null;
+    const [cTL, cTR, cBR, cBL] = screenCornersWorld;
+    const p = viewerPos;
+    const quad = [cTL, cTR, cBR, cBL];
+    const verts: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const a = quad[i];
+      const b = quad[(i + 1) % 4];
+      verts.push(p[0], p[1], p[2], a[0], a[1], a[2], b[0], b[1], b[2]);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.computeVertexNormals();
+    return geo;
+  }, [viewerPos, screenCornersWorld]);
 
   const accent = isFullCovered ? '#22c55e' : '#f59e0b';
   const deviceColor =
@@ -273,45 +394,40 @@ function FovFrustum3DScene({
         </group>
       )}
 
-      {/* Hedef Yüzey Düzlemi */}
-      <mesh position={[0, 0, 0]}>
-        <planeGeometry args={[surfW, surfH]} />
-        <meshStandardMaterial color="#1e293b" side={THREE.DoubleSide} />
-      </mesh>
-      <Line
-        points={[
-          [-surfW / 2, surfH / 2, 0.01],
-          [surfW / 2, surfH / 2, 0.01],
-          [surfW / 2, -surfH / 2, 0.01],
-          [-surfW / 2, -surfH / 2, 0.01],
-          [-surfW / 2, surfH / 2, 0.01],
-        ]}
-        color="#f8fafc"
-        lineWidth={2.2}
-      />
-      {showLabels && (
-        <>
-          <Line
-            points={[
-              [0, surfH / 2, 0.02],
-              [0, surfH / 2 + 0.28, 0.02],
-            ]}
-            color="#94a3b8"
-            lineWidth={1.2}
-          />
-          <Text
-            position={[0, surfH / 2 + 0.34, 0.02]}
-            fontSize={0.19}
-            color="#f8fafc"
-            anchorX="center"
-            anchorY="bottom"
-            outlineWidth={0.024}
-            outlineColor="#020617"
-          >
-            {`① HEDEF PERDE / YÜZEY (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m · Yerden: +${shadow.screenBottomHeightM.toFixed(2)}m)`}
-          </Text>
-        </>
-      )}
+      {/* Hedef Yüzey Düzlemi (Eğim & Kavis Destekli) */}
+      <group rotation={[((surfaceTiltDeg ?? 0) * Math.PI) / 180, 0, 0]}>
+        <mesh geometry={curvedScreenGeo}>
+          <meshStandardMaterial color="#1e293b" side={THREE.DoubleSide} />
+        </mesh>
+        {screenBorderSegments.map((pts, idx) => (
+          <Line key={idx} points={pts} color="#f8fafc" lineWidth={2.2} />
+        ))}
+        {showLabels && (
+          <>
+            <Line
+              points={[
+                [0, surfH / 2, 0.02],
+                [0, surfH / 2 + 0.28, 0.02],
+              ]}
+              color="#94a3b8"
+              lineWidth={1.2}
+            />
+            <Text
+              position={[0, surfH / 2 + 0.34, 0.02]}
+              fontSize={0.19}
+              color="#f8fafc"
+              anchorX="center"
+              anchorY="bottom"
+              outlineWidth={0.024}
+              outlineColor="#020617"
+            >
+              {`① HEDEF PERDE / YÜZEY (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m · Yerden: +${shadow.screenBottomHeightM.toFixed(2)}m${
+                surfaceTiltDeg ? ` · Eğim: ${surfaceTiltDeg}°` : ''
+              }${surfaceCurvatureDeg ? ` · Kavis: ${surfaceCurvatureDeg}°` : ''})`}
+            </Text>
+          </>
+        )}
+      </group>
 
       {/* Yarı Saydam 3B Görüş Konisi (FOV Frustum) */}
       <mesh geometry={coneGeo}>
@@ -622,7 +738,7 @@ function FovFrustum3DScene({
                   outlineWidth={0.022}
                   outlineColor="#020617"
                 >
-                  {`③ İZLEYİCİ KONUMU (Boy: ${pH.toFixed(2)}m · Omuz: ${pW.toFixed(2)}m)\nPerdeye: ${shadow.personDistFromScreenM.toFixed(2)}m · Cihaza: ${shadow.personDistFromDeviceM.toFixed(2)}m · ${
+                  {`③ GÖLGE ANALİZİ MANKENİ (Boy: ${pH.toFixed(2)}m · Omuz: ${pW.toFixed(2)}m)\nPerdeye: ${shadow.personDistFromScreenM.toFixed(2)}m · Cihaza: ${shadow.personDistFromDeviceM.toFixed(2)}m · ${
                     shadow.isCastingShadow
                       ? `Işığa ${shadow.intrusionHeightM.toFixed(2)}m Giriyor`
                       : `Baş Üstü +${Math.max(0, shadow.headClearanceM).toFixed(2)}m Boşluk`
@@ -711,6 +827,93 @@ function FovFrustum3DScene({
             </>
           )}
         </>
+      )}
+
+      {/* 👁️ İzleyici Bakış Noktası (Viewer FOV) Avatarı ve Bakış Konisi */}
+      {viewerPos && (
+        <group>
+          {/* İzleyici Gövdesi ve Göz Noktası */}
+          <group position={viewerPos}>
+            {/* Göz / Baş Küresi */}
+            <mesh>
+              <sphereGeometry args={[0.12, 20, 20]} />
+              <meshStandardMaterial color="#a855f7" emissive="#7e22ce" emissiveIntensity={0.35} />
+            </mesh>
+            {/* Vizör / Bakış Yönü Göstergesi (Perdeye -Z yönünde bakıyor) */}
+            <mesh position={[0, 0, -0.09]}>
+              <boxGeometry args={[0.15, 0.05, 0.06]} />
+              <meshStandardMaterial color="#c084fc" emissive="#9333ea" emissiveIntensity={0.5} />
+            </mesh>
+            {/* Zemin Dikmesi ve Zemin Halkası */}
+            <Line
+              points={[
+                [0, -0.12, 0],
+                [0, shadow.floorSceneY - viewerPos[1], 0],
+              ]}
+              color="#a855f7"
+              lineWidth={1.5}
+              dashed
+              dashSize={0.12}
+              gapSize={0.08}
+            />
+            <mesh position={[0, shadow.floorSceneY - viewerPos[1] + 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[0.2, 0.25, 24]} />
+              <meshBasicMaterial color="#a855f7" side={THREE.DoubleSide} />
+            </mesh>
+            {/* İzleyici Bilgi Etiketi */}
+            {showLabels && (
+              <>
+                <Line
+                  points={[
+                    [0, 0.14, 0],
+                    [0, 0.38, 0],
+                  ]}
+                  color="#c084fc"
+                  lineWidth={1.4}
+                />
+                <Text
+                  position={[0, 0.42, 0]}
+                  fontSize={0.14}
+                  color="#e9d5ff"
+                  anchorX="center"
+                  anchorY="bottom"
+                  outlineWidth={0.022}
+                  outlineColor="#020617"
+                >
+                  {`👁️ İZLEYİCİ BAKIŞ NOKTASI (Z: ${viewerPos[2].toFixed(2)}m · X: ${viewerPos[0] >= 0 ? '+' : ''}${viewerPos[0].toFixed(2)}m · Y: ${viewerPos[1] >= 0 ? '+' : ''}${viewerPos[1].toFixed(2)}m)\nFOV: ${viewerFov ? `${viewerFov.hfovDeg}° × ${viewerFov.vfovDeg}° (D: ${viewerFov.dfovDeg}°)` : ''} · Merkez Açısı: ∠${viewerFov?.viewerCenterAngleDeg ?? 0}°`}
+                </Text>
+              </>
+            )}
+          </group>
+
+          {/* İzleyiciden Perde Köşelerine Giden Bakış Işınları */}
+          {screenCornersWorld.map((pt, i) => (
+            <Line
+              key={i}
+              points={[viewerPos, pt]}
+              color="#a855f7"
+              lineWidth={1.4}
+              dashed
+              dashSize={0.18}
+              gapSize={0.1}
+              transparent
+              opacity={0.8}
+            />
+          ))}
+
+          {/* İzleyici FOV Yarı Saydam Konisi */}
+          {viewerConeGeo && (
+            <mesh geometry={viewerConeGeo}>
+              <meshBasicMaterial
+                color="#9333ea"
+                transparent
+                opacity={0.08}
+                side={THREE.DoubleSide}
+                depthWrite={false}
+              />
+            </mesh>
+          )}
+        </group>
       )}
     </>
   );
@@ -895,6 +1098,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
         keystoneVDeg: deviceKind === 'projector' ? keystoneV : 0,
         surfaceWidthM: surfW,
         surfaceHeightM: surfH,
+        surfaceTiltDeg,
       });
 
       const viewerFov = computeViewerFov({
@@ -983,12 +1187,15 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
             number,
           ]);
     const pDist = Math.max(0.1, toMeters(personDist, unit));
+    const vDist = Math.max(0.3, toMeters(viewerDistM, unit));
+    const vX = toMeters(viewerX, unit);
+    const vY = toMeters(viewerY, unit);
 
     const floorY = -sH / 2 - scrBotM;
-    const topY = Math.max(sH / 2, devPos[1]);
-    const minX = Math.min(-sW / 2, devPos[0]) - 0.4;
-    const maxX = Math.max(sW / 2, devPos[0]) + 0.4;
-    const maxZ = Math.max(devPos[2], pDist) + 0.4;
+    const topY = Math.max(sH / 2, devPos[1], vY);
+    const minX = Math.min(-sW / 2, devPos[0], vX) - 0.4;
+    const maxX = Math.max(sW / 2, devPos[0], vX) + 0.4;
+    const maxZ = Math.max(devPos[2], pDist, vDist) + 0.4;
 
     const targetX = (minX + maxX) / 2;
     const targetY = (floorY + topY) / 2;
@@ -1025,7 +1232,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
       topY,
       maxZ,
     };
-  }, [r, subW, subH, screenBottomH, posX, posY, dist, personDist, unit]);
+  }, [r, subW, subH, screenBottomH, posX, posY, dist, personDist, viewerDistM, viewerX, viewerY, unit]);
 
   const set3DCameraPreset = (preset: 'iso' | 'side' | 'left' | 'front' | 'top' | 'bottom' | 'fit') => {
     const cam = cameraRef.current;
@@ -1581,19 +1788,37 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
         <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-purple-300">İzleyici Konumu &amp; Yüzey Eğimi</span>
-            <button
-              type="button"
-              onClick={() => {
-                setViewerDistM(3.5);
-                setViewerX(0);
-                setViewerY(0);
-                setSurfaceTiltDeg(0);
-                setSurfaceCurvatureDeg(0);
-              }}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
-            >
-              Sıfırla
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setViewerDistM(personDist);
+                  setViewerX(personX);
+                  const eyeM = toMeters(personHeight, unit) * 0.93;
+                  const screenBotM = toMeters(screenBottomH, unit);
+                  const surfHM = toMeters(subH, unit);
+                  const eyeRelCenterM = eyeM - (screenBotM + surfHM / 2);
+                  setViewerY(round(fromMeters(eyeRelCenterM, unit), 2));
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-200 border border-purple-700 hover:bg-purple-900 transition"
+                title="İzleyici koordinatlarını ayakta duran mankene eşitler"
+              >
+                🚶 Mankene Eşitle
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewerDistM(3.5);
+                  setViewerX(0);
+                  setViewerY(0);
+                  setSurfaceTiltDeg(0);
+                  setSurfaceCurvatureDeg(0);
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+              >
+                Sıfırla
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-1.5">
             {N(`İzleyici Z (${unit})`, viewerDistM, v => setViewerDistM(Math.max(0.3, v)), '0.1')}
@@ -2120,6 +2345,10 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                       showPerson={showPerson}
                       showLabels={showSceneLabels}
                       shadow={r.shadow}
+                      viewerPos={[toMeters(viewerX, unit), toMeters(viewerY, unit), Math.max(0.3, toMeters(viewerDistM, unit))]}
+                      viewerFov={r.viewerFov}
+                      surfaceTiltDeg={surfaceTiltDeg}
+                      surfaceCurvatureDeg={surfaceCurvatureDeg}
                     />
                     <OrbitControls
                       ref={controlsRef}
@@ -2141,6 +2370,10 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                 showPerson={showPerson}
                 showLabels={showSceneLabels}
                 shadow={r.shadow}
+                viewerPos={[toMeters(viewerX, unit), toMeters(viewerY, unit), Math.max(0.3, toMeters(viewerDistM, unit))]}
+                viewerFov={r.viewerFov}
+                surfaceTiltDeg={surfaceTiltDeg}
+                surfaceCurvatureDeg={surfaceCurvatureDeg}
               />
             )}
           </>
@@ -2161,6 +2394,10 @@ function SurfaceFootprint2D({
   showPerson,
   showLabels = true,
   shadow,
+  viewerPos,
+  viewerFov,
+  surfaceTiltDeg = 0,
+  surfaceCurvatureDeg = 0,
 }: {
   surfW: number;
   surfH: number;
@@ -2172,14 +2409,25 @@ function SurfaceFootprint2D({
   showPerson: boolean;
   showLabels?: boolean;
   shadow: FovShadowResult;
+  viewerPos?: [number, number, number];
+  viewerFov?: ViewerFovResult;
+  surfaceTiltDeg?: number;
+  surfaceCurvatureDeg?: number;
 }) {
-  const xs = [-surfW / 2, surfW / 2, ...corners2D.map(c => c[0]), ...activeCorners2D.map(c => c[0])];
+  const xs = [
+    -surfW / 2,
+    surfW / 2,
+    ...corners2D.map(c => c[0]),
+    ...activeCorners2D.map(c => c[0]),
+    ...(viewerPos ? [viewerPos[0]] : []),
+  ];
   const ys = [
     -surfH / 2,
     surfH / 2,
     ...(shadow.screenBottomHeightM > 0.01 ? [shadow.floorSceneY] : []),
     ...corners2D.map(c => c[1]),
     ...activeCorners2D.map(c => c[1]),
+    ...(viewerPos ? [viewerPos[1]] : []),
   ];
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
@@ -2285,7 +2533,21 @@ function SurfaceFootprint2D({
             fontWeight="bold"
             textAnchor="middle"
           >
-            {`① Hedef Perde / Yüzey (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m · Yerden: +${shadow.screenBottomHeightM.toFixed(2)}m)`}
+            {`① Hedef Perde / Yüzey (${surfW.toFixed(2)}m × ${surfH.toFixed(2)}m · Yerden: +${shadow.screenBottomHeightM.toFixed(2)}m${
+              surfaceTiltDeg ? ` · Eğim: ${surfaceTiltDeg}°` : ''
+            }${surfaceCurvatureDeg ? ` · Kavis: ${surfaceCurvatureDeg}°` : ''})`}
+          </text>
+        )}
+        {showLabels && (surfaceTiltDeg !== 0 || surfaceCurvatureDeg > 0) && (
+          <text
+            x={surfW / 2}
+            y={surfH / 2 - span * 0.02}
+            fill="#c084fc"
+            fontSize={fs * 0.8}
+            fontWeight="bold"
+            textAnchor="end"
+          >
+            {`📐 ${surfaceTiltDeg !== 0 ? `Eğim: ${surfaceTiltDeg}° ` : ''}${surfaceCurvatureDeg > 0 ? `· Kavis: ${surfaceCurvatureDeg}°` : ''}`}
           </text>
         )}
         {showPerson && shadow.isCastingShadow && shadow.shadowRect2D && (
@@ -2338,9 +2600,44 @@ function SurfaceFootprint2D({
             )}
           </g>
         )}
+
+        {/* 👁️ İzleyici Bakış Noktası (2B Ön Pafta) */}
+        {viewerPos && (
+          <g>
+            <circle
+              cx={viewerPos[0]}
+              cy={-viewerPos[1]}
+              r={span / 55}
+              fill="#9333ea"
+              stroke="#ffffff"
+              strokeWidth={span / 260}
+            />
+            <circle
+              cx={viewerPos[0]}
+              cy={-viewerPos[1]}
+              r={span / 30}
+              fill="none"
+              stroke="#c084fc"
+              strokeDasharray={`${span / 70} ${span / 90}`}
+              strokeWidth={span / 260}
+            />
+            {showLabels && (
+              <text
+                x={viewerPos[0]}
+                y={-viewerPos[1] - span * 0.024}
+                fill="#e9d5ff"
+                fontSize={fs * 0.8}
+                fontWeight="bold"
+                textAnchor="middle"
+              >
+                {`👁️ İZLEYİCİ BAKIŞ NOKTASI (Z: ${viewerPos[2].toFixed(2)}m · FOV: ${viewerFov ? `${viewerFov.hfovDeg}°×${viewerFov.vfovDeg}°` : ''})`}
+              </text>
+            )}
+          </g>
+        )}
       </svg>
       <p className="text-[11px] text-slate-400 px-2 pt-1">
-        Beyaz dikdörtgen: Hedef perde ({surfW.toFixed(2)}m × {surfH.toFixed(2)}m · Yerden +{shadow.screenBottomHeightM.toFixed(2)}m) · Renkli dörtgen: Aktif optik görüntü izdüşümü{hasDigitalKeystone ? ' (Kesik gri çerçeve: Ham optik ışık konisi)' : ''} · Siyah insan silüeti: İzleyicinin perdede oluşturduğu gerçek gölge izdüşümü.
+        Beyaz dikdörtgen: Hedef perde ({surfW.toFixed(2)}m × {surfH.toFixed(2)}m · Yerden +{shadow.screenBottomHeightM.toFixed(2)}m) · Renkli dörtgen: Aktif optik görüntü izdüşümü{hasDigitalKeystone ? ' (Kesik gri çerçeve: Ham optik ışık konisi)' : ''} · Siyah insan silüeti: İzleyicinin perdede oluşturduğu gerçek gölge izdüşümü · Mor halka: İzleyici bakış konumu (Z={viewerPos ? viewerPos[2].toFixed(2) : '-'}m, X={viewerPos ? viewerPos[0].toFixed(2) : '-'}m, Y={viewerPos ? viewerPos[1].toFixed(2) : '-'}m{viewerFov ? ` · FOV: ${viewerFov.hfovDeg}°×${viewerFov.vfovDeg}°` : ''}).
       </p>
     </div>
   );
