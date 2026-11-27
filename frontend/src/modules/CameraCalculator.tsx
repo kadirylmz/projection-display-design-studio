@@ -1187,6 +1187,25 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
   const [podiumDepth, setPodiumDepth] = useState<number>(2.0);
   const [podiumWidth, setPodiumWidth] = useState<number>(0);
 
+  // Açılır/kapanır (collapsible) pencere ve çizim odak modu durumları
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [focusDrawingMode, setFocusDrawingMode] = useState<boolean>(false);
+  const [openSections, setOpenSections] = useState({
+    optics: true,
+    surface: true,
+    devicePos: true,
+    viewerPos: false,
+    shadow: true,
+    podium: false,
+  });
+  const [openCards, setOpenCards] = useState({
+    fovPanels: true,
+    metricCards: true,
+    shadowReport: true,
+    viewingAnglesReport: true,
+    reportToolbar: false,
+  });
+
   const pickSensor = (k: string) => {
     setSensor(k);
     const s = SENSORS[k];
@@ -1602,309 +1621,404 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
   );
 
   return (
-    <div className="grid lg:grid-cols-[350px_1fr] gap-4 h-full">
-      {/* SOL PANEL: CİHAZ MODU, KONUM, YÜZEY VE EĞİK AÇI KONTROLLERİ */}
-      <div className="space-y-3 p-3 rounded-lg border border-slate-700 bg-slate-900 text-sm overflow-y-auto">
-        <div>
-          <h2 className="font-bold text-slate-100">Optik FOV, 3B Konisi &amp; İzdüşüm</h2>
-          <p className="text-[11px] text-slate-400">
-            Projektör, kamera, 3D tarayıcı ve VR sistemleri için HFOV/VFOV ve eğik yüzey izdüşümü
-          </p>
-        </div>
+    <div className={`gap-3 h-full transition-all ${isSidebarOpen ? 'grid lg:grid-cols-[360px_1fr]' : 'flex'}`}>
+      {/* SOL PANEL (Açıkken tam kontrol menüsü, kapalıyken ince dikey buton) */}
+      {!isSidebarOpen ? (
+        <button
+          type="button"
+          onClick={() => setIsSidebarOpen(true)}
+          className="w-10 h-full py-4 rounded-lg border border-slate-700 bg-slate-900 hover:bg-slate-800 text-sky-400 flex flex-col items-center justify-between transition group shrink-0 select-none shadow"
+          title="Kontrol Panelini Aç (Sol Kenar Çubuğu)"
+        >
+          <span className="text-base font-bold group-hover:scale-125 transition text-sky-300">▶</span>
+          <span
+            className="text-[11px] font-bold tracking-widest text-slate-300 uppercase whitespace-nowrap"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+          >
+            ⚙️ KONTROL PANELİ
+          </span>
+          <span className="text-xs text-sky-400">⚙</span>
+        </button>
+      ) : (
+        <div className="space-y-2.5 p-3 rounded-lg border border-slate-700 bg-slate-900 text-sm overflow-y-auto w-full lg:w-[360px] shrink-0">
+          <div className="flex items-center justify-between gap-1 border-b border-slate-800 pb-2">
+            <div>
+              <h2 className="font-bold text-slate-100 text-sm">Optik FOV &amp; 3B Projeksiyon</h2>
+              <p className="text-[10px] text-slate-400">Cihaz, yüzey ve insan parametreleri</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const anyClosed = Object.values(openSections).some(v => !v);
+                  setOpenSections({
+                    optics: anyClosed,
+                    surface: anyClosed,
+                    devicePos: anyClosed,
+                    viewerPos: anyClosed,
+                    shadow: anyClosed,
+                    podium: anyClosed,
+                  });
+                }}
+                className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
+                title="Tüm Bölümleri Aç / Daralt"
+              >
+                {Object.values(openSections).every(Boolean) ? '▲ Daralt' : '▼ Aç'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(false)}
+                className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold"
+                title="Sol Paneli Gizle (Çizim Alanını Genişlet)"
+              >
+                ◀ Gizle
+              </button>
+            </div>
+          </div>
 
-        {/* 4 Sistem Sekmesi */}
-        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-          {[
-            { id: 'projector', label: '📽️ Projektör' },
-            { id: 'camera', label: '📷 Kamera' },
-            { id: 'scanner3d', label: '📡 3D Tarayıcı' },
-            { id: 'vr', label: '🥽 VR Sistemi' },
-          ].map(tab => (
+          {/* 4 Sistem Sekmesi */}
+          <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+            {[
+              { id: 'projector', label: '📽️ Projektör' },
+              { id: 'camera', label: '📷 Kamera' },
+              { id: 'scanner3d', label: '📡 3D Tarayıcı' },
+              { id: 'vr', label: '🥽 VR Sistemi' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => applyKindPreset(tab.id as OpticalDeviceKind)}
+                className={`px-2 py-1.5 rounded border font-semibold transition ${
+                  deviceKind === tab.id
+                    ? 'bg-sky-600 border-sky-400 text-white'
+                    : 'bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-600'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Cihaza Özel Optik Parametreler (Açılır/Kapanır) */}
+          <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
             <button
-              key={tab.id}
               type="button"
-              onClick={() => applyKindPreset(tab.id as OpticalDeviceKind)}
-              className={`px-2 py-1.5 rounded border font-semibold transition ${
-                deviceKind === tab.id
-                  ? 'bg-sky-600 border-sky-400 text-white'
-                  : 'bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-600'
-              }`}
+              onClick={() => setOpenSections(s => ({ ...s, optics: !s.optics }))}
+              className="w-full flex items-center justify-between text-[11px] font-bold text-sky-300 hover:text-sky-200 text-left"
             >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Cihaza Özel Optik Parametreler */}
-        {deviceKind === 'projector' && (
-          <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
-            <div className="grid grid-cols-2 gap-2">
-              {N('Throw Ratio (TR)', throwRatio, v => setThrowRatio(Math.max(0.15, v)), '0.05')}
-              <label className="block text-[11px] text-slate-300">
-                En-Boy Oranı
-                <select className="inp mt-0.5" value={aspectKey} onChange={e => setAspectKey(e.target.value)}>
-                  {Object.keys(ASPECT_PRESETS).map(k => (
-                    <option key={k} value={k}>{k}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {/* Yatay / Dikey (Portrait) Yönelim */}
-            <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-              <button
-                type="button"
-                onClick={() => setOrient('landscape')}
-                className={`py-1 rounded border font-semibold transition ${
-                  orient === 'landscape'
-                    ? 'bg-emerald-600/80 border-emerald-400 text-white'
-                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
-                }`}
-              >
-                ↔ Yatay (Landscape)
-              </button>
-              <button
-                type="button"
-                onClick={() => setOrient('portrait')}
-                className={`py-1 rounded border font-semibold transition ${
-                  orient === 'portrait'
-                    ? 'bg-emerald-600/80 border-emerald-400 text-white'
-                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
-                }`}
-              >
-                ↕ Dikey (Portrait 90°)
-              </button>
-            </div>
-
-            {/* Optik Zoom */}
-            <div className="pt-1 border-t border-slate-800/80">
-              <div className="flex items-center justify-between text-[11px] text-slate-300">
-                <span>Optik Zoom: <b className="text-sky-300 font-mono">{zoomFactor.toFixed(2)}×</b></span>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  Efektif TR: {Math.max(0.15, throwRatio / Math.max(0.3, zoomFactor)).toFixed(2)}:1
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0.5}
-                max={2.2}
-                step={0.05}
-                value={zoomFactor}
-                onChange={e => setZoomFactor(+e.target.value)}
-                className="w-full accent-sky-500 h-1.5 mt-1 cursor-pointer"
-              />
-            </div>
-
-            {/* Lens Shift (Yatay / Dikey) */}
-            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
-              <label className="block text-[11px] text-slate-300">
-                Yatay Shift ({Math.round(hShift * 100)}%)
-                <input
-                  type="range"
-                  min={-0.6}
-                  max={0.6}
-                  step={0.02}
-                  value={hShift}
-                  onChange={e => setHShift(+e.target.value)}
-                  className="w-full accent-emerald-500 h-1.5 mt-1 cursor-pointer"
-                />
-              </label>
-              <label className="block text-[11px] text-slate-300">
-                Dikey Shift ({Math.round(vShift * 100)}%)
-                <input
-                  type="range"
-                  min={-0.6}
-                  max={0.6}
-                  step={0.02}
-                  value={vShift}
-                  onChange={e => setVShift(+e.target.value)}
-                  className="w-full accent-emerald-500 h-1.5 mt-1 cursor-pointer"
-                />
-              </label>
-            </div>
-
-            {/* Dijital Keystone (V / H) */}
-            <div className="pt-1 border-t border-slate-800/80 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-amber-300">Dijital Keystone (V / H)</span>
-                {(keystoneV !== 0 || keystoneH !== 0 || hShift !== 0 || vShift !== 0 || zoomFactor !== 1) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setZoomFactor(1);
-                      setHShift(0);
-                      setVShift(0);
-                      setKeystoneV(0);
-                      setKeystoneH(0);
-                    }}
-                    className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600"
-                  >
-                    Optiği Sıfırla
-                  </button>
+              <span className="flex items-center gap-1.5">
+                <span>⚙️ {deviceKind === 'projector' ? 'Projektör' : deviceKind === 'camera' ? 'Kamera' : deviceKind === 'scanner3d' ? '3D Tarayıcı' : 'VR'} Optik Ayarları</span>
+                {!openSections.optics && deviceKind === 'projector' && (
+                  <span className="text-[10px] text-slate-400 font-normal font-mono">
+                    (TR:{throwRatio} · Zoom:{zoomFactor}×)
+                  </span>
                 )}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block text-[11px] text-slate-300">
-                  Dikey V ({keystoneV > 0 ? `+${keystoneV}` : keystoneV}°)
-                  <input
-                    type="range"
-                    min={-40}
-                    max={40}
-                    step={1}
-                    value={keystoneV}
-                    onChange={e => setKeystoneV(+e.target.value)}
-                    className="w-full accent-amber-500 h-1.5 mt-1 cursor-pointer"
-                  />
-                </label>
-                <label className="block text-[11px] text-slate-300">
-                  Yatay H ({keystoneH > 0 ? `+${keystoneH}` : keystoneH}°)
-                  <input
-                    type="range"
-                    min={-40}
-                    max={40}
-                    step={1}
-                    value={keystoneH}
-                    onChange={e => setKeystoneH(+e.target.value)}
-                    className="w-full accent-amber-500 h-1.5 mt-1 cursor-pointer"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-        )}
+              </span>
+              <span className="text-slate-400 text-xs font-mono">{openSections.optics ? '▲' : '▼'}</span>
+            </button>
 
-        {deviceKind === 'camera' && (
-          <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
-            <label className="block text-[11px] text-slate-300">
-              Sensör
-              <select className="inp mt-0.5" value={sensor} onChange={e => pickSensor(e.target.value)}>
-                {Object.keys(SENSORS).map(k => (
-                  <option key={k}>{k}</option>
-                ))}
-              </select>
-            </label>
-            <div className="grid grid-cols-3 gap-1.5">
-              {N('Sensör W (mm)', sw, x => { setSw(Math.max(1, x)); setSensor('Özel'); })}
-              {N('Sensör H (mm)', sh, x => { setSh(Math.max(1, x)); setSensor('Özel'); })}
-              {N('Odak (mm)', focal, x => setFocal(Math.max(1, x)))}
-            </div>
-          </div>
-        )}
+            {openSections.optics && (
+              <>
+                {deviceKind === 'projector' && (
+                  <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                    <div className="grid grid-cols-2 gap-2">
+                      {N('Throw Ratio (TR)', throwRatio, v => setThrowRatio(Math.max(0.15, v)), '0.05')}
+                      <label className="block text-[11px] text-slate-300">
+                        En-Boy Oranı
+                        <select className="inp mt-0.5" value={aspectKey} onChange={e => setAspectKey(e.target.value)}>
+                          {Object.keys(ASPECT_PRESETS).map(k => (
+                            <option key={k} value={k}>{k}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
 
-        {deviceKind === 'scanner3d' && (
-          <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
-            <label className="block text-[11px] text-slate-300">
-              3D Tarayıcı / Derinlik Sensörü
-              <select
-                className="inp mt-0.5"
-                value={scannerPresetId}
-                onChange={e => {
-                  const id = e.target.value;
-                  setScannerPresetId(id);
-                  const found = SCANNER_3D_PRESETS.find(x => x.id === id);
-                  if (found) {
-                    setCustomHfov(found.hfovDeg);
-                    setCustomVfov(found.vfovDeg);
-                  }
-                }}
-              >
-                {SCANNER_3D_PRESETS.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {N('HFOV (°)', customHfov, v => setCustomHfov(Math.max(2, Math.min(170, v))))}
-              {N('VFOV (°)', customVfov, v => setCustomVfov(Math.max(2, Math.min(170, v))))}
-            </div>
-          </div>
-        )}
+                    {/* Yatay / Dikey (Portrait) Yönelim */}
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setOrient('landscape')}
+                        className={`py-1 rounded border font-semibold transition ${
+                          orient === 'landscape'
+                            ? 'bg-emerald-600/80 border-emerald-400 text-white'
+                            : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
+                        }`}
+                      >
+                        ↔ Yatay (Landscape)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOrient('portrait')}
+                        className={`py-1 rounded border font-semibold transition ${
+                          orient === 'portrait'
+                            ? 'bg-emerald-600/80 border-emerald-400 text-white'
+                            : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
+                        }`}
+                      >
+                        ↕ Dikey (Portrait 90°)
+                      </button>
+                    </div>
 
-        {deviceKind === 'vr' && (
-          <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
-            <label className="block text-[11px] text-slate-300">
-              VR / XR Sistemi
-              <select
-                className="inp mt-0.5"
-                value={vrPresetId}
-                onChange={e => {
-                  const id = e.target.value;
-                  setVrPresetId(id);
-                  const found = VR_SYSTEM_PRESETS.find(x => x.id === id);
-                  if (found) {
-                    setCustomHfov(found.hfovDeg);
-                    setCustomVfov(found.vfovDeg);
-                  }
-                }}
-              >
-                {VR_SYSTEM_PRESETS.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {N('HFOV (°)', customHfov, v => setCustomHfov(Math.max(2, Math.min(170, v))))}
-              {N('VFOV (°)', customVfov, v => setCustomVfov(Math.max(2, Math.min(170, v))))}
-            </div>
+                    {/* Optik Zoom */}
+                    <div className="pt-1 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between text-[11px] text-slate-300">
+                        <span>Optik Zoom: <b className="text-sky-300 font-mono">{zoomFactor.toFixed(2)}×</b></span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          Efektif TR: {Math.max(0.15, throwRatio / Math.max(0.3, zoomFactor)).toFixed(2)}:1
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.5}
+                        max={2.2}
+                        step={0.05}
+                        value={zoomFactor}
+                        onChange={e => setZoomFactor(+e.target.value)}
+                        className="w-full accent-sky-500 h-1.5 mt-1 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Lens Shift (Yatay / Dikey) */}
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
+                      <label className="block text-[11px] text-slate-300">
+                        Yatay Shift ({Math.round(hShift * 100)}%)
+                        <input
+                          type="range"
+                          min={-0.6}
+                          max={0.6}
+                          step={0.02}
+                          value={hShift}
+                          onChange={e => setHShift(+e.target.value)}
+                          className="w-full accent-emerald-500 h-1.5 mt-1 cursor-pointer"
+                        />
+                      </label>
+                      <label className="block text-[11px] text-slate-300">
+                        Dikey Shift ({Math.round(vShift * 100)}%)
+                        <input
+                          type="range"
+                          min={-0.6}
+                          max={0.6}
+                          step={0.02}
+                          value={vShift}
+                          onChange={e => setVShift(+e.target.value)}
+                          className="w-full accent-emerald-500 h-1.5 mt-1 cursor-pointer"
+                        />
+                      </label>
+                    </div>
+
+                    {/* Dijital Keystone (V / H) */}
+                    <div className="pt-1 border-t border-slate-800/80 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-amber-300">Dijital Keystone (V / H)</span>
+                        {(keystoneV !== 0 || keystoneH !== 0 || hShift !== 0 || vShift !== 0 || zoomFactor !== 1) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setZoomFactor(1);
+                              setHShift(0);
+                              setVShift(0);
+                              setKeystoneV(0);
+                              setKeystoneH(0);
+                            }}
+                            className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600"
+                          >
+                            Optiği Sıfırla
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-[11px] text-slate-300">
+                          Dikey V ({keystoneV > 0 ? `+${keystoneV}` : keystoneV}°)
+                          <input
+                            type="range"
+                            min={-40}
+                            max={40}
+                            step={1}
+                            value={keystoneV}
+                            onChange={e => setKeystoneV(+e.target.value)}
+                            className="w-full accent-amber-500 h-1.5 mt-1 cursor-pointer"
+                          />
+                        </label>
+                        <label className="block text-[11px] text-slate-300">
+                          Yatay H ({keystoneH > 0 ? `+${keystoneH}` : keystoneH}°)
+                          <input
+                            type="range"
+                            min={-40}
+                            max={40}
+                            step={1}
+                            value={keystoneH}
+                            onChange={e => setKeystoneH(+e.target.value)}
+                            className="w-full accent-amber-500 h-1.5 mt-1 cursor-pointer"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {deviceKind === 'camera' && (
+                  <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                    <label className="block text-[11px] text-slate-300">
+                      Sensör
+                      <select className="inp mt-0.5" value={sensor} onChange={e => pickSensor(e.target.value)}>
+                        {Object.keys(SENSORS).map(k => (
+                          <option key={k}>{k}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {N('Sensör W (mm)', sw, x => { setSw(Math.max(1, x)); setSensor('Özel'); })}
+                      {N('Sensör H (mm)', sh, x => { setSh(Math.max(1, x)); setSensor('Özel'); })}
+                      {N('Odak (mm)', focal, x => setFocal(Math.max(1, x)))}
+                    </div>
+                  </div>
+                )}
+
+                {deviceKind === 'scanner3d' && (
+                  <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                    <label className="block text-[11px] text-slate-300">
+                      3D Tarayıcı / Derinlik Sensörü
+                      <select
+                        className="inp mt-0.5"
+                        value={scannerPresetId}
+                        onChange={e => {
+                          const id = e.target.value;
+                          setScannerPresetId(id);
+                          const found = SCANNER_3D_PRESETS.find(x => x.id === id);
+                          if (found) {
+                            setCustomHfov(found.hfovDeg);
+                            setCustomVfov(found.vfovDeg);
+                          }
+                        }}
+                      >
+                        {SCANNER_3D_PRESETS.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {N('HFOV (°)', customHfov, v => setCustomHfov(Math.max(2, Math.min(170, v))))}
+                      {N('VFOV (°)', customVfov, v => setCustomVfov(Math.max(2, Math.min(170, v))))}
+                    </div>
+                  </div>
+                )}
+
+                {deviceKind === 'vr' && (
+                  <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                    <label className="block text-[11px] text-slate-300">
+                      VR / XR Sistemi
+                      <select
+                        className="inp mt-0.5"
+                        value={vrPresetId}
+                        onChange={e => {
+                          const id = e.target.value;
+                          setVrPresetId(id);
+                          const found = VR_SYSTEM_PRESETS.find(x => x.id === id);
+                          if (found) {
+                            setCustomHfov(found.hfovDeg);
+                            setCustomVfov(found.vfovDeg);
+                          }
+                        }}
+                      >
+                        {VR_SYSTEM_PRESETS.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {N('HFOV (°)', customHfov, v => setCustomHfov(Math.max(2, Math.min(170, v))))}
+                      {N('VFOV (°)', customVfov, v => setCustomVfov(Math.max(2, Math.min(170, v))))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
-        )}
 
         {/* Hedef Yüzey Ölçüleri & Yerden Başlangıç Yüksekliği */}
         <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-amber-300">Hedef Yüzey (Perde) &amp; Yerden Yükseklik</span>
+            <button
+              type="button"
+              onClick={() => setOpenSections(s => ({ ...s, surface: !s.surface }))}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-amber-300 hover:text-amber-200 text-left"
+            >
+              <span>🎯 Hedef Yüzey (Perde) &amp; Kot</span>
+              {!openSections.surface && (
+                <span className="text-[10px] text-slate-400 font-normal font-mono">
+                  ({subW}m × {subH}m)
+                </span>
+              )}
+              <span className="text-slate-400 text-xs font-mono ml-1">{openSections.surface ? '▲' : '▼'}</span>
+            </button>
             <span className="text-[10px] font-mono text-sky-300 bg-sky-950/70 px-1.5 py-0.5 rounded border border-sky-800/70">
               Alt: {screenBottomH.toFixed(2)}{unit} → Üst: {round(screenBottomH + subH, 2)}{unit}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {N(`Genişlik (${unit})`, subW, v => setSubW(Math.max(0.1, v)), '0.1')}
-            {N(`Yükseklik (${unit})`, subH, v => setSubH(Math.max(0.1, v)), '0.1')}
-            {N(`Yerden Başlangıç (${unit})`, screenBottomH, v => updateScreenBottomH(v), '0.1')}
-          </div>
-          <div className="space-y-1 pt-0.5 border-t border-slate-800/80">
-            <div className="flex items-center justify-between text-[10.5px] text-slate-300">
-              <span>↕ Perde Yerden Başlangıç Yüksekliği:</span>
-              <span className="font-mono font-bold text-amber-300">+{screenBottomH.toFixed(2)} {unit}</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={3.0}
-              step={0.05}
-              value={Math.min(3.0, screenBottomH)}
-              onChange={e => updateScreenBottomH(+e.target.value)}
-              className="w-full accent-amber-500 h-1.5 cursor-pointer"
-            />
-            <div className="flex flex-wrap items-center gap-1 pt-0.5">
-              {[
-                { label: '0m Zemin', val: 0 },
-                { label: '0.5m Sahne', val: 0.5 },
-                { label: '0.8m Masa', val: 0.8 },
-                { label: '1.2m Duvar', val: 1.2 },
-                { label: '1.6m Yüksek', val: 1.6 },
-              ].map(p => (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => updateScreenBottomH(fromMeters(p.val, unit))}
-                  className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
-                    Math.abs(toMeters(screenBottomH, unit) - p.val) < 0.03
-                      ? 'bg-amber-600/80 border-amber-400 text-white font-semibold'
-                      : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          {openSections.surface && (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {N(`Genişlik (${unit})`, subW, v => setSubW(Math.max(0.1, v)), '0.1')}
+                {N(`Yükseklik (${unit})`, subH, v => setSubH(Math.max(0.1, v)), '0.1')}
+                {N(`Yerden Başlangıç (${unit})`, screenBottomH, v => updateScreenBottomH(v), '0.1')}
+              </div>
+              <div className="space-y-1 pt-0.5 border-t border-slate-800/80">
+                <div className="flex items-center justify-between text-[10.5px] text-slate-300">
+                  <span>↕ Perde Yerden Başlangıç Yüksekliği:</span>
+                  <span className="font-mono font-bold text-amber-300">+{screenBottomH.toFixed(2)} {unit}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={3.0}
+                  step={0.05}
+                  value={Math.min(3.0, screenBottomH)}
+                  onChange={e => updateScreenBottomH(+e.target.value)}
+                  className="w-full accent-amber-500 h-1.5 cursor-pointer"
+                />
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                  {[
+                    { label: '0m Zemin', val: 0 },
+                    { label: '0.5m Sahne', val: 0.5 },
+                    { label: '0.8m Masa', val: 0.8 },
+                    { label: '1.2m Duvar', val: 1.2 },
+                    { label: '1.6m Yüksek', val: 1.6 },
+                  ].map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => updateScreenBottomH(fromMeters(p.val, unit))}
+                      className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
+                        Math.abs(toMeters(screenBottomH, unit) - p.val) < 0.03
+                          ? 'bg-amber-600/80 border-amber-400 text-white font-semibold'
+                          : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* 3B Cihaz Konumu ve Eğim Açıları */}
         <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-[11px] font-bold text-sky-300">Cihaz 3B Konumu &amp; Eğik Açılar</span>
+            <button
+              type="button"
+              onClick={() => setOpenSections(s => ({ ...s, devicePos: !s.devicePos }))}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-sky-300 hover:text-sky-200 text-left"
+            >
+              <span>📍 Cihaz 3B Konumu</span>
+              {!openSections.devicePos && (
+                <span className="text-[10px] text-slate-400 font-normal font-mono">
+                  (Z:{dist}m · {yRefMode === 'floor' ? `Y:${posY}m` : `Y±:${posY}m`} · Yaw:{yaw}°)
+                </span>
+              )}
+              <span className="text-slate-400 text-xs font-mono ml-1">{openSections.devicePos ? '▲' : '▼'}</span>
+            </button>
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -1937,57 +2051,73 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {N(`X Yanal (${unit})`, posX, setPosX, '0.1')}
-            {N(yRefMode === 'floor' ? `Yerden Y (${unit})` : `Y Merkez (${unit})`, posY, setPosY, '0.1')}
-            {N(`Z Mesafe (${unit})`, dist, v => setDist(Math.max(0.2, v)), '0.1')}
-          </div>
-          {yRefMode === 'floor' && !r.err && (
-            <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-mono">
-              <span>
-                Perde: {round(screenBottomH, 2)}–{round(screenBottomH + subH, 2)} {unit} · Merkeze göre: {r.posM[1] >= 0 ? '+' : ''}{round(fromMeters(r.posM[1], unit), 2)} {unit}
-              </span>
-              {Math.abs(r.posM[1]) > 0.02 && (
-                <button
-                  type="button"
-                  onClick={() => setPosY(round(screenBottomH + subH / 2, 2))}
-                  className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700/70 hover:bg-emerald-900 shrink-0"
-                  title="Cihaz yüksekliğini perde merkezine hizalar"
-                >
-                  🎯 Merkeze Hizala
-                </button>
+          {openSections.devicePos && (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {N(`X Yanal (${unit})`, posX, setPosX, '0.1')}
+                {N(yRefMode === 'floor' ? `Yerden Y (${unit})` : `Y Merkez (${unit})`, posY, setPosY, '0.1')}
+                {N(`Z Mesafe (${unit})`, dist, v => setDist(Math.max(0.2, v)), '0.1')}
+              </div>
+              {yRefMode === 'floor' && !r.err && (
+                <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-mono">
+                  <span>
+                    Perde: {round(screenBottomH, 2)}–{round(screenBottomH + subH, 2)} {unit} · Merkeze göre: {r.posM[1] >= 0 ? '+' : ''}{round(fromMeters(r.posM[1], unit), 2)} {unit}
+                  </span>
+                  {Math.abs(r.posM[1]) > 0.02 && (
+                    <button
+                      type="button"
+                      onClick={() => setPosY(round(screenBottomH + subH / 2, 2))}
+                      className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700/70 hover:bg-emerald-900 shrink-0"
+                      title="Cihaz yüksekliğini perde merkezine hizalar"
+                    >
+                      🎯 Merkeze Hizala
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-[11px] text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Yatay Dönme (Yaw)</span>
+                    <span className="font-mono text-amber-300">{yaw}°</span>
+                  </div>
+                  <input type="range" min={-60} max={60} step={1} value={yaw} onChange={e => setYaw(+e.target.value)} className="w-full accent-sky-500" />
+                </label>
+                <label className="block text-[11px] text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Dikey Eğim (Pitch)</span>
+                    <span className="font-mono text-amber-300">{pitch}°</span>
+                  </div>
+                  <input type="range" min={-45} max={45} step={1} value={pitch} onChange={e => setPitch(+e.target.value)} className="w-full accent-sky-500" />
+                </label>
+                <label className="block text-[11px] text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Eksen Dönmesi (Roll)</span>
+                    <span className="font-mono text-amber-300">{roll}°</span>
+                  </div>
+                  <input type="range" min={-30} max={30} step={1} value={roll} onChange={e => setRoll(+e.target.value)} className="w-full accent-sky-500" />
+                </label>
+              </div>
+            </>
           )}
-          <div className="space-y-1.5 pt-1">
-            <label className="block text-[11px] text-slate-300">
-              <div className="flex justify-between">
-                <span>Yatay Dönme (Yaw)</span>
-                <span className="font-mono text-amber-300">{yaw}°</span>
-              </div>
-              <input type="range" min={-60} max={60} step={1} value={yaw} onChange={e => setYaw(+e.target.value)} className="w-full accent-sky-500" />
-            </label>
-            <label className="block text-[11px] text-slate-300">
-              <div className="flex justify-between">
-                <span>Dikey Eğim (Pitch)</span>
-                <span className="font-mono text-amber-300">{pitch}°</span>
-              </div>
-              <input type="range" min={-45} max={45} step={1} value={pitch} onChange={e => setPitch(+e.target.value)} className="w-full accent-sky-500" />
-            </label>
-            <label className="block text-[11px] text-slate-300">
-              <div className="flex justify-between">
-                <span>Eksen Dönmesi (Roll)</span>
-                <span className="font-mono text-amber-300">{roll}°</span>
-              </div>
-              <input type="range" min={-30} max={30} step={1} value={roll} onChange={e => setRoll(+e.target.value)} className="w-full accent-sky-500" />
-            </label>
-          </div>
         </div>
 
         {/* İzleyici (Viewer FOV) & Yüzey Eğimi / Kavisi */}
         <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-slate-800">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-purple-300">İzleyici Konumu &amp; Yüzey Eğimi</span>
+            <button
+              type="button"
+              onClick={() => setOpenSections(s => ({ ...s, viewerPos: !s.viewerPos }))}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-purple-300 hover:text-purple-200 text-left"
+            >
+              <span>👁️ İzleyici Konumu &amp; Eğim</span>
+              {!openSections.viewerPos && (
+                <span className="text-[10px] text-slate-400 font-normal font-mono">
+                  (Z:{viewerDistM}m · Eğim:{surfaceTiltDeg}°)
+                </span>
+              )}
+              <span className="text-slate-400 text-xs font-mono ml-1">{openSections.viewerPos ? '▲' : '▼'}</span>
+            </button>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -2020,41 +2150,60 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {N(`İzleyici Z (${unit})`, viewerDistM, v => setViewerDistM(Math.max(0.3, v)), '0.1')}
-            {N(`İzleyici X (${unit})`, viewerX, setViewerX, '0.1')}
-            {N(`İzleyici Y (${unit})`, viewerY, setViewerY, '0.1')}
-          </div>
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <label className="block text-[11px] text-slate-300">
-              <div className="flex justify-between">
-                <span>Yüzey Eğimi</span>
-                <span className="font-mono text-purple-300">{surfaceTiltDeg}°</span>
+          {openSections.viewerPos && (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {N(`İzleyici Z (${unit})`, viewerDistM, v => setViewerDistM(Math.max(0.3, v)), '0.1')}
+                {N(`İzleyici X (${unit})`, viewerX, setViewerX, '0.1')}
+                {N(`İzleyici Y (${unit})`, viewerY, setViewerY, '0.1')}
               </div>
-              <input type="range" min={-45} max={45} step={1} value={surfaceTiltDeg} onChange={e => setSurfaceTiltDeg(+e.target.value)} className="w-full accent-purple-500" />
-            </label>
-            <label className="block text-[11px] text-slate-300">
-              <div className="flex justify-between">
-                <span>Yüzey Kavisi</span>
-                <span className="font-mono text-purple-300">{surfaceCurvatureDeg}°</span>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <label className="block text-[11px] text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Yüzey Eğimi</span>
+                    <span className="font-mono text-purple-300">{surfaceTiltDeg}°</span>
+                  </div>
+                  <input type="range" min={-45} max={45} step={1} value={surfaceTiltDeg} onChange={e => setSurfaceTiltDeg(+e.target.value)} className="w-full accent-purple-500" />
+                </label>
+                <label className="block text-[11px] text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Yüzey Kavisi</span>
+                    <span className="font-mono text-purple-300">{surfaceCurvatureDeg}°</span>
+                  </div>
+                  <input type="range" min={0} max={180} step={5} value={surfaceCurvatureDeg} onChange={e => setSurfaceCurvatureDeg(+e.target.value)} className="w-full accent-purple-500" />
+                </label>
               </div>
-              <input type="range" min={0} max={180} step={5} value={surfaceCurvatureDeg} onChange={e => setSurfaceCurvatureDeg(+e.target.value)} className="w-full accent-purple-500" />
-            </label>
-          </div>
+            </>
+          )}
         </div>
 
         {/* İnsan & Gölge Analizi (Shadow Analysis) Kontrolleri */}
         <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-rose-800/60">
           <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-1.5 text-[11px] font-bold text-rose-300 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showPerson}
-                onChange={e => setShowPerson(e.target.checked)}
-                className="accent-rose-500"
-              />
-              <span>🚶 İnsan &amp; Gölge Analizi</span>
-            </label>
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-rose-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showPerson}
+                  onChange={e => {
+                    const chk = e.target.checked;
+                    setShowPerson(chk);
+                    if (chk) setOpenSections(s => ({ ...s, shadow: true }));
+                  }}
+                  className="accent-rose-500"
+                />
+                <span>🚶 İnsan &amp; Gölge Analizi</span>
+              </label>
+              {showPerson && (
+                <button
+                  type="button"
+                  onClick={() => setOpenSections(s => ({ ...s, shadow: !s.shadow }))}
+                  className="text-slate-400 hover:text-slate-200 text-xs font-mono ml-1"
+                >
+                  {openSections.shadow ? '▲' : '▼'}
+                </button>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -2070,7 +2219,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
             </button>
           </div>
 
-          {showPerson && (
+          {showPerson && openSections.shadow && (
             <>
               <div className="grid grid-cols-3 gap-1.5">
                 {N(`Boy (${unit})`, personHeight, v => setPersonHeight(Math.max(0.5, v)), '0.05')}
@@ -2183,15 +2332,30 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
         {/* 🎭 Sahne Podyumu (Podium / Platform) */}
         <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-sky-800/60">
           <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-1.5 text-[11px] font-bold text-sky-300 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showPodium}
-                onChange={e => setShowPodium(e.target.checked)}
-                className="accent-sky-500"
-              />
-              <span>🎭 Sahne Podyumu / Platform</span>
-            </label>
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-sky-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showPodium}
+                  onChange={e => {
+                    const chk = e.target.checked;
+                    setShowPodium(chk);
+                    if (chk) setOpenSections(s => ({ ...s, podium: true }));
+                  }}
+                  className="accent-sky-500"
+                />
+                <span>🎭 Sahne Podyumu / Platform</span>
+              </label>
+              {showPodium && (
+                <button
+                  type="button"
+                  onClick={() => setOpenSections(s => ({ ...s, podium: !s.podium }))}
+                  className="text-slate-400 hover:text-slate-200 text-xs font-mono ml-1"
+                >
+                  {openSections.podium ? '▲' : '▼'}
+                </button>
+              )}
+            </div>
             {showPodium && (
               <button
                 type="button"
@@ -2207,7 +2371,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
             )}
           </div>
 
-          {showPodium && (
+          {showPodium && openSections.podium && (
             <>
               <div className="grid grid-cols-3 gap-1.5">
                 {N(`Yükseklik (${unit})`, podiumHeight, v => setPodiumHeight(Math.max(0.05, v)), '0.05')}
@@ -2268,6 +2432,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
           )}
         </div>
       </div>
+    )}
 
       {/* SAĞ PANEL: FOV, EĞİK İZDÜŞÜM, KAPSAMA KONTROLÜ + 3D / 2D GÖRÜNTÜ */}
       <div className="space-y-3 min-w-0 flex flex-col">
@@ -2275,6 +2440,107 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
           <p className="p-3 rounded bg-red-950/60 border border-red-800 text-red-300">⚠ {r.err}</p>
         ) : (
           <>
+            {/* SAĞ PANEL ARAÇ ÇUBUĞU: ÇİZİM ODAK MODU & PENCERE KONTROLLERİ */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/90 border border-slate-800 p-2 rounded-lg text-xs">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !focusDrawingMode;
+                    setFocusDrawingMode(next);
+                    if (next) {
+                      setOpenCards({
+                        fovPanels: false,
+                        metricCards: false,
+                        shadowReport: false,
+                        viewingAnglesReport: false,
+                        reportToolbar: false,
+                      });
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition shadow ${
+                    focusDrawingMode
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border border-emerald-400'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                  }`}
+                  title="Tüm analiz kartlarını tek satıra daraltıp 3D/2D çizim ekranını maksimum boyuta genişletir"
+                >
+                  <span>📐 {focusDrawingMode ? 'Çizim Odak Modu: AÇIK' : 'Çizim Odak Modu'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const anyClosed = Object.values(openCards).some(v => !v);
+                    setOpenCards({
+                      fovPanels: anyClosed,
+                      metricCards: anyClosed,
+                      shadowReport: anyClosed,
+                      viewingAnglesReport: anyClosed,
+                      reportToolbar: anyClosed,
+                    });
+                    if (anyClosed) setFocusDrawingMode(false);
+                  }}
+                  className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium"
+                >
+                  {Object.values(openCards).every(Boolean) ? '▲ Tüm Kartları Daralt' : '▼ Tüm Kartları Aç'}
+                </button>
+              </div>
+
+              {/* Hızlı durum / açma kapatma butonları */}
+              <div className="flex items-center gap-1 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setOpenCards(c => ({ ...c, fovPanels: !c.fovPanels }))}
+                  className={`px-2 py-1 rounded border transition ${
+                    openCards.fovPanels ? 'bg-purple-950/80 border-purple-500 text-purple-200 font-semibold' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  FOV {openCards.fovPanels ? '▲' : '▼'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpenCards(c => ({ ...c, metricCards: !c.metricCards }))}
+                  className={`px-2 py-1 rounded border transition ${
+                    openCards.metricCards ? 'bg-sky-950/80 border-sky-500 text-sky-200 font-semibold' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Metrikler {openCards.metricCards ? '▲' : '▼'}
+                </button>
+                {showPerson && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenCards(c => ({ ...c, shadowReport: !c.shadowReport }))}
+                    className={`px-2 py-1 rounded border transition ${
+                      openCards.shadowReport ? 'bg-rose-950/80 border-rose-500 text-rose-200 font-semibold' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Gölge {openCards.shadowReport ? '▲' : '▼'}
+                  </button>
+                )}
+                {showPerson && viewingAngles && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenCards(c => ({ ...c, viewingAnglesReport: !c.viewingAnglesReport }))}
+                    className={`px-2 py-1 rounded border transition ${
+                      openCards.viewingAnglesReport ? 'bg-amber-950/80 border-amber-500 text-amber-200 font-semibold' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Ergonomi {openCards.viewingAnglesReport ? '▲' : '▼'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOpenCards(c => ({ ...c, reportToolbar: !c.reportToolbar }))}
+                  className={`px-2 py-1 rounded border transition ${
+                    openCards.reportToolbar ? 'bg-indigo-950/80 border-indigo-500 text-indigo-200 font-semibold' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  📸 Rapor {openCards.reportToolbar ? '▲' : '▼'}
+                </button>
+              </div>
+            </div>
+
             {/* Tam Kapsama Durum Bandı */}
             <div
               className={`px-3 py-2 rounded-lg border text-xs flex flex-wrap items-center justify-between gap-2 ${
@@ -2294,260 +2560,375 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               </div>
             </div>
 
-            {/* 3 Ayrı FOV Paneli: Viewer FOV | Projector FOV | Surface FOV */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-              <div className="p-2.5 rounded bg-purple-950/30 border border-purple-700/60">
-                <div className="text-[10.5px] font-bold text-purple-300 uppercase tracking-wider">1. Viewer FOV (İzleyici)</div>
-                <div className="font-mono font-bold text-white text-sm mt-0.5">
-                  {r.viewerFov.hfovDeg}° × {r.viewerFov.vfovDeg}° <span className="text-purple-300 text-xs">(D: {r.viewerFov.dfovDeg}°)</span>
-                </div>
-                <div className="text-[10px] text-slate-300 font-mono mt-0.5">
-                  Uzaklık: {u(r.viewerFov.viewerDistanceToCenterM)} · Merkez Açısı: ∠{r.viewerFov.viewerCenterAngleDeg}°
-                </div>
-                <div className="text-[10px] text-purple-200/80 font-mono">
-                  Perspektif Sıkışması: %{r.viewerFov.perspectiveCompressionPct}
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-sky-950/30 border border-sky-700/60">
-                <div className="text-[10.5px] font-bold text-sky-300 uppercase tracking-wider">2. Projector / Optik FOV</div>
-                <div className="font-mono font-bold text-white text-sm mt-0.5">
-                  {r.proj.hfovDeg}° × {r.proj.vfovDeg}° <span className="text-sky-300 text-xs">(D: {r.proj.dfovDeg}°)</span>
-                </div>
-                <div className="text-[10px] text-slate-300 font-mono mt-0.5">
-                  Görüntü: {u(r.surfW)} × {u(r.surfH)} · Cihaz: {u(r.proj.distanceToCenterM)}
-                </div>
-                <div className="text-[10px] text-sky-200/80 font-mono">
-                  Geliş Açısı: ∠{r.proj.incidenceAngleDeg}°
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-emerald-950/30 border border-emerald-700/60">
-                <div className="text-[10.5px] font-bold text-emerald-300 uppercase tracking-wider">3. Surface FOV (Yüzey)</div>
-                <div className="font-mono font-bold text-white text-sm mt-0.5">
-                  {r.surfaceFov.hfovDeg}° × {r.surfaceFov.vfovDeg}° <span className="text-emerald-300 text-xs">(D: {r.surfaceFov.dfovDeg}°)</span>
-                </div>
-                <div className="text-[10px] text-slate-300 font-mono mt-0.5">
-                  Eğim: {r.surfaceFov.surfaceTiltDeg}° · Kavis: {r.surfaceFov.surfaceCurvatureDeg}°
-                </div>
-                <div className="text-[10px] text-emerald-200/80 font-mono">
-                  Perspektif Değişimi: %{r.surfaceFov.perspectiveChangePct}
-                </div>
-              </div>
-            </div>
-
-            {/* Metrik Kartları */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-              <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
-                <div className="text-[10.5px] text-slate-400">Optik Görüş Açısı (FOV)</div>
-                <div className="font-mono font-bold text-sky-300 text-sm">
-                  {r.proj.hfovDeg}° × {r.proj.vfovDeg}°
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono">Diagonal: {r.proj.dfovDeg}°</div>
-              </div>
-
-              <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
-                <div className="text-[10.5px] text-slate-400">Gerçek Eğik İzdüşüm Alanı</div>
-                <div className="font-mono font-bold text-emerald-300 text-sm">
-                  {r.proj.projectedAreaM2} m²
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono">
-                  Hedef: {round(r.surfW * r.surfH, 2)} m²
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
-                <div className="text-[10.5px] text-slate-400">Yamuk Kenar Ölçüleri (Üst/Alt)</div>
-                <div className="font-mono font-bold text-amber-300 text-sm">
-                  {u(r.proj.topEdgeM)} / {u(r.proj.bottomEdgeM)}
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono">
-                  Sol/Sağ: {u(r.proj.leftEdgeM)} / {u(r.proj.rightEdgeM)}
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
-                <div className="text-[10.5px] text-slate-400">
-                  {r.camMeta ? 'Kadraj İçin Gereken Odak' : 'Cihaz → Merkez Mesafesi'}
-                </div>
-                <div className="font-mono font-bold text-indigo-300 text-sm">
-                  {r.camMeta ? `${round(r.camMeta.needF, 1)} mm` : u(r.proj.distanceToCenterM)}
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono">
-                  {r.camMeta
-                    ? `Dik Görünür: ${u(r.camMeta.visible.width)}×${u(r.camMeta.visible.height)}`
-                    : `Keystone: %${r.proj.keystoneDistortionPct}`}
-                </div>
-              </div>
-            </div>
-
-            {/* İnsan & Gölge Analizi Rapor Kartı */}
-            {showPerson && r.shadow && (
-              <div
-                className={`p-3 rounded-lg border text-xs space-y-2 ${
-                  r.shadow.isCastingShadow
-                    ? 'bg-rose-950/40 border-rose-700/80 text-rose-100'
-                    : 'bg-emerald-950/35 border-emerald-700/70 text-emerald-100'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-bold text-sm flex items-center gap-2">
-                    <span>🕴️ İnsan &amp; Gölge Analizi Raporu</span>
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-slate-950/70 border border-slate-700 font-mono">
-                      {r.shadow.zoneStatusLabel}
-                    </span>
-                  </div>
+            {/* 3 Ayrı FOV Paneli: Viewer FOV | Projector FOV | Surface FOV (Açılır/Kapanır) */}
+            {openCards.fovPanels ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs px-1 text-slate-400">
+                  <span className="font-bold text-purple-300">📐 FOV Parametreleri &amp; Görüş Konileri</span>
                   <button
                     type="button"
-                    onClick={sendShadowReportToPdf}
-                    className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] shadow transition"
+                    onClick={() => setOpenCards(c => ({ ...c, fovPanels: false }))}
+                    className="text-[10.5px] hover:text-slate-200 font-mono"
                   >
-                    {reportSavedToast ? '✅ PDF Raporuna Eklendi!' : '📋 Gölge Raporunu PDF Raporuna Ekle'}
+                    ▲ Daralt
                   </button>
                 </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Gölge Başlangıç Sınırı (Perdeden)</div>
-                    <div className="text-amber-300 font-bold text-xs mt-0.5">
-                      {r.shadow.neverCastsShadow ? 'Gölge Yok (0 m)' : `0 – ${u(r.shadow.shadowEntryDistFromScreenM)}`}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                  <div className="p-2.5 rounded bg-purple-950/30 border border-purple-700/60">
+                    <div className="text-[10.5px] font-bold text-purple-300 uppercase tracking-wider">1. Viewer FOV (İzleyici)</div>
+                    <div className="font-mono font-bold text-white text-sm mt-0.5">
+                      {r.viewerFov.hfovDeg}° × {r.viewerFov.vfovDeg}° <span className="text-purple-300 text-xs">(D: {r.viewerFov.dfovDeg}°)</span>
                     </div>
-                    <div className="text-slate-400 text-[10px]">
-                      Cihazdan: {u(r.shadow.shadowEntryDistFromDeviceM)}
+                    <div className="text-[10px] text-slate-300 font-mono mt-0.5">
+                      Uzaklık: {u(r.viewerFov.viewerDistanceToCenterM)} · Merkez Açısı: ∠{r.viewerFov.viewerCenterAngleDeg}°
                     </div>
-                  </div>
-
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Mevcut İnsan Konumu</div>
-                    <div className="text-white font-bold text-xs mt-0.5">
-                      Perdeye {u(r.shadow.personDistFromScreenM)}
-                    </div>
-                    <div className="text-slate-400 text-[10px]">
-                      Cihaza: {u(r.shadow.personDistFromDeviceM)} · Boy: {u(r.shadow.personHeightM)}
+                    <div className="text-[10px] text-purple-200/80 font-mono">
+                      Perspektif Sıkışması: %{r.viewerFov.perspectiveCompressionPct}
                     </div>
                   </div>
 
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Konumdaki Işık Alt Sınırı</div>
-                    <div className="text-sky-300 font-bold text-xs mt-0.5">
-                      Yerden {u(r.shadow.beamBottomAtPersonM)}
+                  <div className="p-2.5 rounded bg-sky-950/30 border border-sky-700/60">
+                    <div className="text-[10.5px] font-bold text-sky-300 uppercase tracking-wider">2. Projector / Optik FOV</div>
+                    <div className="font-mono font-bold text-white text-sm mt-0.5">
+                      {r.proj.hfovDeg}° × {r.proj.vfovDeg}° <span className="text-sky-300 text-xs">(D: {r.proj.dfovDeg}°)</span>
                     </div>
-                    <div className="text-slate-400 text-[10px]">
-                      {r.shadow.headClearanceM >= 0
-                        ? `Baş Üstü Boşluk: +${u(r.shadow.headClearanceM)}`
-                        : `Işığa Giriş: ${u(r.shadow.intrusionHeightM)}`}
+                    <div className="text-[10px] text-slate-300 font-mono mt-0.5">
+                      Görüntü: {u(r.surfW)} × {u(r.surfH)} · Cihaz: {u(r.proj.distanceToCenterM)}
+                    </div>
+                    <div className="text-[10px] text-sky-200/80 font-mono">
+                      Geliş Açısı: ∠{r.proj.incidenceAngleDeg}°
                     </div>
                   </div>
 
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Perdedeki Gölge Ebadı</div>
-                    <div className={`font-bold text-xs mt-0.5 ${r.shadow.isCastingShadow ? 'text-rose-300' : 'text-emerald-300'}`}>
-                      {r.shadow.isCastingShadow
-                        ? `${u(r.shadow.shadowWidthM)} × ${u(r.shadow.shadowHeightM)}`
-                        : '0 m × 0 m (Temiz)'}
+                  <div className="p-2.5 rounded bg-emerald-950/30 border border-emerald-700/60">
+                    <div className="text-[10.5px] font-bold text-emerald-300 uppercase tracking-wider">3. Surface FOV (Yüzey)</div>
+                    <div className="font-mono font-bold text-white text-sm mt-0.5">
+                      {r.surfaceFov.hfovDeg}° × {r.surfaceFov.vfovDeg}° <span className="text-emerald-300 text-xs">(D: {r.surfaceFov.dfovDeg}°)</span>
                     </div>
-                    <div className="text-slate-400 text-[10px]">
-                      {r.shadow.isCastingShadow
-                        ? `Alan: ${r.shadow.shadowAreaM2} m² (%${r.shadow.shadowCoveragePct})`
-                        : 'Perdeye gölge düşmüyor'}
+                    <div className="text-[10px] text-slate-300 font-mono mt-0.5">
+                      Eğim: {r.surfaceFov.surfaceTiltDeg}° · Kavis: {r.surfaceFov.surfaceCurvatureDeg}°
+                    </div>
+                    <div className="text-[10px] text-emerald-200/80 font-mono">
+                      Perspektif Değişimi: %{r.surfaceFov.perspectiveChangePct}
                     </div>
                   </div>
                 </div>
-
-                <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800">
-                  <b>Mühendislik Özeti:</b> {r.shadow.reportSummaryTr}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between p-2 rounded bg-purple-950/20 border border-purple-800/40 text-xs">
+                <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-purple-200">
+                  <span className="font-bold text-purple-300">📐 FOV Panelleri:</span>
+                  <span>İzleyici: {r.viewerFov.hfovDeg}°×{r.viewerFov.vfovDeg}°</span>
+                  <span>· Optik: {r.proj.hfovDeg}°×{r.proj.vfovDeg}°</span>
+                  <span>· Yüzey: {r.surfaceFov.hfovDeg}°×{r.surfaceFov.vfovDeg}°</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenCards(c => ({ ...c, fovPanels: true }))}
+                  className="text-purple-300 hover:text-purple-100 font-semibold text-[11px] ml-auto shrink-0"
+                >
+                  Detayı Aç ▼
+                </button>
               </div>
             )}
 
-            {/* 👁️ İnsanın Gözünden Bakış Açıları & Ergonomi Analizi (AVIXA DISCAS / SMPTE) */}
-            {showPerson && viewingAngles && (
-              <div
-                className={`p-3 rounded-lg border text-xs space-y-2.5 ${
-                  viewingAngles.ergonomicsGrade === 'warning'
-                    ? 'bg-amber-950/40 border-amber-600/80 text-amber-100'
-                    : 'bg-sky-950/35 border-sky-700/70 text-sky-100'
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-bold text-sm flex items-center gap-2">
-                    <span>👁️ İnsanın Gözünden Bakış Açıları &amp; Ergonomi</span>
-                    <span
-                      className={`text-[11px] px-2 py-0.5 rounded font-bold border ${
-                        viewingAngles.ergonomicsGrade === 'warning'
-                          ? 'bg-red-950/80 border-red-500 text-red-200'
-                          : viewingAngles.ergonomicsGrade === 'acceptable'
-                          ? 'bg-amber-950/80 border-amber-500 text-amber-200'
-                          : 'bg-emerald-950/80 border-emerald-500 text-emerald-200'
-                      }`}
-                    >
-                      {viewingAngles.ergonomicsLabelTr}
-                    </span>
-                  </div>
-                  <div className="text-[10.5px] font-mono text-slate-300">
-                    AVIXA DISCAS Standardı (Üst Bakış ≤ 35°)
-                  </div>
+            {/* Metrik Kartları (Açılır/Kapanır) */}
+            {openCards.metricCards ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs px-1 text-slate-400">
+                  <span className="font-bold text-sky-300">📊 Optik &amp; İzdüşüm Metrikleri</span>
+                  <button
+                    type="button"
+                    onClick={() => setOpenCards(c => ({ ...c, metricCards: false }))}
+                    className="text-[10.5px] hover:text-slate-200 font-mono"
+                  >
+                    ▲ Daralt
+                  </button>
                 </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Perde Üst Kenar Açısı</div>
-                    <div
-                      className={`font-bold text-xs mt-0.5 ${
-                        viewingAngles.verticalAngleTopDeg <= 35 ? 'text-emerald-300' : 'text-rose-400'
-                      }`}
-                    >
-                      ∠{viewingAngles.verticalAngleTopDeg > 0 ? `+${viewingAngles.verticalAngleTopDeg}` : viewingAngles.verticalAngleTopDeg}°
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
+                    <div className="text-[10.5px] text-slate-400">Optik Görüş Açısı (FOV)</div>
+                    <div className="font-mono font-bold text-sky-300 text-sm">
+                      {r.proj.hfovDeg}° × {r.proj.vfovDeg}°
                     </div>
-                    <div className="text-slate-400 text-[10px]">
-                      {viewingAngles.verticalAngleTopDeg <= 35 ? '✅ AVIXA Sınırında (≤35°)' : '⚠️ Boyun Zorlanması Riski'}
+                    <div className="text-[10px] text-slate-400 font-mono">Diagonal: {r.proj.dfovDeg}°</div>
+                  </div>
+
+                  <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
+                    <div className="text-[10.5px] text-slate-400">Gerçek Eğik İzdüşüm Alanı</div>
+                    <div className="font-mono font-bold text-emerald-300 text-sm">
+                      {r.proj.projectedAreaM2} m²
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      Hedef: {round(r.surfW * r.surfH, 2)} m²
                     </div>
                   </div>
 
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Perde Merkez Açısı</div>
-                    <div className="text-sky-300 font-bold text-xs mt-0.5">
-                      ∠{viewingAngles.verticalAngleCenterDeg > 0 ? `+${viewingAngles.verticalAngleCenterDeg}` : viewingAngles.verticalAngleCenterDeg}°
+                  <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
+                    <div className="text-[10.5px] text-slate-400">Yamuk Kenar Ölçüleri (Üst/Alt)</div>
+                    <div className="font-mono font-bold text-amber-300 text-sm">
+                      {u(r.proj.topEdgeM)} / {u(r.proj.bottomEdgeM)}
                     </div>
-                    <div className="text-slate-400 text-[10px]">
-                      Dikey VFOV: {viewingAngles.verticalFovDeg}°
-                    </div>
-                  </div>
-
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Perde Alt Kenar Açısı</div>
-                    <div className="text-emerald-300 font-bold text-xs mt-0.5">
-                      ∠{viewingAngles.verticalAngleBottomDeg > 0 ? `+${viewingAngles.verticalAngleBottomDeg}` : viewingAngles.verticalAngleBottomDeg}°
-                    </div>
-                    <div className="text-slate-400 text-[10px]">
-                      Yatay HFOV: {viewingAngles.horizontalFovDeg}°
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      Sol/Sağ: {u(r.proj.leftEdgeM)} / {u(r.proj.rightEdgeM)}
                     </div>
                   </div>
 
-                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
-                    <div className="text-slate-400 text-[10px]">Göz Seviyesi (Yerden)</div>
-                    <div className="text-white font-bold text-xs mt-0.5">
-                      {u(viewingAngles.eyeHeightFromFloorM)}
+                  <div className="p-2.5 rounded bg-slate-900 border border-slate-700">
+                    <div className="text-[10.5px] text-slate-400">
+                      {r.camMeta ? 'Kadraj İçin Gereken Odak' : 'Cihaz → Merkez Mesafesi'}
                     </div>
-                    <div className="text-slate-400 text-[10px]">
-                      {personElevation > 0
-                        ? `(Zemin +${personElevation.toFixed(2)}${unit} Yükseltili)`
-                        : 'Standart Zemin Kotu'}
+                    <div className="font-mono font-bold text-indigo-300 text-sm">
+                      {r.camMeta ? `${round(r.camMeta.needF, 1)} mm` : u(r.proj.distanceToCenterM)}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      {r.camMeta
+                        ? `Dik Görünür: ${u(r.camMeta.visible.width)}×${u(r.camMeta.visible.height)}`
+                        : `Keystone: %${r.proj.keystoneDistortionPct}`}
                     </div>
                   </div>
-                </div>
-
-                <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <b>Ergonomi Değerlendirmesi:</b> {viewingAngles.ergonomicsAdviceTr}
-                  </div>
-                  {showPodium && (
-                    <span className="text-[10px] font-mono text-cyan-300 shrink-0 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-700">
-                      🎭 Podyum: +{podiumHeight.toFixed(2)}{unit} (Derinlik: {podiumDepth.toFixed(2)}{unit})
-                    </span>
-                  )}
                 </div>
               </div>
+            ) : (
+              <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800 text-xs">
+                <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-slate-300">
+                  <span className="font-bold text-sky-400">📊 Metrikler:</span>
+                  <span>Alan: {r.proj.projectedAreaM2} m²</span>
+                  <span>· Kenarlar: {u(r.proj.topEdgeM)} / {u(r.proj.bottomEdgeM)}</span>
+                  <span>· Mesafe: {u(r.proj.distanceToCenterM)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenCards(c => ({ ...c, metricCards: true }))}
+                  className="text-sky-400 hover:text-sky-200 font-semibold text-[11px] ml-auto shrink-0"
+                >
+                  Detayı Aç ▼
+                </button>
+              </div>
+            )}
+
+            {/* İnsan & Gölge Analizi Rapor Kartı (Açılır/Kapanır) */}
+            {showPerson && r.shadow && (
+              openCards.shadowReport ? (
+                <div
+                  className={`p-3 rounded-lg border text-xs space-y-2 ${
+                    r.shadow.isCastingShadow
+                      ? 'bg-rose-950/40 border-rose-700/80 text-rose-100'
+                      : 'bg-emerald-950/35 border-emerald-700/70 text-emerald-100'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-sm flex items-center gap-2">
+                      <span>🕴️ İnsan &amp; Gölge Analizi Raporu</span>
+                      <span className="text-[11px] px-2 py-0.5 rounded bg-slate-950/70 border border-slate-700 font-mono">
+                        {r.shadow.zoneStatusLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={sendShadowReportToPdf}
+                        className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] shadow transition"
+                      >
+                        {reportSavedToast ? '✅ PDF Raporuna Eklendi!' : '📋 Gölge Raporunu PDF Raporuna Ekle'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOpenCards(c => ({ ...c, shadowReport: false }))}
+                        className="text-[11px] px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-300 hover:text-white"
+                        title="Kartı Daralt"
+                      >
+                        ▲
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Gölge Başlangıç Sınırı (Perdeden)</div>
+                      <div className="text-amber-300 font-bold text-xs mt-0.5">
+                        {r.shadow.neverCastsShadow ? 'Gölge Yok (0 m)' : `0 – ${u(r.shadow.shadowEntryDistFromScreenM)}`}
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        Cihazdan: {u(r.shadow.shadowEntryDistFromDeviceM)}
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Mevcut İnsan Konumu</div>
+                      <div className="text-white font-bold text-xs mt-0.5">
+                        Perdeye {u(r.shadow.personDistFromScreenM)}
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        Cihaza: {u(r.shadow.personDistFromDeviceM)} · Boy: {u(r.shadow.personHeightM)}
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Konumdaki Işık Alt Sınırı</div>
+                      <div className="text-sky-300 font-bold text-xs mt-0.5">
+                        Yerden {u(r.shadow.beamBottomAtPersonM)}
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        {r.shadow.headClearanceM >= 0
+                          ? `Baş Üstü Boşluk: +${u(r.shadow.headClearanceM)}`
+                          : `Işığa Giriş: ${u(r.shadow.intrusionHeightM)}`}
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Perdedeki Gölge Ebadı</div>
+                      <div className={`font-bold text-xs mt-0.5 ${r.shadow.isCastingShadow ? 'text-rose-300' : 'text-emerald-300'}`}>
+                        {r.shadow.isCastingShadow
+                          ? `${u(r.shadow.shadowWidthM)} × ${u(r.shadow.shadowHeightM)}`
+                          : '0 m × 0 m (Temiz)'}
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        {r.shadow.isCastingShadow
+                          ? `Alan: ${r.shadow.shadowAreaM2} m² (%${r.shadow.shadowCoveragePct})`
+                          : 'Perdeye gölge düşmüyor'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800">
+                    <b>Mühendislik Özeti:</b> {r.shadow.reportSummaryTr}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-2 rounded bg-rose-950/20 border border-rose-800/40 text-xs">
+                  <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-rose-200">
+                    <span className="font-bold text-rose-300">🕴️ Gölge Analizi:</span>
+                    <span className="bg-slate-950/60 px-1.5 py-0.5 rounded border border-rose-900">{r.shadow.zoneStatusLabel}</span>
+                    <span>{r.shadow.isCastingShadow ? `Gölge Alanı: ${r.shadow.shadowAreaM2} m² (%${r.shadow.shadowCoveragePct})` : 'Gölge Yok'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOpenCards(c => ({ ...c, shadowReport: true }))}
+                    className="text-rose-300 hover:text-rose-100 font-semibold text-[11px] ml-auto shrink-0"
+                  >
+                    Detayı Aç ▼
+                  </button>
+                </div>
+              )
+            )}
+
+            {/* 👁️ İnsanın Gözünden Bakış Açıları & Ergonomi Analizi (Açılır/Kapanır) */}
+            {showPerson && viewingAngles && (
+              openCards.viewingAnglesReport ? (
+                <div
+                  className={`p-3 rounded-lg border text-xs space-y-2.5 ${
+                    viewingAngles.ergonomicsGrade === 'warning'
+                      ? 'bg-amber-950/40 border-amber-600/80 text-amber-100'
+                      : 'bg-sky-950/35 border-sky-700/70 text-sky-100'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-sm flex items-center gap-2">
+                      <span>👁️ İnsanın Gözünden Bakış Açıları &amp; Ergonomi</span>
+                      <span
+                        className={`text-[11px] px-2 py-0.5 rounded font-bold border ${
+                          viewingAngles.ergonomicsGrade === 'warning'
+                            ? 'bg-red-950/80 border-red-500 text-red-200'
+                            : viewingAngles.ergonomicsGrade === 'acceptable'
+                            ? 'bg-amber-950/80 border-amber-500 text-amber-200'
+                            : 'bg-emerald-950/80 border-emerald-500 text-emerald-200'
+                        }`}
+                      >
+                        {viewingAngles.ergonomicsLabelTr}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="text-[10.5px] font-mono text-slate-300">
+                        AVIXA DISCAS Standardı (Üst Bakış ≤ 35°)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOpenCards(c => ({ ...c, viewingAnglesReport: false }))}
+                        className="text-[11px] px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-300 hover:text-white"
+                        title="Kartı Daralt"
+                      >
+                        ▲
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Perde Üst Kenar Açısı</div>
+                      <div
+                        className={`font-bold text-xs mt-0.5 ${
+                          viewingAngles.verticalAngleTopDeg <= 35 ? 'text-emerald-300' : 'text-rose-400'
+                        }`}
+                      >
+                        ∠{viewingAngles.verticalAngleTopDeg > 0 ? `+${viewingAngles.verticalAngleTopDeg}` : viewingAngles.verticalAngleTopDeg}°
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        {viewingAngles.verticalAngleTopDeg <= 35 ? '✅ AVIXA Sınırında (≤35°)' : '⚠️ Boyun Zorlanması Riski'}
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Perde Merkez Açısı</div>
+                      <div className="text-sky-300 font-bold text-xs mt-0.5">
+                        ∠{viewingAngles.verticalAngleCenterDeg > 0 ? `+${viewingAngles.verticalAngleCenterDeg}` : viewingAngles.verticalAngleCenterDeg}°
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        Dikey VFOV: {viewingAngles.verticalFovDeg}°
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Perde Alt Kenar Açısı</div>
+                      <div className="text-emerald-300 font-bold text-xs mt-0.5">
+                        ∠{viewingAngles.verticalAngleBottomDeg > 0 ? `+${viewingAngles.verticalAngleBottomDeg}` : viewingAngles.verticalAngleBottomDeg}°
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        Yatay HFOV: {viewingAngles.horizontalFovDeg}°
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                      <div className="text-slate-400 text-[10px]">Göz Seviyesi (Yerden)</div>
+                      <div className="text-white font-bold text-xs mt-0.5">
+                        {u(viewingAngles.eyeHeightFromFloorM)}
+                      </div>
+                      <div className="text-slate-400 text-[10px]">
+                        {personElevation > 0
+                          ? `(Zemin +${personElevation.toFixed(2)}${unit} Yükseltili)`
+                          : 'Standart Zemin Kotu'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <b>Ergonomi Değerlendirmesi:</b> {viewingAngles.ergonomicsAdviceTr}
+                    </div>
+                    {showPodium && (
+                      <span className="text-[10px] font-mono text-cyan-300 shrink-0 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-700">
+                        🎭 Podyum: +{podiumHeight.toFixed(2)}{unit} (Derinlik: {podiumDepth.toFixed(2)}{unit})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-2 rounded bg-sky-950/20 border border-sky-800/40 text-xs">
+                  <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-sky-200">
+                    <span className="font-bold text-sky-300">👁️ Ergonomi:</span>
+                    <span className="px-1.5 py-0.5 rounded border border-sky-800 bg-slate-950/60">{viewingAngles.ergonomicsLabelTr}</span>
+                    <span>Üst Kenar: ∠{viewingAngles.verticalAngleTopDeg}°</span>
+                    <span>· Göz: {u(viewingAngles.eyeHeightFromFloorM)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOpenCards(c => ({ ...c, viewingAnglesReport: true }))}
+                    className="text-sky-300 hover:text-sky-100 font-semibold text-[11px] ml-auto shrink-0"
+                  >
+                    Detayı Aç ▼
+                  </button>
+                </div>
+              )
             )}
 
             {/* 3D / 2D Görünüm Geçişi + Kamera Açıları & Etiket Kontrolü */}
@@ -2619,137 +3000,161 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
               </span>
             </div>
 
-            {/* RAPORA AÇILARI AYRI AYRI EKLEME & SİLME ARAÇ ÇUBUĞU */}
-            <div className="p-2 rounded bg-slate-900/90 border border-slate-700 space-y-1.5 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 font-bold text-sky-300">
-                  <span>📸 3B Görünümleri Rapora Ayrı Ayrı Ekle / Sil:</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => addSpecificViewToReport('top', 'Üstten Plan Görünümü')}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 font-semibold text-[11px]"
-                  >
-                    + ⬆️ Üstten Ekle
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addSpecificViewToReport('bottom', 'Alttan Tavan Görünümü')}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700 font-semibold text-[11px]"
-                  >
-                    + ⬇️ Alttan Ekle
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addSpecificViewToReport('side', 'Yandan Sağ Kesit')}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-semibold text-[11px]"
-                  >
-                    + ➡️ Yandan Ekle
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addSpecificViewToReport('front', 'Perde Önü / Karşı')}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-semibold text-[11px]"
-                  >
-                    + 🖥️ Önden Ekle
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addSpecificViewToReport('iso', '3B İzometrik Perspektif')}
-                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold text-[11px]"
-                  >
-                    + 🧊 3B Perspektif Ekle
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const snap = captureCurrentAngleSnapshot();
-                      if (snap) {
-                        const next = [...capturedViews, { id: `view-custom-${Date.now()}`, angle: 'custom' as const, label: `Kamera Açısı #${capturedViews.length + 1}`, dataUrl: snap }];
-                        setCapturedViews(next);
-                        syncShadowReportToStorage(next, enabledPaftas);
-                      }
-                    }}
-                    className="px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-semibold text-[11px] shadow"
-                  >
-                    + 📸 Aktif Açıyı Ekle
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addAllAnglesToReport}
-                    className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow"
-                  >
-                    ⚡ Tüm Açıları Ekle
-                  </button>
-                </div>
-              </div>
-
-              {/* Eklenen Görünümler Şeridi & Silme Butonları */}
-              {capturedViews.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-slate-800">
-                  <span className="text-[10.5px] text-slate-400 font-medium">Rapordaki 3B Görünümler:</span>
-                  {capturedViews.map(v => (
-                    <div
-                      key={v.id}
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-[10.5px]"
+            {/* RAPORA AÇILARI AYRI AYRI EKLEME & SİLME ARAÇ ÇUBUĞU (Açılır/Kapanır) */}
+            {openCards.reportToolbar ? (
+              <div className="p-2 rounded bg-slate-900/90 border border-slate-700 space-y-1.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-bold text-sky-300">
+                    <span>📸 3B Görünümleri Rapora Ayrı Ayrı Ekle / Sil:</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => addSpecificViewToReport('top', 'Üstten Plan Görünümü')}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 font-semibold text-[11px]"
                     >
-                      <span className="text-slate-200 font-medium">{v.label}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeViewFromReport(v.id)}
-                        className="text-rose-400 hover:text-rose-300 font-bold px-1 hover:bg-rose-950/60 rounded"
-                        title="Rapordan Sil"
-                      >
-                        ✕ Sil
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCapturedViews([]);
-                      syncShadowReportToStorage([], enabledPaftas);
-                    }}
-                    className="text-[10px] text-rose-400 underline hover:text-rose-300 ml-auto"
-                  >
-                    Tümünü Temizle
-                  </button>
+                      + ⬆️ Üstten Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addSpecificViewToReport('bottom', 'Alttan Tavan Görünümü')}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700 font-semibold text-[11px]"
+                    >
+                      + ⬇️ Alttan Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addSpecificViewToReport('side', 'Yandan Sağ Kesit')}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-semibold text-[11px]"
+                    >
+                      + ➡️ Yandan Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addSpecificViewToReport('front', 'Perde Önü / Karşı')}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-semibold text-[11px]"
+                    >
+                      + 🖥️ Önden Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addSpecificViewToReport('iso', '3B İzometrik Perspektif')}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-semibold text-[11px]"
+                    >
+                      + 🧊 3B Perspektif Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const snap = captureCurrentAngleSnapshot();
+                        if (snap) {
+                          const next = [...capturedViews, { id: `view-custom-${Date.now()}`, angle: 'custom' as const, label: `Kamera Açısı #${capturedViews.length + 1}`, dataUrl: snap }];
+                          setCapturedViews(next);
+                          syncShadowReportToStorage(next, enabledPaftas);
+                        }
+                      }}
+                      className="px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-semibold text-[11px] shadow"
+                    >
+                      + 📸 Aktif Açıyı Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addAllAnglesToReport}
+                      className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow"
+                    >
+                      ⚡ Tüm Açıları Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOpenCards(c => ({ ...c, reportToolbar: false }))}
+                      className="text-[11px] px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white"
+                      title="Paneli Daralt"
+                    >
+                      ▲
+                    </button>
+                  </div>
                 </div>
-              )}
 
-              {/* Vektörel Paftaların Raporda Gösterimi / Silinmesi */}
-              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800 text-[10.5px]">
-                <span className="text-slate-400">Rapordaki 2B Paftalar:</span>
-                {[
-                  { k: 'sideSection' as const, label: 'Yandan Kesit Paftası' },
-                  { k: 'frontElevation' as const, label: 'Perde Ön Paftası' },
-                  { k: 'iso3d' as const, label: '🧊 3B İzometrik (Pafta 1)' },
-                  { k: 'sideSection' as const, label: '📐 Yan Kesit (Pafta 2)' },
-                  { k: 'frontElevation' as const, label: '🖼️ Perde Önü (Pafta 3)' },
-                  { k: 'topPlan' as const, label: '⬆️ Üstten Plan (Pafta 4)' },
-                ].map(p => (
-                  <label key={p.k} className="flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white">
-                    <input
-                      type="checkbox"
-                      checked={enabledPaftas[p.k]}
-                      onChange={() => togglePafta(p.k)}
-                      className="accent-emerald-500"
-                    />
-                    <span className={enabledPaftas[p.k] ? 'text-emerald-300 font-medium' : 'text-slate-500 line-through'}>
-                      {p.label}
-                    </span>
-                  </label>
-                ))}
+                {/* Eklenen Görünümler Şeridi & Silme Butonları */}
+                {capturedViews.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-slate-800">
+                    <span className="text-[10.5px] text-slate-400 font-medium">Rapordaki 3B Görünümler:</span>
+                    {capturedViews.map(v => (
+                      <div
+                        key={v.id}
+                        className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-[10.5px]"
+                      >
+                        <span className="text-slate-200 font-medium">{v.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeViewFromReport(v.id)}
+                          className="text-rose-400 hover:text-rose-300 font-bold px-1 hover:bg-rose-950/60 rounded"
+                          title="Rapordan Sil"
+                        >
+                          ✕ Sil
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCapturedViews([]);
+                        syncShadowReportToStorage([], enabledPaftas);
+                      }}
+                      className="text-[10px] text-rose-400 underline hover:text-rose-300 ml-auto"
+                    >
+                      Tümünü Temizle
+                    </button>
+                  </div>
+                )}
+
+                {/* Vektörel Paftaların Raporda Gösterimi / Silinmesi */}
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800 text-[10.5px]">
+                  <span className="text-slate-400">Rapordaki 2B Paftalar:</span>
+                  {[
+                    { k: 'iso3d' as const, label: '🧊 3B İzometrik (Pafta 1)' },
+                    { k: 'sideSection' as const, label: '📐 Yan Kesit (Pafta 2)' },
+                    { k: 'frontElevation' as const, label: '🖼️ Perde Önü (Pafta 3)' },
+                    { k: 'topPlan' as const, label: '⬆️ Üstten Plan (Pafta 4)' },
+                  ].map(p => (
+                    <label key={p.k} className="flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={enabledPaftas[p.k]}
+                        onChange={() => togglePafta(p.k)}
+                        className="accent-emerald-500"
+                      />
+                      <span className={enabledPaftas[p.k] ? 'text-emerald-300 font-medium' : 'text-slate-500 line-through'}>
+                        {p.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center justify-between p-2 rounded bg-indigo-950/20 border border-indigo-800/40 text-xs">
+                <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-indigo-200">
+                  <span className="font-bold text-indigo-300">📸 PDF Raporu Görünümleri:</span>
+                  <span>({capturedViews.length} açı kayıtlı)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenCards(c => ({ ...c, reportToolbar: true }))}
+                  className="text-indigo-300 hover:text-indigo-100 font-semibold text-[11px] ml-auto shrink-0"
+                >
+                  Rapor Açılarını Düzenle ▼
+                </button>
+              </div>
+            )}
 
             {viewMode === '3d' ? (
               <div
                 className={`rounded-lg border border-slate-700 bg-slate-950 overflow-hidden relative transition-all ${
                   is3DFullscreen
                     ? 'fixed inset-4 z-50 flex flex-col shadow-2xl'
-                    : 'flex-1 min-h-[540px] h-[64vh]'
+                    : focusDrawingMode
+                    ? 'flex-1 min-h-[680px] h-[78vh]'
+                    : 'flex-1 min-h-[520px] h-[64vh]'
                 }`}
               >
                 {is3DFullscreen && (
@@ -2838,6 +3243,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                 }}
                 personElevationM={toMeters(personElevation, unit)}
                 viewingAngles={viewingAngles}
+                focusDrawingMode={focusDrawingMode}
               />
             )}
           </>
@@ -2865,6 +3271,7 @@ function SurfaceFootprint2D({
   podium,
   personElevationM = 0,
   viewingAngles,
+  focusDrawingMode = false,
 }: {
   surfW: number;
   surfH: number;
@@ -2888,6 +3295,7 @@ function SurfaceFootprint2D({
   };
   personElevationM?: number;
   viewingAngles?: PersonViewingAngles | null;
+  focusDrawingMode?: boolean;
 }) {
   const podW = podium?.enabled ? (podium.widthM > 0.05 ? podium.widthM : surfW + 0.6) : 0;
   const podH = podium?.enabled ? Math.max(0, podium.heightM) : 0;
@@ -2926,8 +3334,12 @@ function SurfaceFootprint2D({
   const fs = span * 0.032;
 
   return (
-    <div className="flex-1 min-h-[420px] rounded-lg border border-slate-700 bg-slate-950 p-2 flex flex-col">
-      <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className="w-full flex-1 max-h-[55vh]">
+    <div className={`flex-1 rounded-lg border border-slate-700 bg-slate-950 p-2 flex flex-col transition-all ${
+      focusDrawingMode ? 'min-h-[640px]' : 'min-h-[420px]'
+    }`}>
+      <svg viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`} className={`w-full flex-1 transition-all ${
+        focusDrawingMode ? 'max-h-[76vh]' : 'max-h-[55vh]'
+      }`}>
         {/* Perde Yerden Yüksekteyse: Perde Altı Duvar / Boşluk ve Zemin Çizgisi */}
         {shadow.screenBottomHeightM > 0.01 && (
           <g>

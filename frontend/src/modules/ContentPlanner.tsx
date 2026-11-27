@@ -1445,6 +1445,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
   const [canvasRotation, setCanvasRotation] = useState<0 | 90 | 180 | 270>(0);
   const [surfaceViewFilter, setSurfaceViewFilter] = useState<string>('all');
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [plannerViewMode, setPlannerViewMode] = useState<'simple' | 'detailed'>('simple');
   const [physicalRoom, setPhysicalRoom] = useState<PhysicalRoomConfig>(storePhysicalRoom);
@@ -2632,16 +2633,44 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       </div>
 
       {/* ANA ÇALIŞMA ALANI */}
-      <div className="grid lg:grid-cols-[490px_1fr] gap-3 flex-1 overflow-auto">
-        {/* SOL PANEL: YÜZEY EKLEME LİSTESİ + SEÇİLİ YÜZEY GEOMETRİ, UZAKLIK, ORAN & YOĞUNLUK EDİTÖRÜ */}
-        <div className="space-y-3 flex flex-col overflow-auto pr-1" style={{ maxHeight: '83vh' }}>
-          {/* 1. FARKLI GEOMETRİLERDE YÜZEY EKLEME BUTONLARI */}
-          <div className="p-3 rounded bg-slate-900 border border-slate-700 space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="font-bold text-slate-200 text-xs uppercase tracking-wider">
-                1. Proje Yüzeyleri ({surfaces.length} Alan) — Yüzey Ekle:
-              </span>
+      <div className={`gap-3 flex-1 overflow-auto transition-all ${isSidebarOpen ? 'grid lg:grid-cols-[490px_1fr]' : 'flex'}`}>
+        {/* SOL PANEL (Açıkken tam kontrol menüsü, kapalıyken ince dikey buton) */}
+        {!isSidebarOpen ? (
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(true)}
+            className="w-10 h-full py-4 rounded-lg border border-slate-700 bg-slate-900 hover:bg-slate-800 text-sky-400 flex flex-col items-center justify-between transition group shrink-0 select-none shadow"
+            title="Yüzey & Geometri Panelini Aç (Sol Kenar Çubuğu)"
+          >
+            <span className="text-base font-bold group-hover:scale-125 transition text-sky-300">▶</span>
+            <span
+              className="text-[11px] font-bold tracking-widest text-slate-300 uppercase whitespace-nowrap"
+              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+            >
+              📐 YÜZEY &amp; GEOMETRİ ({surfaces.length})
+            </span>
+            <span className="text-xs text-sky-400">⚙</span>
+          </button>
+        ) : (
+          <div className="space-y-3 flex flex-col overflow-auto pr-1 w-full lg:w-[490px] shrink-0" style={{ maxHeight: '83vh' }}>
+            <div className="flex items-center justify-between gap-1 p-2 bg-slate-900/90 border border-slate-700 rounded text-xs shrink-0">
+              <span className="font-bold text-slate-200">📐 Yüzey &amp; Geometri Paneli</span>
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(false)}
+                className="text-[10px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 font-bold"
+                title="Sol Paneli Gizle (Çizim ve 3B Alanını Genişlet)"
+              >
+                ◀ Gizle
+              </button>
             </div>
+            {/* 1. FARKLI GEOMETRİLERDE YÜZEY EKLEME BUTONLARI */}
+            <div className="p-3 rounded bg-slate-900 border border-slate-700 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-slate-200 text-xs uppercase tracking-wider">
+                  1. Proje Yüzeyleri ({surfaces.length} Alan) — Yüzey Ekle:
+                </span>
+              </div>
 
             <div className="grid grid-cols-3 gap-1.5">
               <button
@@ -4157,8 +4186,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
             </div>
           )}
         </div>
+      )}
 
-        {/* SAĞ PANEL: BİRLEŞİK PIXEL MAP ÇİZİMİ VE KARŞILAŞTIRMALI ORAN/YOĞUNLUK TABLOSU */}
+      {/* SAĞ PANEL: BİRLEŞİK PIXEL MAP ÇİZİMİ VE KARŞILAŞTIRMALI ORAN/YOĞUNLUK TABLOSU */}
         <div className="space-y-3 min-w-0 flex flex-col overflow-auto">
           {/* ÇİZİM KONTROL ÇUBUĞU (2B PIXEL MAP vs 3B ODA SİMÜLASYONU GEÇİŞİ) */}
           <div className="p-2.5 rounded bg-slate-900 border border-slate-800 flex flex-wrap justify-between items-center gap-2">
