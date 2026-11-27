@@ -193,9 +193,35 @@ export interface CalculatedSurface extends SurfaceItem {
 
   totalProjectors: number;
   geometryFormulaText: string;
-  projSlices: { index: number; col: number; row: number; startX: number; endX: number; startY: number; endY: number }[];
-  overlapZonesX: { index: number; startX: number; width: number; pct: number }[];
-  overlapZonesY: { index: number; startY: number; height: number; pct: number }[];
+  projSlices: {
+    index: number;
+    col: number;
+    row: number;
+    startX: number;
+    endX: number;
+    startY: number;
+    endY: number;
+    drawStartX?: number;
+    drawEndX?: number;
+    drawStartY?: number;
+    drawEndY?: number;
+  }[];
+  overlapZonesX: {
+    index: number;
+    startX: number;
+    width: number;
+    pct: number;
+    drawStartX?: number;
+    drawWidth?: number;
+  }[];
+  overlapZonesY: {
+    index: number;
+    startY: number;
+    height: number;
+    pct: number;
+    drawStartY?: number;
+    drawHeight?: number;
+  }[];
 }
 
 const SURFACE_COLORS = [
@@ -2012,8 +2038,14 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const impliedOvPxX = round(impliedTotalOvW / denomX, 1);
       const impliedOvPctX = round((impliedOvPxX / projW) * 100, 1);
 
-      const drawW = s.rotate90 ? netH : netW;
-      const drawH = s.rotate90 ? netW : netH;
+      // 2B Çizim alanında duvarların görsel boyutunu (drawW, drawH) belirleyen BİRLEŞİK FİZİKSEL ÖLÇEK (px/m).
+      // Bu ölçek projektör sayısına (cols/rows) BAĞLI DEĞİLDİR; sadece duvarın gerçek fiziksel metre ölçüsüne bağlıdır!
+      // Böylece projektör arttığında veya azaldığında duvarın görüntüsü ASLA büyüyüp küçülmez, SABİT kalır.
+      const DRAWING_SCALE_PX_PER_M = 500;
+      const physW = Math.max(50, Math.round(effectiveWidthM * DRAWING_SCALE_PX_PER_M));
+      const physH = Math.max(50, Math.round(effectiveHeightM * DRAWING_SCALE_PX_PER_M));
+      const drawW = s.rotate90 ? physH : physW;
+      const drawH = s.rotate90 ? physW : physH;
 
       // 4. A) YÜZEY BAZLI PİKSEL YOĞUNLUĞU (Görüntü Yüzeye Tam Oturduğunda)
       const mmPerPxW = round((effectiveWidthM * 1000) / netW, 2);
@@ -2080,6 +2112,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const centerOffsetX = (netW - totalSpanX) / 2;
       const centerOffsetY = (netH - totalSpanY) / 2;
 
+      // Çizim alanı (physW, physH) üzerindeki oransal dönüşüm ölçeği
+      const drawScaleX = physW / Math.max(1, netW);
+      const drawScaleY = physH / Math.max(1, netH);
+
       const projSlices: CalculatedSurface['projSlices'] = [];
       let idx = 1;
       for (let r = 0; r < s.rows; r++) {
@@ -2088,7 +2124,19 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           const endX = startX + projW;
           const startY = Math.round(centerOffsetY + r * sliceStepY);
           const endY = startY + projH;
-          projSlices.push({ index: idx++, col: c, row: r, startX, endX, startY, endY });
+          projSlices.push({
+            index: idx++,
+            col: c,
+            row: r,
+            startX,
+            endX,
+            startY,
+            endY,
+            drawStartX: Math.round(startX * drawScaleX),
+            drawEndX: Math.round(endX * drawScaleX),
+            drawStartY: Math.round(startY * drawScaleY),
+            drawEndY: Math.round(endY * drawScaleY),
+          });
         }
       }
 
@@ -2102,7 +2150,14 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           const ovW = Math.max(0, ovPxX);
           const ovStartX = Math.round(seamCenterX - ovW / 2);
           const ovPct = round((ovPxX / Math.max(1, projW)) * 100, 1);
-          overlapZonesX.push({ index: c + 1, startX: ovStartX, width: ovW, pct: ovPct });
+          overlapZonesX.push({
+            index: c + 1,
+            startX: ovStartX,
+            width: ovW,
+            pct: ovPct,
+            drawStartX: Math.round(ovStartX * drawScaleX),
+            drawWidth: Math.max(2, Math.round(ovW * drawScaleX)),
+          });
         }
       }
 
@@ -2113,7 +2168,14 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
           const ovH = Math.max(0, ovPxY);
           const ovStartY = Math.round(seamCenterY - ovH / 2);
           const ovPct = round((ovPxY / Math.max(1, projH)) * 100, 1);
-          overlapZonesY.push({ index: r + 1, startY: ovStartY, height: ovH, pct: ovPct });
+          overlapZonesY.push({
+            index: r + 1,
+            startY: ovStartY,
+            height: ovH,
+            pct: ovPct,
+            drawStartY: Math.round(ovStartY * drawScaleY),
+            drawHeight: Math.max(2, Math.round(ovH * drawScaleY)),
+          });
         }
       }
 
@@ -2195,9 +2257,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       let curX = 0;
       let maxWallH = 0;
       walls.forEach(w => {
-        const dW = w.rotate90 ? w.netH : w.netW;
-        const dH = w.rotate90 ? w.netW : w.netH;
-        positioned.push({ ...w, drawW: dW, drawH: dH, posX: curX, posY: 0 });
+        const dW = w.drawW;
+        const dH = w.drawH;
+        positioned.push({ ...w, posX: curX, posY: 0 });
         curX += dW;
         if (dH > maxWallH) maxWallH = dH;
       });
@@ -2205,23 +2267,21 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       let curY = maxWallH;
       let otherX = 0;
       others.forEach(o => {
-        const dW = o.rotate90 ? o.netH : o.netW;
-        const dH = o.rotate90 ? o.netW : o.netH;
-        positioned.push({ ...o, drawW: dW, drawH: dH, posX: otherX, posY: curY });
+        const dW = o.drawW;
+        const dH = o.drawH;
+        positioned.push({ ...o, posX: otherX, posY: curY });
         otherX += dW;
       });
     } else if (layoutMode === 'stacked') {
       let curY = 0;
       rawCalculated.forEach(s => {
-        const dW = s.rotate90 ? s.netH : s.netW;
-        const dH = s.rotate90 ? s.netW : s.netH;
-        positioned.push({ ...s, drawW: dW, drawH: dH, posX: 0, posY: curY });
-        curY += dH;
+        positioned.push({ ...s, posX: 0, posY: curY });
+        curY += s.drawH;
       });
     } else if (layoutMode === 'cross') {
       const getDims = (item: CalculatedSurface) => ({
-        w: item.rotate90 ? item.netH : item.netW,
-        h: item.rotate90 ? item.netW : item.netH,
+        w: item.drawW,
+        h: item.drawH,
       });
 
       const centerList: CalculatedSurface[] = [];
@@ -2252,50 +2312,48 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       let curCenterY = topH;
       centerList.forEach(item => {
         const { w, h } = getDims(item);
-        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: curCenterY });
+        positioned.push({ ...item, posX: leftW, posY: curCenterY });
         curCenterY += h;
       });
 
       let curLeftY = topH;
       leftList.forEach(item => {
         const { w, h } = getDims(item);
-        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW - w, posY: curLeftY });
+        positioned.push({ ...item, posX: leftW - w, posY: curLeftY });
         curLeftY += h;
       });
 
       let curTopY = 0;
       topList.forEach(item => {
         const { w, h } = getDims(item);
-        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: curTopY });
+        positioned.push({ ...item, posX: leftW, posY: curTopY });
         curTopY += h;
       });
 
       let curRightY = topH;
       rightList.forEach(item => {
         const { w, h } = getDims(item);
-        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW + centerW, posY: curRightY });
+        positioned.push({ ...item, posX: leftW + centerW, posY: curRightY });
         curRightY += h;
       });
 
       let curBottomY = topH + centerH;
       bottomList.forEach(item => {
         const { w, h } = getDims(item);
-        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: curBottomY });
+        positioned.push({ ...item, posX: leftW, posY: curBottomY });
         curBottomY += h;
       });
 
       let extraY = Math.max(topH + centerH + bottomH, topH + leftH, topH + rightH);
       extraList.forEach(item => {
         const { w, h } = getDims(item);
-        positioned.push({ ...item, drawW: w, drawH: h, posX: leftW, posY: extraY });
+        positioned.push({ ...item, posX: leftW, posY: extraY });
         extraY += h;
       });
     } else {
       rawCalculated.forEach(s => {
         positioned.push({
           ...s,
-          drawW: s.rotate90 ? s.netH : s.netW,
-          drawH: s.rotate90 ? s.netW : s.netH,
           posX: Math.max(0, s.canvasX),
           posY: Math.max(0, s.canvasY),
         });
@@ -2396,10 +2454,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         // Yatay Overlap (Örtüşme) Bölgeleri: Tam simetrik merkezde iki kesikli sarı çizgi ve sarı şerit dolgusu
         s.overlapZonesX.forEach(oz => {
           if (oz.width <= 0) return;
-          const ox = s.rotate90 ? s.posX : s.posX + oz.startX;
-          const oy = s.rotate90 ? s.posY + oz.startX : s.posY;
-          const ow = s.rotate90 ? s.drawW : oz.width;
-          const oh = s.rotate90 ? oz.width : s.drawH;
+          const ozStartX = oz.drawStartX ?? oz.startX;
+          const ozWidth = oz.drawWidth ?? oz.width;
+          const ox = s.rotate90 ? s.posX : s.posX + ozStartX;
+          const oy = s.rotate90 ? s.posY + ozStartX : s.posY;
+          const ow = s.rotate90 ? s.drawW : ozWidth;
+          const oh = s.rotate90 ? ozWidth : s.drawH;
 
           g.fillStyle = 'rgba(250, 204, 21, 0.16)';
           g.fillRect(ox, oy, ow, oh);
@@ -2420,10 +2480,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
         // Dikey Overlap (Örtüşme) Bölgeleri
         s.overlapZonesY.forEach(oz => {
           if (oz.height <= 0) return;
-          const ox = s.rotate90 ? s.posX + oz.startY : s.posX;
-          const oy = s.rotate90 ? s.posY : s.posY + oz.startY;
-          const ow = s.rotate90 ? oz.height : s.drawW;
-          const oh = s.rotate90 ? s.drawH : oz.height;
+          const ozStartY = oz.drawStartY ?? oz.startY;
+          const ozHeight = oz.drawHeight ?? oz.height;
+          const ox = s.rotate90 ? s.posX + ozStartY : s.posX;
+          const oy = s.rotate90 ? s.posY : s.posY + ozStartY;
+          const ow = s.rotate90 ? ozHeight : s.drawW;
+          const oh = s.rotate90 ? s.drawH : ozHeight;
 
           g.fillStyle = 'rgba(250, 204, 21, 0.16)';
           g.fillRect(ox, oy, ow, oh);
@@ -4670,10 +4732,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                               <g>
                                 {/* 1. Yatay Overlap Bölgeleri (İki Kesikli Sarı Sınır Çizgisi + Sarı Şerit Dolgusu + Piksel/% Etiketi) */}
                                 {s.overlapZonesX.map(oz => {
-                                  const ox = s.rotate90 ? sx : sx + oz.startX;
-                                  const oy = s.rotate90 ? sy + oz.startX : sy;
-                                  const ow = s.rotate90 ? s.drawW : Math.max(2, oz.width);
-                                  const oh = s.rotate90 ? Math.max(2, oz.width) : s.drawH;
+                                  const ozStartX = oz.drawStartX ?? oz.startX;
+                                  const ozWidth = oz.drawWidth ?? oz.width;
+                                  const ox = s.rotate90 ? sx : sx + ozStartX;
+                                  const oy = s.rotate90 ? sy + ozStartX : sy;
+                                  const ow = s.rotate90 ? s.drawW : Math.max(2, ozWidth);
+                                  const oh = s.rotate90 ? Math.max(2, ozWidth) : s.drawH;
                                   const labelX = ox + ow / 2;
                                   const labelY = s.rotate90 ? oy + oh / 2 : sy + surfFont * 0.65;
 
@@ -4728,10 +4792,12 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
 
                                 {/* 2. Dikey Overlap Bölgeleri */}
                                 {s.overlapZonesY.map(oz => {
-                                  const ox = s.rotate90 ? sx + oz.startY : sx;
-                                  const oy = s.rotate90 ? sy : sy + oz.startY;
-                                  const ow = s.rotate90 ? Math.max(2, oz.height) : s.drawW;
-                                  const oh = s.rotate90 ? s.drawH : Math.max(2, oz.height);
+                                  const ozStartY = oz.drawStartY ?? oz.startY;
+                                  const ozHeight = oz.drawHeight ?? oz.height;
+                                  const ox = s.rotate90 ? sx + ozStartY : sx;
+                                  const oy = s.rotate90 ? sy : sy + ozStartY;
+                                  const ow = s.rotate90 ? Math.max(2, ozHeight) : s.drawW;
+                                  const oh = s.rotate90 ? s.drawH : Math.max(2, ozHeight);
                                   return (
                                     <g key={`ovy-${oz.index}`}>
                                       {oz.height > 0 && (
