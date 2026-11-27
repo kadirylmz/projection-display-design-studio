@@ -7,11 +7,13 @@ import {
   computeCameraFov,
   computeFovShadowAnalysis,
   computeFovSurfaceProjection,
+  computePersonViewingAngles,
   computeProjectorFov,
   computeSurfaceFov,
   computeViewerFov,
   FovShadowResult,
   OpticalDeviceKind,
+  PersonViewingAngles,
   SCANNER_3D_PRESETS,
   VR_SYSTEM_PRESETS,
   ViewerFovResult,
@@ -54,6 +56,10 @@ function FovFrustum3DScene({
   viewerFov,
   surfaceTiltDeg = 0,
   surfaceCurvatureDeg = 0,
+  podium,
+  personElevationM = 0,
+  viewingAngles,
+  showSightlines = true,
 }: {
   pos: [number, number, number];
   surfW: number;
@@ -75,6 +81,15 @@ function FovFrustum3DScene({
   viewerFov?: ViewerFovResult;
   surfaceTiltDeg?: number;
   surfaceCurvatureDeg?: number;
+  podium?: {
+    enabled: boolean;
+    heightM: number;
+    depthM: number;
+    widthM: number;
+  };
+  personElevationM?: number;
+  viewingAngles?: PersonViewingAngles | null;
+  showSightlines?: boolean;
 }) {
   const deviceQuat = useMemo(() => {
     const euler = new THREE.Euler(
@@ -319,6 +334,12 @@ function FovFrustum3DScene({
   const jacketColor = shadow.isCastingShadow ? '#e11d48' : '#059669';
   const jacketEmissive = shadow.isCastingShadow ? '#be123c' : '#047857';
 
+  const podW = podium?.enabled ? (podium.widthM > 0.05 ? podium.widthM : surfW + 0.6) : 0;
+  const podH = podium?.enabled ? Math.max(0, podium.heightM) : 0;
+  const podD = podium?.enabled ? Math.max(0.1, podium.depthM) : 0;
+  const podCenterY = shadow.floorSceneY + podH / 2;
+  const podCenterZ = podD / 2;
+
   return (
     <>
       <ambientLight intensity={0.78} />
@@ -331,6 +352,57 @@ function FovFrustum3DScene({
         sectionSize={2}
         sectionColor="#334155"
       />
+
+      {/* 🎭 Sahne Podyumu (Podium Platform) */}
+      {podium?.enabled && podH > 0.01 && (
+        <group>
+          {/* Podyum Ana Gövdesi (3B Kutu) */}
+          <mesh position={[0, podCenterY, podCenterZ]}>
+            <boxGeometry args={[podW, podH, podD]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.7} metalness={0.2} />
+          </mesh>
+          {/* Podyum Üst Kaplama Yüzeyi */}
+          <mesh position={[0, shadow.floorSceneY + podH + 0.002, podCenterZ]} rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[podW - 0.02, podD - 0.02]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.4} />
+          </mesh>
+          {/* Podyum Üst Kenar Çerçeve Çizgisi */}
+          <Line
+            points={[
+              [-podW / 2, shadow.floorSceneY + podH + 0.004, 0.001],
+              [podW / 2, shadow.floorSceneY + podH + 0.004, 0.001],
+              [podW / 2, shadow.floorSceneY + podH + 0.004, podD],
+              [-podW / 2, shadow.floorSceneY + podH + 0.004, podD],
+              [-podW / 2, shadow.floorSceneY + podH + 0.004, 0.001],
+            ]}
+            color="#38bdf8"
+            lineWidth={2.2}
+          />
+          {/* Podyum Ön Kenar Zemin Çizgisi */}
+          <Line
+            points={[
+              [-podW / 2, shadow.floorSceneY + 0.005, podD],
+              [podW / 2, shadow.floorSceneY + 0.005, podD],
+            ]}
+            color="#0284c7"
+            lineWidth={1.6}
+          />
+          {/* Podyum Etiketi */}
+          {showLabels && (
+            <Text
+              position={[0, shadow.floorSceneY + podH + 0.12, podD]}
+              fontSize={0.13}
+              color="#7dd3fc"
+              anchorX="center"
+              anchorY="bottom"
+              outlineWidth={0.02}
+              outlineColor="#020617"
+            >
+              {`🎭 SAHNE PODYUMU (Yükseklik: +${podH.toFixed(2)}m · En/Derinlik: ${podD.toFixed(2)}m · Genişlik: ${podW.toFixed(2)}m)`}
+            </Text>
+          )}
+        </group>
+      )}
 
       {/* Perde Yerden Yüksekteyse: Perde Altı Duvar / Sahne Eteği ve Yükseklik Ölçüsü */}
       {shadow.screenBottomHeightM > 0.01 && (
@@ -606,7 +678,21 @@ function FovFrustum3DScene({
           )}
 
           {/* Gerçekçi 3B Anatomik İnsan Modeli (Ayakkabı, Bacak, Kalça, Gövde, Omuz, Kollar/Eller, Boyun, Baş/Saç) */}
-          <group position={[shadow.personXM, shadow.floorSceneY, shadow.personDistFromScreenM]}>
+          <group position={[shadow.personXM, shadow.floorSceneY + personElevationM, shadow.personDistFromScreenM]}>
+            {/* Zeminden Yükselti Kaidesi / Basamak Platformu */}
+            {personElevationM > 0.01 && (
+              <group position={[0, -personElevationM / 2, 0]}>
+                <mesh>
+                  <cylinderGeometry args={[Math.max(0.28, pW * 0.62), Math.max(0.32, pW * 0.7), personElevationM, 24]} />
+                  <meshStandardMaterial color="#334155" roughness={0.6} />
+                </mesh>
+                <mesh position={[0, -personElevationM / 2 + 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                  <ringGeometry args={[Math.max(0.3, pW * 0.65), Math.max(0.34, pW * 0.74), 24]} />
+                  <meshBasicMaterial color="#38bdf8" side={THREE.DoubleSide} />
+                </mesh>
+              </group>
+            )}
+
             {/* Zemindeki Dairesel Temas Halkası */}
             <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
               <circleGeometry args={[Math.max(0.24, pW * 0.56), 28]} />
@@ -738,7 +824,7 @@ function FovFrustum3DScene({
                   outlineWidth={0.022}
                   outlineColor="#020617"
                 >
-                  {`③ GÖLGE ANALİZİ MANKENİ (Boy: ${pH.toFixed(2)}m · Omuz: ${pW.toFixed(2)}m)\nPerdeye: ${shadow.personDistFromScreenM.toFixed(2)}m · Cihaza: ${shadow.personDistFromDeviceM.toFixed(2)}m · ${
+                  {`③ GÖLGE ANALİZİ MANKENİ (Boy: ${pH.toFixed(2)}m${personElevationM > 0 ? ` · Yükselti: +${personElevationM.toFixed(2)}m` : ''} · Omuz: ${pW.toFixed(2)}m)\nPerdeye: ${shadow.personDistFromScreenM.toFixed(2)}m · Cihaza: ${shadow.personDistFromDeviceM.toFixed(2)}m · ${
                     shadow.isCastingShadow
                       ? `Işığa ${shadow.intrusionHeightM.toFixed(2)}m Giriyor`
                       : `Baş Üstü +${Math.max(0, shadow.headClearanceM).toFixed(2)}m Boşluk`
@@ -747,6 +833,86 @@ function FovFrustum3DScene({
               </>
             )}
           </group>
+
+          {/* 👁️ İnsanın Gözünden Perdeye Bakış Çizgileri (Sightlines) & AVIXA Açıları */}
+          {showSightlines && viewingAngles && (
+            <group>
+              {/* İnsanın Göz Noktası */}
+              <mesh position={viewingAngles.eyePos3D}>
+                <sphereGeometry args={[0.045, 16, 16]} />
+                <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.65} />
+              </mesh>
+
+              {/* Perde Üst Kenarına Bakış Işını */}
+              <Line
+                points={viewingAngles.sightlines.toTop}
+                color={viewingAngles.verticalAngleTopDeg <= 35 ? '#f59e0b' : '#ef4444'}
+                lineWidth={2.0}
+                dashed
+                dashSize={0.16}
+                gapSize={0.08}
+              />
+              {/* Perde Merkezine Bakış Işını */}
+              <Line
+                points={viewingAngles.sightlines.toCenter}
+                color="#38bdf8"
+                lineWidth={2.2}
+                dashed
+                dashSize={0.18}
+                gapSize={0.1}
+              />
+              {/* Perde Alt Kenarına Bakış Işını */}
+              <Line
+                points={viewingAngles.sightlines.toBottom}
+                color="#10b981"
+                lineWidth={1.8}
+                dashed
+                dashSize={0.14}
+                gapSize={0.08}
+              />
+
+              {showLabels && (
+                <>
+                  {/* Üst Kenar Bakış Açısı Etiketi */}
+                  <Text
+                    position={[0, surfH / 2 + 0.1, 0.025]}
+                    fontSize={0.135}
+                    color={viewingAngles.verticalAngleTopDeg <= 35 ? '#fde047' : '#fca5a5'}
+                    anchorX="center"
+                    anchorY="bottom"
+                    outlineWidth={0.022}
+                    outlineColor="#020617"
+                  >
+                    {`👁️ Üst Kenar: ∠${viewingAngles.verticalAngleTopDeg > 0 ? '+' : ''}${viewingAngles.verticalAngleTopDeg}° (${viewingAngles.verticalAngleTopDeg <= 35 ? '✅ AVIXA Konfor' : '⚠️ Boyun Zorlanması Riski'})`}
+                  </Text>
+                  {/* Merkez Bakış Açısı Etiketi */}
+                  <Text
+                    position={[0, 0.06, 0.025]}
+                    fontSize={0.135}
+                    color="#7dd3fc"
+                    anchorX="center"
+                    anchorY="bottom"
+                    outlineWidth={0.022}
+                    outlineColor="#020617"
+                  >
+                    {`👁️ Merkez: ∠${viewingAngles.verticalAngleCenterDeg > 0 ? '+' : ''}${viewingAngles.verticalAngleCenterDeg}° · VFOV: ${viewingAngles.verticalFovDeg}°`}
+                  </Text>
+                  {/* Alt Kenar Bakış Açısı Etiketi */}
+                  <Text
+                    position={[0, -surfH / 2 - 0.12, 0.025]}
+                    fontSize={0.13}
+                    color="#6ee7b7"
+                    anchorX="center"
+                    anchorY="top"
+                    outlineWidth={0.022}
+                    outlineColor="#020617"
+                  >
+                    {`👁️ Alt Kenar: ∠${viewingAngles.verticalAngleBottomDeg > 0 ? '+' : ''}${viewingAngles.verticalAngleBottomDeg}°`}
+                  </Text>
+                </>
+              )}
+            </group>
+          )}
 
           {/* Perde Üzerindeki Gerçekçi İnsan Gölgesi Silüeti, Ölçü Çerçevesi ve Gölge Işınları */}
           {shadow.isCastingShadow && shadow.shadowRect2D && (
@@ -1011,7 +1177,15 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
   const [personDist, setPersonDist] = useState<number>(1.8);
   const [personX, setPersonX] = useState<number>(0);
   const [screenBottomH, setScreenBottomH] = useState<number>(0);
+  const [personElevation, setPersonElevation] = useState<number>(0.0);
+  const [showSightlines, setShowSightlines] = useState<boolean>(true);
   const [reportSavedToast, setReportSavedToast] = useState<boolean>(false);
+
+  // Sahne Podyumu (Podium / Platform) parametreleri
+  const [showPodium, setShowPodium] = useState<boolean>(false);
+  const [podiumHeight, setPodiumHeight] = useState<number>(0.4);
+  const [podiumDepth, setPodiumDepth] = useState<number>(2.0);
+  const [podiumWidth, setPodiumWidth] = useState<number>(0);
 
   const pickSensor = (k: string) => {
     setSensor(k);
@@ -1130,6 +1304,7 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
         personWidthM: Math.max(0.2, toMeters(personWidth, unit)),
         personDistFromScreenM: Math.max(0.05, toMeters(personDist, unit)),
         personXM: toMeters(personX, unit),
+        personElevationM: Math.max(0, toMeters(personElevation, unit)),
       });
 
       return { proj, viewerFov, surfaceFov, shadow, camMeta, surfW, surfH, posM: [xM, yM, zM] as [number, number, number], err: null as string | null };
@@ -1169,9 +1344,24 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
     personWidth,
     personDist,
     personX,
+    personElevation,
     screenBottomH,
     unit,
   ]);
+
+  // İnsanın gözünden perdeye bakış açıları (Viewing Angles) & AVIXA DISCAS standardı
+  const viewingAngles = useMemo(() => {
+    if (!r || r.err) return null;
+    return computePersonViewingAngles({
+      surfaceWidthM: r.surfW,
+      surfaceHeightM: r.surfH,
+      screenBottomHeightM: Math.max(0, toMeters(screenBottomH, unit)),
+      personHeightM: Math.max(0.4, toMeters(personHeight, unit)),
+      personElevationM: Math.max(0, toMeters(personElevation, unit)),
+      personDistFromScreenM: Math.max(0.05, toMeters(personDist, unit)),
+      personXM: toMeters(personX, unit),
+    });
+  }, [r, screenBottomH, personHeight, personElevation, personDist, personX, unit]);
 
   // 3B Sahne Bounding Box, Merkez Noktası ve Dinamik Ekrana Sığdırma (Fit-to-View)
   const sceneFraming = useMemo(() => {
@@ -1308,6 +1498,16 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
       capturedViews: nextViews,
       enabledPaftas: nextPaftas,
       shadow: r.shadow,
+      podium: showPodium
+        ? {
+            enabled: true,
+            heightM: toMeters(podiumHeight, unit),
+            depthM: toMeters(podiumDepth, unit),
+            widthM: podiumWidth > 0 ? toMeters(podiumWidth, unit) : r.surfW + 0.6,
+          }
+        : null,
+      personElevationM: toMeters(personElevation, unit),
+      viewingAngles,
     };
     try {
       localStorage.setItem('agy_fov_shadow_report_v1', JSON.stringify(payload));
@@ -1907,6 +2107,163 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                   className="w-full accent-rose-500 h-1.5 mt-1 cursor-pointer"
                 />
               </label>
+
+              {/* İnsanın Yerden Yükseltisi (Kot Farkı / Elevation) */}
+              <div className="pt-1.5 border-t border-slate-800/80 space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-slate-300">
+                  <span className="font-semibold text-rose-300">🚶 İnsan Zemin Yükseltisi (Kot):</span>
+                  <span className="font-mono font-bold text-amber-300">+{personElevation.toFixed(2)} {unit}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={2.5}
+                  step={0.05}
+                  value={personElevation}
+                  onChange={e => setPersonElevation(+e.target.value)}
+                  className="w-full accent-amber-500 h-1.5 cursor-pointer"
+                />
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setPersonElevation(0)}
+                    className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
+                      personElevation === 0
+                        ? 'bg-rose-900 border-rose-500 text-white font-bold'
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    🚶 0.0m Zeminde
+                  </button>
+                  {showPodium && (
+                    <button
+                      type="button"
+                      onClick={() => setPersonElevation(podiumHeight)}
+                      className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
+                        Math.abs(personElevation - podiumHeight) < 0.01
+                          ? 'bg-amber-600 border-amber-400 text-white font-bold'
+                          : 'bg-amber-950/80 border-amber-700 text-amber-200 hover:bg-amber-900'
+                      }`}
+                      title="İnsanın ayaklarını doğrudan sahne podyumu üstüne yerleştirir"
+                    >
+                      🎭 Podyuma Çıkart (+{podiumHeight.toFixed(2)}{unit})
+                    </button>
+                  )}
+                  {[0.2, 0.4, 0.6, 1.0].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setPersonElevation(val)}
+                      className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
+                        Math.abs(personElevation - val) < 0.01
+                          ? 'bg-rose-900 border-rose-500 text-white font-bold'
+                          : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      +{val.toFixed(2)}m
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Göz Bakış Çizgilerini Aç/Kapat */}
+              <label className="flex items-center gap-1.5 text-[10.5px] text-sky-300 cursor-pointer pt-1 border-t border-slate-800/80">
+                <input
+                  type="checkbox"
+                  checked={showSightlines}
+                  onChange={e => setShowSightlines(e.target.checked)}
+                  className="accent-sky-500"
+                />
+                <span>👁️ İnsanın Gözünden Bakış Çizgileri &amp; Açıları (Sightlines)</span>
+              </label>
+            </>
+          )}
+        </div>
+
+        {/* 🎭 Sahne Podyumu (Podium / Platform) */}
+        <div className="space-y-2 p-2.5 rounded bg-slate-950/70 border border-sky-800/60">
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] font-bold text-sky-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPodium}
+                onChange={e => setShowPodium(e.target.checked)}
+                className="accent-sky-500"
+              />
+              <span>🎭 Sahne Podyumu / Platform</span>
+            </label>
+            {showPodium && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPodiumHeight(0.4);
+                  setPodiumDepth(2.0);
+                  setPodiumWidth(0);
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+              >
+                Sıfırla
+              </button>
+            )}
+          </div>
+
+          {showPodium && (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {N(`Yükseklik (${unit})`, podiumHeight, v => setPodiumHeight(Math.max(0.05, v)), '0.05')}
+                {N(`En/Derinlik (${unit})`, podiumDepth, v => setPodiumDepth(Math.max(0.2, v)), '0.1')}
+                {N(`Genişlik (${unit})`, podiumWidth, v => setPodiumWidth(Math.max(0, v)), '0.1')}
+              </div>
+              {podiumWidth === 0 && (
+                <div className="text-[10px] text-slate-400 font-mono">
+                  Genişlik: Otomatik (Perde + 0.6m = {(subW + 0.6).toFixed(2)} {unit})
+                </div>
+              )}
+              <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                <div className="flex items-center justify-between text-[10.5px] text-slate-300">
+                  <span>Podyum Yüksekliği:</span>
+                  <span className="font-mono font-bold text-sky-300">+{podiumHeight.toFixed(2)} {unit}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={2.0}
+                  step={0.05}
+                  value={podiumHeight}
+                  onChange={e => setPodiumHeight(+e.target.value)}
+                  className="w-full accent-sky-500 h-1.5 cursor-pointer"
+                />
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                  {[
+                    { label: '0.20m Alçak', val: 0.2 },
+                    { label: '0.40m Standart', val: 0.4 },
+                    { label: '0.60m Orta', val: 0.6 },
+                    { label: '0.90m Yüksek', val: 0.9 },
+                    { label: '1.20m Sahne', val: 1.2 },
+                  ].map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => setPodiumHeight(p.val)}
+                      className={`text-[9.5px] px-1.5 py-0.5 rounded border transition ${
+                        Math.abs(podiumHeight - p.val) < 0.02
+                          ? 'bg-sky-600 border-sky-400 text-white font-semibold'
+                          : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setPersonElevation(podiumHeight)}
+                    className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-600 text-emerald-200 hover:bg-emerald-900 font-bold transition ml-auto"
+                    title="İnsanın ayak kotunu doğrudan podyum yüksekliğine eşitler"
+                  >
+                    🚶 İnsanı Podyuma Çıkar
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -2099,6 +2456,96 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
 
                 <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800">
                   <b>Mühendislik Özeti:</b> {r.shadow.reportSummaryTr}
+                </div>
+              </div>
+            )}
+
+            {/* 👁️ İnsanın Gözünden Bakış Açıları & Ergonomi Analizi (AVIXA DISCAS / SMPTE) */}
+            {showPerson && viewingAngles && (
+              <div
+                className={`p-3 rounded-lg border text-xs space-y-2.5 ${
+                  viewingAngles.ergonomicsGrade === 'warning'
+                    ? 'bg-amber-950/40 border-amber-600/80 text-amber-100'
+                    : 'bg-sky-950/35 border-sky-700/70 text-sky-100'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold text-sm flex items-center gap-2">
+                    <span>👁️ İnsanın Gözünden Bakış Açıları &amp; Ergonomi</span>
+                    <span
+                      className={`text-[11px] px-2 py-0.5 rounded font-bold border ${
+                        viewingAngles.ergonomicsGrade === 'warning'
+                          ? 'bg-red-950/80 border-red-500 text-red-200'
+                          : viewingAngles.ergonomicsGrade === 'acceptable'
+                          ? 'bg-amber-950/80 border-amber-500 text-amber-200'
+                          : 'bg-emerald-950/80 border-emerald-500 text-emerald-200'
+                      }`}
+                    >
+                      {viewingAngles.ergonomicsLabelTr}
+                    </span>
+                  </div>
+                  <div className="text-[10.5px] font-mono text-slate-300">
+                    AVIXA DISCAS Standardı (Üst Bakış ≤ 35°)
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Perde Üst Kenar Açısı</div>
+                    <div
+                      className={`font-bold text-xs mt-0.5 ${
+                        viewingAngles.verticalAngleTopDeg <= 35 ? 'text-emerald-300' : 'text-rose-400'
+                      }`}
+                    >
+                      ∠{viewingAngles.verticalAngleTopDeg > 0 ? `+${viewingAngles.verticalAngleTopDeg}` : viewingAngles.verticalAngleTopDeg}°
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      {viewingAngles.verticalAngleTopDeg <= 35 ? '✅ AVIXA Sınırında (≤35°)' : '⚠️ Boyun Zorlanması Riski'}
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Perde Merkez Açısı</div>
+                    <div className="text-sky-300 font-bold text-xs mt-0.5">
+                      ∠{viewingAngles.verticalAngleCenterDeg > 0 ? `+${viewingAngles.verticalAngleCenterDeg}` : viewingAngles.verticalAngleCenterDeg}°
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      Dikey VFOV: {viewingAngles.verticalFovDeg}°
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Perde Alt Kenar Açısı</div>
+                    <div className="text-emerald-300 font-bold text-xs mt-0.5">
+                      ∠{viewingAngles.verticalAngleBottomDeg > 0 ? `+${viewingAngles.verticalAngleBottomDeg}` : viewingAngles.verticalAngleBottomDeg}°
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      Yatay HFOV: {viewingAngles.horizontalFovDeg}°
+                    </div>
+                  </div>
+
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800">
+                    <div className="text-slate-400 text-[10px]">Göz Seviyesi (Yerden)</div>
+                    <div className="text-white font-bold text-xs mt-0.5">
+                      {u(viewingAngles.eyeHeightFromFloorM)}
+                    </div>
+                    <div className="text-slate-400 text-[10px]">
+                      {personElevation > 0
+                        ? `(Zemin +${personElevation.toFixed(2)}${unit} Yükseltili)`
+                        : 'Standart Zemin Kotu'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-200 bg-slate-950/60 px-2.5 py-1.5 rounded border border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <b>Ergonomi Değerlendirmesi:</b> {viewingAngles.ergonomicsAdviceTr}
+                  </div>
+                  {showPodium && (
+                    <span className="text-[10px] font-mono text-cyan-300 shrink-0 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-700">
+                      🎭 Podyum: +{podiumHeight.toFixed(2)}{unit} (Derinlik: {podiumDepth.toFixed(2)}{unit})
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -2349,6 +2796,15 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                       viewerFov={r.viewerFov}
                       surfaceTiltDeg={surfaceTiltDeg}
                       surfaceCurvatureDeg={surfaceCurvatureDeg}
+                      podium={{
+                        enabled: showPodium,
+                        heightM: toMeters(podiumHeight, unit),
+                        depthM: toMeters(podiumDepth, unit),
+                        widthM: podiumWidth > 0 ? toMeters(podiumWidth, unit) : r.surfW + 0.6,
+                      }}
+                      personElevationM={toMeters(personElevation, unit)}
+                      viewingAngles={viewingAngles}
+                      showSightlines={showSightlines}
                     />
                     <OrbitControls
                       ref={controlsRef}
@@ -2374,6 +2830,14 @@ export default function CameraCalculator({ unit }: { unit: LengthUnit }) {
                 viewerFov={r.viewerFov}
                 surfaceTiltDeg={surfaceTiltDeg}
                 surfaceCurvatureDeg={surfaceCurvatureDeg}
+                podium={{
+                  enabled: showPodium,
+                  heightM: toMeters(podiumHeight, unit),
+                  depthM: toMeters(podiumDepth, unit),
+                  widthM: podiumWidth > 0 ? toMeters(podiumWidth, unit) : r.surfW + 0.6,
+                }}
+                personElevationM={toMeters(personElevation, unit)}
+                viewingAngles={viewingAngles}
               />
             )}
           </>
@@ -2398,6 +2862,9 @@ function SurfaceFootprint2D({
   viewerFov,
   surfaceTiltDeg = 0,
   surfaceCurvatureDeg = 0,
+  podium,
+  personElevationM = 0,
+  viewingAngles,
 }: {
   surfW: number;
   surfH: number;
@@ -2413,10 +2880,22 @@ function SurfaceFootprint2D({
   viewerFov?: ViewerFovResult;
   surfaceTiltDeg?: number;
   surfaceCurvatureDeg?: number;
+  podium?: {
+    enabled: boolean;
+    heightM: number;
+    depthM: number;
+    widthM: number;
+  };
+  personElevationM?: number;
+  viewingAngles?: PersonViewingAngles | null;
 }) {
+  const podW = podium?.enabled ? (podium.widthM > 0.05 ? podium.widthM : surfW + 0.6) : 0;
+  const podH = podium?.enabled ? Math.max(0, podium.heightM) : 0;
+
   const xs = [
     -surfW / 2,
     surfW / 2,
+    ...(podium?.enabled && podW > 0 ? [-podW / 2, podW / 2] : []),
     ...corners2D.map(c => c[0]),
     ...activeCorners2D.map(c => c[0]),
     ...(viewerPos ? [viewerPos[0]] : []),
@@ -2493,6 +2972,34 @@ function SurfaceFootprint2D({
                   Zemin (0.00m)
                 </text>
               </>
+            )}
+          </g>
+        )}
+
+        {/* 🎭 Sahne Podyumu 2B Pafta İzdüşümü */}
+        {podium?.enabled && podH > 0.01 && (
+          <g>
+            <rect
+              x={-podW / 2}
+              y={-shadow.floorSceneY - podH}
+              width={podW}
+              height={podH}
+              fill="#1e293b"
+              fillOpacity={0.82}
+              stroke="#38bdf8"
+              strokeWidth={span / 170}
+            />
+            {showLabels && (
+              <text
+                x={0}
+                y={-shadow.floorSceneY - podH / 2 + fs * 0.3}
+                fill="#7dd3fc"
+                fontSize={fs * 0.78}
+                fontWeight="bold"
+                textAnchor="middle"
+              >
+                {`🎭 SAHNE PODYUMU (+${podH.toFixed(2)}m · En: ${podium.depthM.toFixed(2)}m)`}
+              </text>
             )}
           </g>
         )}
@@ -2635,9 +3142,35 @@ function SurfaceFootprint2D({
             )}
           </g>
         )}
+        {/* 👁️ Göz Bakış Açıları 2B Bilgi Rozeti */}
+        {showLabels && showPerson && viewingAngles && (
+          <g>
+            <rect
+              x={-surfW / 2}
+              y={-surfH / 2 - span * 0.075}
+              width={surfW}
+              height={span * 0.042}
+              rx={span * 0.007}
+              fill="#0f172a"
+              fillOpacity={0.9}
+              stroke={viewingAngles.verticalAngleTopDeg <= 35 ? '#0284c7' : '#ef4444'}
+              strokeWidth={span / 240}
+            />
+            <text
+              x={0}
+              y={-surfH / 2 - span * 0.048}
+              fill="#e0f2fe"
+              fontSize={fs * 0.72}
+              fontWeight="bold"
+              textAnchor="middle"
+            >
+              {`👁️ Göz Açısı: Üst ∠${viewingAngles.verticalAngleTopDeg > 0 ? '+' : ''}${viewingAngles.verticalAngleTopDeg}° · Merkez ∠${viewingAngles.verticalAngleCenterDeg > 0 ? '+' : ''}${viewingAngles.verticalAngleCenterDeg}° · VFOV: ${viewingAngles.verticalFovDeg}° (${viewingAngles.ergonomicsLabelTr})`}
+            </text>
+          </g>
+        )}
       </svg>
       <p className="text-[11px] text-slate-400 px-2 pt-1">
-        Beyaz dikdörtgen: Hedef perde ({surfW.toFixed(2)}m × {surfH.toFixed(2)}m · Yerden +{shadow.screenBottomHeightM.toFixed(2)}m) · Renkli dörtgen: Aktif optik görüntü izdüşümü{hasDigitalKeystone ? ' (Kesik gri çerçeve: Ham optik ışık konisi)' : ''} · Siyah insan silüeti: İzleyicinin perdede oluşturduğu gerçek gölge izdüşümü · Mor halka: İzleyici bakış konumu (Z={viewerPos ? viewerPos[2].toFixed(2) : '-'}m, X={viewerPos ? viewerPos[0].toFixed(2) : '-'}m, Y={viewerPos ? viewerPos[1].toFixed(2) : '-'}m{viewerFov ? ` · FOV: ${viewerFov.hfovDeg}°×${viewerFov.vfovDeg}°` : ''}).
+        Beyaz dikdörtgen: Hedef perde ({surfW.toFixed(2)}m × {surfH.toFixed(2)}m · Yerden +{shadow.screenBottomHeightM.toFixed(2)}m){podium?.enabled ? ` · 🎭 Mavi çerçeve: Podyum (+${podH.toFixed(2)}m)` : ''} · Renkli dörtgen: Aktif optik görüntü izdüşümü · Siyah insan silüeti: İzleyicinin perdede oluşturduğu gerçek gölge izdüşümü{personElevationM > 0 ? ` (+${personElevationM.toFixed(2)}m yükseltili)` : ''} · Mor halka: İzleyici bakış konumu (Z={viewerPos ? viewerPos[2].toFixed(2) : '-'}m, X={viewerPos ? viewerPos[0].toFixed(2) : '-'}m, Y={viewerPos ? viewerPos[1].toFixed(2) : '-'}m{viewerFov ? ` · FOV: ${viewerFov.hfovDeg}°×${viewerFov.vfovDeg}°` : ''}).
       </p>
     </div>
   );

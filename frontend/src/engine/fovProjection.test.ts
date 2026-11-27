@@ -3,6 +3,7 @@ import {
   computeCameraFov,
   computeFovShadowAnalysis,
   computeFovSurfaceProjection,
+  computePersonViewingAngles,
   computeProjectorFov,
   computeSurfaceFov,
   computeViewerFov,
@@ -221,5 +222,59 @@ describe('fovProjection', () => {
     });
     expect(shSafe.isCastingShadow).toBe(false);
     expect(shSafe.headClearanceM).toBeGreaterThan(0);
+
+    // İnsan podyumda (personElevationM = 0.5m) -> baş seviyesi 1.75 + 0.5 = 2.25m
+    const shPodium = computeFovShadowAnalysis({
+      devicePos: [0, 1.875, 4.5],
+      surfaceWidthM: 4,
+      surfaceHeightM: 2.25,
+      screenBottomHeightM: 0,
+      activeCorners2D: [
+        [-2, 1.125],
+        [2, 1.125],
+        [2, -1.125],
+        [-2, -1.125],
+      ],
+      personHeightM: 1.75,
+      personWidthM: 0.5,
+      personDistFromScreenM: 3.2,
+      personXM: 0,
+      personElevationM: 0.5,
+    });
+    expect(shPodium.effectivePersonTopFromFloorM).toBeCloseTo(2.25, 2);
+    expect(shPodium.personElevationM).toBe(0.5);
+  });
+
+  it('computePersonViewingAngles insanın göz seviyesinden perdeye olan açıları ve AVIXA ergonomisini hesaplar', () => {
+    // 4m × 2.25m perde, alt kenarı 0m zemin, insan 1.75m boyunda (göz ~1.63m), perdeden 3.0m uzakta
+    const angles = computePersonViewingAngles({
+      surfaceWidthM: 4,
+      surfaceHeightM: 2.25,
+      screenBottomHeightM: 0,
+      personHeightM: 1.75,
+      personDistFromScreenM: 3.0,
+      personXM: 0,
+    });
+
+    expect(angles.eyeHeightFromFloorM).toBeCloseTo(1.63, 2);
+    expect(angles.verticalAngleTopDeg).toBeGreaterThan(0); // Perde tepesi gözün üstünde (2.25 > 1.63)
+    expect(angles.verticalAngleBottomDeg).toBeLessThan(0); // Perde altı gözün altında (0 < 1.63)
+    expect(angles.verticalFovDeg).toBeCloseTo(angles.verticalAngleTopDeg - angles.verticalAngleBottomDeg, 1);
+    expect(angles.horizontalFovDeg).toBeGreaterThan(50);
+    expect(['optimal', 'acceptable']).toContain(angles.ergonomicsGrade);
+
+    // İnsan podyumda (yükselti 1.0m)
+    const anglesPodium = computePersonViewingAngles({
+      surfaceWidthM: 4,
+      surfaceHeightM: 2.25,
+      screenBottomHeightM: 0,
+      personHeightM: 1.75,
+      personElevationM: 1.0,
+      personDistFromScreenM: 3.0,
+      personXM: 0,
+    });
+    expect(anglesPodium.eyeHeightFromFloorM).toBeCloseTo(2.63, 2);
+    // Göz 2.63m, perde üstü 2.25m -> artık perde üstüne de aşağı doğru bakar
+    expect(anglesPodium.verticalAngleTopDeg).toBeLessThan(0);
   });
 });

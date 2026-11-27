@@ -657,6 +657,8 @@ export interface FovShadowInput {
   personDistFromScreenM: number;
   /** İnsanın perde merkezine göre yatay konumu (m, X ekseni) */
   personXM?: number;
+  /** İnsanın durduğu zemin kotu / yükselti (m, örn. podyum veya basamak platformu, varsayılan 0) */
+  personElevationM?: number;
 }
 
 export interface FovShadowResult {
@@ -665,6 +667,8 @@ export interface FovShadowResult {
   personDistFromScreenM: number;
   personDistFromDeviceM: number;
   personXM: number;
+  personElevationM: number;
+  effectivePersonTopFromFloorM: number;
   screenBottomHeightM: number;
   floorSceneY: number;
   deviceHeightFromFloorM: number;
@@ -700,6 +704,134 @@ export interface FovShadowResult {
   shadowTopFromFloorM: number;
   zoneStatusLabel: string;
   reportSummaryTr: string;
+}
+
+/**
+ * İnsanın gözünden perdeye bakış açıları (sightline) ve AVIXA DISCAS / SMPTE ergonomi analizi girdileri
+ */
+export interface PersonViewingAnglesInput {
+  surfaceWidthM: number;
+  surfaceHeightM: number;
+  screenBottomHeightM?: number;
+  personHeightM?: number;
+  personElevationM?: number;
+  personDistFromScreenM: number;
+  personXM?: number;
+}
+
+/**
+ * İnsanın gözünden perdeye bakış açıları ve ergonomi değerlendirmesi
+ */
+export interface PersonViewingAngles {
+  /** İnsanın gözünün yerden yüksekliği (m) */
+  eyeHeightFromFloorM: number;
+  /** İnsanın gözünün 3B sahne Y koordinatı (m) */
+  eyeSceneY: number;
+  /** İnsanın gözünün 3B sahne konumu [X, Y, Z] */
+  eyePos3D: [number, number, number];
+  /** İnsanın perdeye dik uzaklığı (m) */
+  distZ: number;
+  /** İnsanın perde merkezine 3B mesafesi (m) */
+  distToCenter3D: number;
+  /** Perde merkezine dikey bakış açısı (derece, + yukarı, - aşağı) */
+  verticalAngleCenterDeg: number;
+  /** Perde üst kenarına dikey bakış açısı (derece, AVIXA standardı ≤ 35°) */
+  verticalAngleTopDeg: number;
+  /** Perde alt kenarına dikey bakış açısı (derece) */
+  verticalAngleBottomDeg: number;
+  /** Dikey görüş alanı (VFOV = verticalAngleTopDeg - verticalAngleBottomDeg) */
+  verticalFovDeg: number;
+  /** Yatay görüş alanı (HFOV) */
+  horizontalFovDeg: number;
+  /** AVIXA DISCAS standardı ergonomi seviyesi */
+  ergonomicsGrade: 'optimal' | 'acceptable' | 'warning';
+  ergonomicsLabelTr: string;
+  ergonomicsAdviceTr: string;
+  /** 3B sahne için görüş çizgileri uç noktaları [göz[X,Y,Z], hedef[X,Y,Z]] */
+  sightlines: {
+    toTop: [[number, number, number], [number, number, number]];
+    toCenter: [[number, number, number], [number, number, number]];
+    toBottom: [[number, number, number], [number, number, number]];
+  };
+}
+
+/**
+ * İnsanın göz seviyesinden perdeye olan dikey ve yatay bakış açılarını ve ergonomi uygunluğunu hesaplar.
+ */
+export function computePersonViewingAngles(inp: PersonViewingAnglesInput): PersonViewingAngles {
+  const surfW = Math.max(0.1, inp.surfaceWidthM);
+  const surfH = Math.max(0.1, inp.surfaceHeightM);
+  const screenBotH = Math.max(0, inp.screenBottomHeightM ?? 0);
+  const floorSceneY = -surfH / 2 - screenBotH;
+
+  const personH = Math.max(0.4, inp.personHeightM ?? 1.75);
+  const personElev = Math.max(0, inp.personElevationM ?? 0);
+  const personDistZ = Math.max(0.05, inp.personDistFromScreenM);
+  const personX = inp.personXM ?? 0;
+
+  // İnsan göz seviyesi: ayaktan göze tipik insan boyunun %93'üdür
+  const eyeHeightFromFloorM = r2(personElev + personH * 0.93);
+  const eyeSceneY = r2(floorSceneY + eyeHeightFromFloorM);
+  const eyePos3D: [number, number, number] = [r2(personX), eyeSceneY, r2(personDistZ)];
+
+  // Perde merkezine 3B doğrudan mesafe
+  const distToCenter3D = r2(Math.sqrt(personX * personX + eyeSceneY * eyeSceneY + personDistZ * personDistZ));
+
+  // Dikey bakış açıları: atan2(hedefY - eyeY, mesafeZ) * (180 / π)
+  // Pozitif: göz seviyesinin üstüne doğru bakış (baş yukarı eğilir)
+  // Negatif: göz seviyesinin altına doğru bakış (baş aşağı eğilir)
+  const verticalAngleCenterDeg = r1(Math.atan2(0 - eyeSceneY, personDistZ) * (180 / Math.PI));
+  const verticalAngleTopDeg = r1(Math.atan2(surfH / 2 - eyeSceneY, personDistZ) * (180 / Math.PI));
+  const verticalAngleBottomDeg = r1(Math.atan2(-surfH / 2 - eyeSceneY, personDistZ) * (180 / Math.PI));
+  const verticalFovDeg = r1(Math.max(0, verticalAngleTopDeg - verticalAngleBottomDeg));
+
+  // Yatay görüş açısı (perdenin sol -surfW/2 ve sağ +surfW/2 kenarları)
+  const angleLeft = Math.atan2(-surfW / 2 - personX, personDistZ) * (180 / Math.PI);
+  const angleRight = Math.atan2(surfW / 2 - personX, personDistZ) * (180 / Math.PI);
+  const horizontalFovDeg = r1(Math.abs(angleRight - angleLeft));
+
+  // AVIXA DISCAS / ANSI-INFOCOMM V202.01 Standardı:
+  // Ekranın en üst noktasına dikey bakış açısı maks 35° olmalıdır (boyun zorlanmasını önleme kriteri).
+  let ergonomicsGrade: 'optimal' | 'acceptable' | 'warning' = 'optimal';
+  let ergonomicsLabelTr = 'İdeal Ergonomi (≤ 20°)';
+  let ergonomicsAdviceTr = `Perde üst kenarına bakış açısı (${verticalAngleTopDeg > 0 ? `+${verticalAngleTopDeg}` : verticalAngleTopDeg}°) doğal görüş konforu aralığındadır.`;
+
+  if (verticalAngleTopDeg > 35) {
+    ergonomicsGrade = 'warning';
+    ergonomicsLabelTr = '⚠️ Boyun Zorlanması Riski (AVIXA > 35°)';
+    ergonomicsAdviceTr = `Perde üst kenarına bakış açısı (+${verticalAngleTopDeg}°) önerilen maksimum 35° sınırını aşıyor. Perdeyi alçaltın, izleyiciyi geriye alın veya podyum/yükselti ekleyin.`;
+  } else if (verticalAngleTopDeg > 20) {
+    ergonomicsGrade = 'acceptable';
+    ergonomicsLabelTr = 'Kabul Edilebilir Konfor (20° – 35°)';
+    ergonomicsAdviceTr = `Perde üst kenarına bakış açısı (+${verticalAngleTopDeg}°) 20°–35° konfor bandındadır. Uzun süreli izlemelerde hafif baş kaldırma gerektirir.`;
+  } else if (verticalAngleCenterDeg < -15) {
+    ergonomicsGrade = 'acceptable';
+    ergonomicsLabelTr = 'Aşağı Bakış Açısı (<-15°)';
+    ergonomicsAdviceTr = `İzleyici perde merkezine yukarıdan bakmaktadır (${verticalAngleCenterDeg}°).`;
+  }
+
+  const sightlines = {
+    toTop: [eyePos3D, [0, r2(surfH / 2), 0]] as [[number, number, number], [number, number, number]],
+    toCenter: [eyePos3D, [0, 0, 0]] as [[number, number, number], [number, number, number]],
+    toBottom: [eyePos3D, [0, r2(-surfH / 2), 0]] as [[number, number, number], [number, number, number]],
+  };
+
+  return {
+    eyeHeightFromFloorM,
+    eyeSceneY,
+    eyePos3D,
+    distZ: r2(personDistZ),
+    distToCenter3D,
+    verticalAngleCenterDeg,
+    verticalAngleTopDeg,
+    verticalAngleBottomDeg,
+    verticalFovDeg,
+    horizontalFovDeg,
+    ergonomicsGrade,
+    ergonomicsLabelTr,
+    ergonomicsAdviceTr,
+    sightlines,
+  };
 }
 
 /**
@@ -887,6 +1019,8 @@ export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
   const floorSceneY = -surfH / 2 - screenBotH;
 
   const personH = Math.max(0.4, inp.personHeightM || 1.75);
+  const personElevationM = Math.max(0, inp.personElevationM ?? 0);
+  const effectivePersonTop = personH + personElevationM;
   const personW = Math.max(0.2, inp.personWidthM ?? 0.5);
   const personZ = Math.max(0.05, Math.min(pz - 0.05, inp.personDistFromScreenM));
   const personX = inp.personXM ?? 0;
@@ -914,41 +1048,41 @@ export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
   const tPerson = personZ / pz;
   const beamBottomAtPersonM = r2(beamBottomAtScreenM + tPerson * (deviceHeightFromFloorM - beamBottomAtScreenM));
   const beamTopAtPersonM = r2(beamTopAtScreenM + tPerson * (deviceHeightFromFloorM - beamTopAtScreenM));
-  const headClearanceM = r2(beamBottomAtPersonM - personH);
+  const headClearanceM = r2(beamBottomAtPersonM - effectivePersonTop);
 
-  // Kritik gölge giriş mesafesi (H_bot(z) = personH)
+  // Kritik gölge giriş mesafesi (H_bot(z) = effectivePersonTop)
   let shadowEntryDistFromScreenM = 0;
   let shadowZoneRangeM: [number, number] = [0, 0];
   let neverCastsShadow = false;
 
-  if (beamBottomAtScreenM >= personH && deviceHeightFromFloorM >= personH) {
+  if (beamBottomAtScreenM >= effectivePersonTop && deviceHeightFromFloorM >= effectivePersonTop) {
     neverCastsShadow = true;
     shadowEntryDistFromScreenM = 0;
     shadowZoneRangeM = [0, 0];
-  } else if (beamBottomAtScreenM < personH && deviceHeightFromFloorM > personH) {
+  } else if (beamBottomAtScreenM < effectivePersonTop && deviceHeightFromFloorM > effectivePersonTop) {
     const denom = Math.max(0.001, deviceHeightFromFloorM - beamBottomAtScreenM);
-    const zCrit = pz * ((personH - beamBottomAtScreenM) / denom);
+    const zCrit = pz * ((effectivePersonTop - beamBottomAtScreenM) / denom);
     shadowEntryDistFromScreenM = r2(Math.max(0, Math.min(pz, zCrit)));
     shadowZoneRangeM = [0, shadowEntryDistFromScreenM];
-  } else if (beamBottomAtScreenM < personH && deviceHeightFromFloorM <= personH) {
+  } else if (beamBottomAtScreenM < effectivePersonTop && deviceHeightFromFloorM <= effectivePersonTop) {
     shadowEntryDistFromScreenM = r2(pz);
     shadowZoneRangeM = [0, r2(pz)];
   } else {
-    // Alçak montaj (cihaz <= personH, ekranda > personH)
+    // Alçak montaj (cihaz <= effectivePersonTop, ekranda > effectivePersonTop)
     const denom = Math.max(0.001, beamBottomAtScreenM - deviceHeightFromFloorM);
-    const zCrit = pz * ((beamBottomAtScreenM - personH) / denom);
+    const zCrit = pz * ((beamBottomAtScreenM - effectivePersonTop) / denom);
     shadowEntryDistFromScreenM = r2(Math.max(0, Math.min(pz, zCrit)));
     shadowZoneRangeM = [shadowEntryDistFromScreenM, r2(pz)];
   }
 
   const shadowEntryDistFromDeviceM = r2(Math.max(0, pz - shadowEntryDistFromScreenM));
 
-  // Merkezi izdüşüm: Cihaz (px, py, pz) -> İnsan [personX ± personW/2, floorSceneY .. floorSceneY + personH] @ z = personZ -> Perde @ z = 0
+  // Merkezi izdüşüm: Cihaz (px, py, pz) -> İnsan [personX ± personW/2, floorSceneY + personElevationM .. floorSceneY + effectivePersonTop] @ z = personZ -> Perde @ z = 0
   const scale = pz / Math.max(0.05, pz - personZ);
   const pLeft = personX - personW / 2;
   const pRight = personX + personW / 2;
-  const pBot = floorSceneY;
-  const pTop = floorSceneY + personH;
+  const pBot = floorSceneY + personElevationM;
+  const pTop = floorSceneY + effectivePersonTop;
 
   const rawX0 = px + scale * (pLeft - px);
   const rawX1 = px + scale * (pRight - px);
@@ -977,7 +1111,7 @@ export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
   const screenAreaM2 = Math.max(0.01, surfW * surfH);
   const shadowCoveragePct = r1((shadowAreaM2 / screenAreaM2) * 100);
   const isCastingShadow = shadowAreaM2 > 0;
-  const intrusionHeightM = isCastingShadow ? r2(Math.max(0, personH - beamBottomAtPersonM)) : 0;
+  const intrusionHeightM = isCastingShadow ? r2(Math.max(0, effectivePersonTop - beamBottomAtPersonM)) : 0;
   const shadowRect2D: [number, number, number, number] | null = isCastingShadow
     ? [r2(clipX0), r2(clipY0), r2(clipX1), r2(clipY1)]
     : null;
@@ -988,7 +1122,7 @@ export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
   let shadowPolygonScene2D: [number, number][] = [];
   let shadowPolygonFloor2D: [number, number][] = [];
   if (isCastingShadow) {
-    const rawHumanPoly = buildHumanSilhouette2D(personX, floorSceneY, personW, personH);
+    const rawHumanPoly = buildHumanSilhouette2D(personX, floorSceneY + personElevationM, personW, personH);
     const projectedHumanPoly: [number, number][] = rawHumanPoly.map(([hx, hy]) => [
       px + scale * (hx - px),
       py + scale * (hy - py),
@@ -1004,18 +1138,19 @@ export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
   }
 
   const elevNote = screenBotH > 0.005 ? ` (Perde yerden +${r2(screenBotH)} m yüksekte başlar)` : '';
+  const personElevNote = personElevationM > 0.005 ? ` · İnsan +${r2(personElevationM)} m podyumda/yükseltide` : '';
 
   const zoneStatusLabel = neverCastsShadow
-    ? `✅ Tamamen Gölgesiz (Işık Konisi İnsan Boyunun Üstünde)${elevNote}`
+    ? `✅ Tamamen Gölgesiz (Işık Konisi İnsan Boyunun Üstünde)${elevNote}${personElevNote}`
     : isCastingShadow
-      ? `⛔ İNSAN GÖLGESİ OLUŞUYOR (Perdede ${shadowWidthM}m × ${shadowHeightM}m · %${shadowCoveragePct})${elevNote}`
-      : `✅ Güvenli Bölge (Baş Üstü Boşluk: +${Math.max(0, headClearanceM)} m)${elevNote}`;
+      ? `⛔ İNSAN GÖLGESİ OLUŞUYOR (Perdede ${shadowWidthM}m × ${shadowHeightM}m · %${shadowCoveragePct})${elevNote}${personElevNote}`
+      : `✅ Güvenli Bölge (Baş Üstü Boşluk: +${Math.max(0, headClearanceM)} m)${elevNote}${personElevNote}`;
 
   const reportSummaryTr = neverCastsShadow
-    ? `Perde alt kenarı yerden ${r2(screenBotH)} m yüksekte olup ışık konisinin alt sınırı perdede ${beamBottomAtScreenM} m, cihazda ${deviceHeightFromFloorM} m yüksekliğinde olduğundan ${personH} m boyundaki bir insan hiçbir mesafede gölge oluşturmaz.`
+    ? `Perde alt kenarı yerden ${r2(screenBotH)} m yüksekte olup ışık konisinin alt sınırı perdede ${beamBottomAtScreenM} m, cihazda ${deviceHeightFromFloorM} m yüksekliğinde olduğundan ${personH} m boyundaki bir insan (${personElevationM > 0 ? `+${r2(personElevationM)} m yükseltiyle toplam ${r2(effectivePersonTop)} m` : ''}) hiçbir mesafede gölge oluşturmaz.`
     : isCastingShadow
-      ? `Perde yerden ${r2(screenBotH)} m yüksekte başlamaktadır. Perdeye ${shadowEntryDistFromScreenM} m (cihaza ${shadowEntryDistFromDeviceM} m) mesafeden itibaren ${personH} m boyundaki insan ışık konisine girer. Mevcut konumda (perdeye ${r2(personZ)} m) ışığın alt sınırı yerden ${beamBottomAtPersonM} m yüksektedir (${intrusionHeightM} m kesişim) ve perde üzerinde ${shadowWidthM} m × ${shadowHeightM} m (${shadowAreaM2} m², %${shadowCoveragePct}) insan gölgesi oluşmaktadır.`
-      : `Perde yerden ${r2(screenBotH)} m yüksekte başlamaktadır. Perdeye 0 – ${shadowEntryDistFromScreenM} m aralığında gölge riski vardır; ancak mevcut konumda (perdeye ${r2(personZ)} m) ışık konisi insan başının ${Math.max(0, headClearanceM)} m üzerinden geçmektedir (yerden ${beamBottomAtPersonM} m) ve perdeye gölge düşmemektedir.`;
+      ? `Perde yerden ${r2(screenBotH)} m yüksekte başlamaktadır. Perdeye ${shadowEntryDistFromScreenM} m (cihaza ${shadowEntryDistFromDeviceM} m) mesafeden itibaren ${personH} m boyundaki insan (${personElevationM > 0 ? `+${r2(personElevationM)} m yükseltiyle baş seviyesi ${r2(effectivePersonTop)} m` : ''}) ışık konisine girer. Mevcut konumda (perdeye ${r2(personZ)} m) ışığın alt sınırı yerden ${beamBottomAtPersonM} m yüksektedir (${intrusionHeightM} m kesişim) ve perde üzerinde ${shadowWidthM} m × ${shadowHeightM} m (${shadowAreaM2} m², %${shadowCoveragePct}) insan gölgesi oluşmaktadır.`
+      : `Perde yerden ${r2(screenBotH)} m yüksekte başlamaktadır. Perdeye 0 – ${shadowEntryDistFromScreenM} m aralığında gölge riski vardır; ancak mevcut konumda (perdeye ${r2(personZ)} m) ışık konisi insan başının (${personElevationM > 0 ? `+${r2(personElevationM)} m yükselti ile tepe ${r2(effectivePersonTop)} m` : ''}) ${Math.max(0, headClearanceM)} m üzerinden geçmektedir (yerden ${beamBottomAtPersonM} m) ve perdeye gölge düşmemektedir.`;
 
   return {
     personHeightM: r2(personH),
@@ -1023,6 +1158,8 @@ export function computeFovShadowAnalysis(inp: FovShadowInput): FovShadowResult {
     personDistFromScreenM: r2(personZ),
     personDistFromDeviceM: r2(pz - personZ),
     personXM: r2(personX),
+    personElevationM: r2(personElevationM),
+    effectivePersonTopFromFloorM: r2(effectivePersonTop),
     screenBottomHeightM: r2(screenBotH),
     floorSceneY: r2(floorSceneY),
     deviceHeightFromFloorM,
