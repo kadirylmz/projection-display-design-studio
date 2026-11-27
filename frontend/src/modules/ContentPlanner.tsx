@@ -1896,7 +1896,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
     const fwNetH = Math.max(100, firstWall.rows * fwProjH - (firstWall.rows - 1) * fwOvY);
     const fwPpmX = fwNetW / Math.max(0.1, firstWall.widthM);
     const fwPpmY = fwNetH / Math.max(0.1, firstWall.heightM);
-    const wallRefPxPerMeter = Math.max(fwPpmX, fwPpmY);
+    const wallRefPxPerMeter = firstWall.cols >= firstWall.rows ? fwPpmX : fwPpmY;
 
     const rawCalculated: CalculatedSurface[] = surfaces.map(s => {
       // 1. GEOMETRİ TİPİNE GÖRE FİZİKSEL AÇINIM (UNWRAP) GENİŞLİK, YÜKSEKLİK VE ALAN (m²)
@@ -1992,7 +1992,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const surfacePxPerMeter =
         s.type === 'floor' && s.syncFloorWithWalls
           ? wallRefPxPerMeter
-          : Math.max(ppmX, ppmY);
+          : (s.cols >= s.rows ? ppmX : ppmY);
 
       const aspectW = Math.max(100, Math.round(effectiveWidthM * surfacePxPerMeter));
       const aspectH = Math.max(100, Math.round(effectiveHeightM * surfacePxPerMeter));
@@ -2588,7 +2588,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              1. Yüzey Oranına Göre İçerik Çözünürlüğü (Kare Piksel)
+              1. Yüzey Oranına Göre (Kare Piksel 1:1)
             </button>
             <button
               onClick={() => setCalcMethod('projector_blend')}
@@ -2598,9 +2598,16 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              2. Projektör & Overlap Formülüne Göre
+              2. Projektör &amp; Overlap Donanım Formülü
             </button>
           </div>
+          {activeSurface && (
+            <span className="text-[10.5px] font-mono px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
+              {calcMethod === 'aspect_ref'
+                ? `🎯 Aktif: Duvar Fiziksel Oranına Kilitli (${activeSurface.aspectPhysical}:1 Kare Piksel)`
+                : `📽️ Aktif: Projektör Donanım Blend Oranına Kilitli (${activeSurface.aspectProjector}:1)`}
+            </span>
+          )}
         </div>
 
         {/* HIZLI ODA & GEOMETRİ ŞABLONLARI */}
@@ -3167,8 +3174,9 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-[10px] text-slate-400 block">Net İçerik Çözünürlüğü:</span>
-                    <div className="text-xl font-extrabold text-emerald-400 font-mono tracking-tight">
-                      {activeSurface.netW} × {activeSurface.netH} px
+                    <div className="text-xl font-extrabold text-emerald-400 font-mono tracking-tight flex items-baseline gap-2">
+                      <span>{activeSurface.netW} × {activeSurface.netH} px</span>
+                      <span className="text-xs font-normal text-emerald-300 font-sans">({activeSurface.aspectContent}:1)</span>
                     </div>
                   </div>
                   <div className="text-right">
@@ -3243,7 +3251,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                     ↻ Çizimde 90° Çevir ({activeSurface.rotate90 ? 'Dikey Duruyor' : 'Yatay Duruyor'})
                   </button>
                   <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono text-[11px] font-bold">
-                    {activeSurface.netW} × {activeSurface.netH} px
+                    {activeSurface.netW} × {activeSurface.netH} px ({activeSurface.aspectContent}:1)
                   </span>
                 </div>
               </div>
@@ -3949,27 +3957,51 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">1. Açınım Fiziksel Oranı</span>
-                    <b className="text-sm text-amber-300 font-mono">{activeSurface.aspectPhysical} : 1</b>
+                  <div className="p-1.5 rounded bg-slate-900 border border-slate-800 flex flex-col justify-between">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-semibold">1. Açınım Fiziksel Oranı</span>
+                      <b className="text-sm text-amber-300 font-mono">{activeSurface.aspectPhysical} : 1</b>
+                    </div>
                     <span className="text-[10px] text-slate-500 block font-mono">
                       {activeSurface.effectiveWidthM}m × {activeSurface.effectiveHeightM}m
                     </span>
                   </div>
 
-                  <div className="p-1.5 rounded bg-emerald-950/30 border border-emerald-800/70">
-                    <span className="text-[10px] text-emerald-300 block">2. İçerik (Oran) Pixel Map</span>
-                    <b className="text-sm text-emerald-400 font-mono">{activeSurface.aspectW} × {activeSurface.aspectH}</b>
-                    <span className="text-[10px] text-emerald-500 block font-mono">
-                      Oran: {round(activeSurface.aspectW / activeSurface.aspectH, 2)} : 1
+                  <div className={`p-1.5 rounded flex flex-col justify-between transition ${
+                    calcMethod === 'aspect_ref'
+                      ? 'bg-emerald-950/60 border-2 border-emerald-500 shadow-lg shadow-emerald-950/50'
+                      : 'bg-emerald-950/20 border border-emerald-800/50 opacity-80'
+                  }`}>
+                    <div>
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-[10px] text-emerald-300 font-semibold">2. Yüzey Oranı (Kare Piksel)</span>
+                        {calcMethod === 'aspect_ref' && (
+                          <span className="text-[8.5px] px-1 py-0.2 rounded bg-emerald-600 text-white font-bold uppercase">Aktif</span>
+                        )}
+                      </div>
+                      <b className="text-sm text-emerald-400 font-mono">{activeSurface.aspectW} × {activeSurface.aspectH}</b>
+                    </div>
+                    <span className="text-[10px] text-emerald-400/90 block font-mono">
+                      Oran: {round(activeSurface.aspectW / activeSurface.aspectH, 2)} : 1 (Duvarla Birebir)
                     </span>
                   </div>
 
-                  <div className="p-1.5 rounded bg-sky-950/30 border border-sky-800/70">
-                    <span className="text-[10px] text-sky-300 block">3. Projeksiyon Kapasitesi</span>
-                    <b className="text-sm text-sky-400 font-mono">{activeSurface.projNetW} × {activeSurface.projNetH}</b>
-                    <span className="text-[10px] text-sky-500 block font-mono">
-                      Oran: {activeSurface.aspectProjector} : 1
+                  <div className={`p-1.5 rounded flex flex-col justify-between transition ${
+                    calcMethod === 'projector_blend'
+                      ? 'bg-sky-950/60 border-2 border-sky-500 shadow-lg shadow-sky-950/50'
+                      : 'bg-sky-950/20 border border-sky-800/50 opacity-80'
+                  }`}>
+                    <div>
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-[10px] text-sky-300 font-semibold">3. Projektör &amp; Overlap Formülü</span>
+                        {calcMethod === 'projector_blend' && (
+                          <span className="text-[8.5px] px-1 py-0.2 rounded bg-sky-600 text-white font-bold uppercase">Aktif</span>
+                        )}
+                      </div>
+                      <b className="text-sm text-sky-400 font-mono">{activeSurface.projNetW} × {activeSurface.projNetH}</b>
+                    </div>
+                    <span className="text-[10px] text-sky-400/90 block font-mono">
+                      Oran: {activeSurface.aspectProjector} : 1 (Donanım Oranı)
                     </span>
                   </div>
                 </div>
@@ -4829,7 +4861,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                                       textAnchor="middle"
                                       className="pointer-events-none select-none"
                                     >
-                                      Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m (Oran {s.aspectPhysical}:1 · {s.cols}×{s.rows} PJ)
+                                      Açınım: {s.effectiveWidthM}m × {s.effectiveHeightM}m · Yüzey: {s.aspectPhysical}:1 · Piksel: {s.aspectContent}:1 ({s.cols}×{s.rows} PJ)
                                     </text>
                                   </g>
                                 );
@@ -4882,10 +4914,10 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                       {s.name}
                     </td>
                     <td className="py-1.5 pr-2 font-mono text-slate-300">
-                      {s.effectiveWidthM}×{s.effectiveHeightM}m ({s.aspectPhysical}:1)
+                      {s.effectiveWidthM}×{s.effectiveHeightM}m <span className="text-[10px] text-slate-400">({s.aspectPhysical}:1)</span>
                     </td>
                     <td className="py-1.5 pr-2 font-mono font-bold text-emerald-400">
-                      {s.netW} × {s.netH} px
+                      {s.netW} × {s.netH} px <span className="text-[10px] text-emerald-300 font-normal">({s.aspectContent}:1)</span>
                     </td>
                     <td className="py-1.5 pr-2 font-mono text-amber-300">
                       {s.throwDistM}m / TR {s.throwRatio}:1
