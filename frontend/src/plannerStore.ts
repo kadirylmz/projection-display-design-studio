@@ -90,7 +90,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: '#d97706',
     canvasX: 0,
     canvasY: 0,
-    rotate90: true,
+    rotate90: false,
     crossSlot: 'right',
   },
   {
@@ -117,7 +117,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: '#059669',
     canvasX: 0,
     canvasY: 0,
-    rotate90: true,
+    rotate90: false,
     crossSlot: 'center',
     syncFloorWithWalls: true,
   },

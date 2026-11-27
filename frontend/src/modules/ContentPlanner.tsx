@@ -242,7 +242,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: SURFACE_COLORS[0],
     canvasX: 0,
     canvasY: 0,
-    rotate90: true,
+    rotate90: false,
     crossSlot: 'left',
   },
   {
@@ -296,7 +296,7 @@ const INITIAL_SURFACES: SurfaceItem[] = [
     color: SURFACE_COLORS[2],
     canvasX: 0,
     canvasY: 0,
-    rotate90: true,
+    rotate90: false,
     crossSlot: 'right',
   },
   {
@@ -1799,26 +1799,31 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       geometry === 'dome' ? 'Kubbe / Yarım Küre (Dome)' :
       geometry === 'sphere' ? 'Tam Küre (Sphere 360°)' : 'Dairesel Yuvarlak Zemin';
 
+    const defaultWallW = master?.screenWidthM || surfaces.find(s => s.type === 'wall')?.widthM || 6.0;
+    const defaultWallH = master?.screenHeightM || surfaces.find(s => s.type === 'wall')?.heightM || 4.0;
+    const defaultThrowDist = master?.throwDistM || 4.8;
+    const defaultThrowRatio = master?.throwRatio || 0.8;
+
     const newSurf: SurfaceItem = {
       id,
       name: defaultName,
       type,
       geometry,
-      widthM: 12.0,
-      heightM: 4.30,
+      widthM: geometry === 'flat' && type === 'wall' ? defaultWallW : 12.0,
+      heightM: geometry === 'flat' && type === 'wall' ? defaultWallH : 4.30,
       radiusM: 5.0,
       angleDeg: geometry === 'concave_arc' ? 120 : 360,
       resIdx: 0,
       customW: 1920,
       customH: 1200,
       orient: 'landscape',
-      cols: geometry === 'cylinder_360' ? 6 : 3,
+      cols: geometry === 'cylinder_360' ? 6 : (geometry === 'flat' && type === 'wall' ? (defaultWallW > 8 ? 3 : 2) : 3),
       rows: geometry === 'dome' || geometry === 'sphere' || geometry === 'circle_floor' ? 2 : 1,
       overlapMode: 'percent',
       overlapX: 15,
       overlapY: 15,
-      throwDistM: type === 'floor' ? 4.30 : 5.00,
-      throwRatio: type === 'floor' ? 0.65 : 0.80,
+      throwDistM: type === 'floor' ? 4.30 : defaultThrowDist,
+      throwRatio: type === 'floor' ? 0.65 : defaultThrowRatio,
       viewDistM: type === 'floor' ? 1.80 : 3.50,
       color: SURFACE_COLORS[surfaces.length % SURFACE_COLORS.length],
       canvasX: 0,
@@ -1971,14 +1976,20 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const projNetW = Math.max(100, totalRawW - totalOvW);
       const projNetH = Math.max(100, totalRawH - totalOvH);
 
-      // 3. ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ
+      // 3. ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ (KARE PİKSEL VE BİREBİR FİZİKSEL ÖLÇEK)
+      // Yüzey Oranına Göre (aspect_ref) modunda TÜM yüzeyler (duvarlar ve zemin)
+      // referans duvarın piksel yoğunluğuna (wallRefPxPerMeter) göre ölçeklenir.
+      // Böylece aynı fiziksel yüksekliğe (örn: 4.0m) sahip tüm yüzeyler 2 boyutta ve şemada
+      // birebir aynı yükseklikte (aspectH = effectiveHeightM * wallRefPxPerMeter) çizilir!
       const surfacePxPerMeter =
-        s.type === 'floor' && s.syncFloorWithWalls
+        calcMethod === 'aspect_ref'
           ? wallRefPxPerMeter
-          : projNetH / Math.max(0.1, effectiveHeightM);
+          : (s.type === 'floor' && s.syncFloorWithWalls
+              ? wallRefPxPerMeter
+              : projNetH / Math.max(0.1, effectiveHeightM));
 
       const aspectH =
-        s.type === 'floor' && s.syncFloorWithWalls
+        calcMethod === 'aspect_ref' || (s.type === 'floor' && s.syncFloorWithWalls)
           ? Math.max(100, Math.round(effectiveHeightM * wallRefPxPerMeter))
           : projNetH;
       const aspectW = Math.max(100, Math.round(effectiveWidthM * surfacePxPerMeter));
@@ -4720,7 +4731,7 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
                                       textAnchor="middle"
                                       className="pointer-events-none select-none"
                                     >
-                                      {s.name}
+                                      {s.name} {s.rotate90 ? ' [↻ 90°]' : ''}
                                     </text>
                                   </g>
                                 );
