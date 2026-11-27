@@ -1884,12 +1884,19 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
     const fwPreset = RESOLUTIONS[firstWall.resIdx];
     const fwBaseW = firstWall.resIdx === RESOLUTIONS.length - 1 ? firstWall.customW : fwPreset.w;
     const fwBaseH = firstWall.resIdx === RESOLUTIONS.length - 1 ? firstWall.customH : fwPreset.h;
+    const fwProjW = firstWall.orient === 'landscape' ? fwBaseW : fwBaseH;
     const fwProjH = firstWall.orient === 'landscape' ? fwBaseH : fwBaseW;
+    const fwOvX = firstWall.cols > 1
+      ? (firstWall.overlapMode === 'percent' ? pctToPx(firstWall.overlapX, fwProjW) : Math.round(firstWall.overlapX))
+      : 0;
     const fwOvY = firstWall.rows > 1
       ? (firstWall.overlapMode === 'percent' ? pctToPx(firstWall.overlapY, fwProjH) : Math.round(firstWall.overlapY))
       : 0;
+    const fwNetW = Math.max(100, firstWall.cols * fwProjW - (firstWall.cols - 1) * fwOvX);
     const fwNetH = Math.max(100, firstWall.rows * fwProjH - (firstWall.rows - 1) * fwOvY);
-    const wallRefPxPerMeter = fwNetH / Math.max(0.1, firstWall.heightM);
+    const fwPpmX = fwNetW / Math.max(0.1, firstWall.widthM);
+    const fwPpmY = fwNetH / Math.max(0.1, firstWall.heightM);
+    const wallRefPxPerMeter = Math.max(fwPpmX, fwPpmY);
 
     const rawCalculated: CalculatedSurface[] = surfaces.map(s => {
       // 1. GEOMETRİ TİPİNE GÖRE FİZİKSEL AÇINIM (UNWRAP) GENİŞLİK, YÜKSEKLİK VE ALAN (m²)
@@ -1977,22 +1984,18 @@ export default function ContentPlanner({ unit: _unit }: { unit: LengthUnit }) {
       const projNetH = Math.max(100, totalRawH - totalOvH);
 
       // 3. ORANA GÖRE İÇERİK ÇÖZÜNÜRLÜĞÜ (KARE PİKSEL VE BİREBİR FİZİKSEL ÖLÇEK)
-      // Yüzey Oranına Göre (aspect_ref) modunda TÜM yüzeyler (duvarlar ve zemin)
-      // referans duvarın piksel yoğunluğuna (wallRefPxPerMeter) göre ölçeklenir.
-      // Böylece aynı fiziksel yüksekliğe (örn: 4.0m) sahip tüm yüzeyler 2 boyutta ve şemada
-      // birebir aynı yükseklikte (aspectH = effectiveHeightM * wallRefPxPerMeter) çizilir!
+      // Yüzey piksel yoğunluğu: Projektörlerin bu yüzeydeki net yatay (ppmX) ve dikey (ppmY) kapasitesinden türetilir.
+      // Kullanıcı yatay projektör (cols) veya dikey sıra (rows) ekleyip/eksilttiğinde,
+      // yüzey oranına göre (aspect_ref) kare piksel içerik çözünürlüğü de dinamik olarak artar veya azalır!
+      const ppmX = projNetW / Math.max(0.1, effectiveWidthM);
+      const ppmY = projNetH / Math.max(0.1, effectiveHeightM);
       const surfacePxPerMeter =
-        calcMethod === 'aspect_ref'
+        s.type === 'floor' && s.syncFloorWithWalls
           ? wallRefPxPerMeter
-          : (s.type === 'floor' && s.syncFloorWithWalls
-              ? wallRefPxPerMeter
-              : projNetH / Math.max(0.1, effectiveHeightM));
+          : Math.max(ppmX, ppmY);
 
-      const aspectH =
-        calcMethod === 'aspect_ref' || (s.type === 'floor' && s.syncFloorWithWalls)
-          ? Math.max(100, Math.round(effectiveHeightM * wallRefPxPerMeter))
-          : projNetH;
       const aspectW = Math.max(100, Math.round(effectiveWidthM * surfacePxPerMeter));
+      const aspectH = Math.max(100, Math.round(effectiveHeightM * surfacePxPerMeter));
 
       const netW = calcMethod === 'aspect_ref' ? aspectW : projNetW;
       const netH = calcMethod === 'aspect_ref' ? aspectH : projNetH;
